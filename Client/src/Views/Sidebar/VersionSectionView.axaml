@@ -1,0 +1,67 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Sidebar"
+             xmlns:conv="using:Avalonia.Data.Converters"
+             x:Class="AutoDev.Views.Sidebar.VersionSectionView"
+             x:DataType="vm:VersionSectionViewModel">
+    <StackPanel Spacing="6" Margin="0,8,0,8">
+        <!-- No separate "VERSION" heading - the target display itself is the click target for every
+             Version-section action, so clicking anywhere on the branch name/subtitle opens the same dropdown
+             the old heading button used to own. sidebarHeading reused for identical hover/no-chrome look,
+             just relocated onto this larger area; HorizontalContentAlignment overridden to Center since the
+             style's own default is Left (correct for a plain text heading, wrong for this centered block). -->
+        <Button Classes="sidebarHeading" HorizontalContentAlignment="Center" ToolTip.Tip="Version actions"
+                IsEnabled="{Binding !IsInteractionBlocked}">
+            <Button.Flyout>
+                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                    <MenuItem Header="Branch" IsVisible="{Binding ActionState.CanBranch}" Command="{Binding BranchCommand}"
+                              ToolTip.Tip="Create a new branch from this commit" />
+                    <MenuItem Header="Squash" IsVisible="{Binding ActionState.CanSquash}" Command="{Binding SquashCommand}"
+                              ToolTip.Tip="Combine pending changes and commits into this branch's base commit" />
+                    <MenuItem Header="Rebase" IsVisible="{Binding ActionState.CanRebase}" Command="{Binding RebaseCommand}"
+                              ToolTip.Tip="Rebase this branch onto its parent's latest commits" />
+                    <MenuItem Header="Merge" IsVisible="{Binding ActionState.CanMerge}" Command="{Binding MergeCommand}"
+                              ToolTip.Tip="Fast-forward merge this branch into its parent and delete it" />
+                    <MenuItem Header="Rename" IsVisible="{Binding ActionState.CanRename}" Command="{Binding RenameCommand}"
+                              ToolTip.Tip="Rename this branch" />
+                    <MenuItem Header="Commit" IsVisible="{Binding ActionState.CanCommit}" Command="{Binding CommitCommand}"
+                              ToolTip.Tip="Commit pending changes to this branch" />
+                    <MenuItem Header="Reset" IsVisible="{Binding ActionState.CanReset}" Command="{Binding ResetCommand}"
+                              ToolTip.Tip="Discard all pending changes" />
+                    <MenuItem Header="Tag" Command="{Binding TagCommand}"
+                              ToolTip.Tip="Create an annotated tag at the current spot" />
+
+                    <Separator />
+                    <MenuItem Header="Set Remote" Command="{Binding SetRemoteCommand}"
+                              ToolTip.Tip="Configure or change the remote git repository URL" />
+                </MenuFlyout>
+            </Button.Flyout>
+
+            <StackPanel HorizontalAlignment="Center">
+                <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="Bold"
+                           HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{Binding Target.Ref}" FontSize="10.5" Foreground="{DynamicResource TextMutedBrush}"
+                           TextTrimming="CharacterEllipsis" TextAlignment="Center" VerticalAlignment="Center"
+                           IsVisible="{Binding HasBranchSubtitle}" />
+
+                <!-- Public/private and pending-changes status badges - only meaningful while targeting a
+                     branch (a tag/commit target has neither a public/private status nor a Commit/Reset
+                     action of its own). -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="4" Margin="0,4,0,0"
+                            IsVisible="{Binding HasBranchSubtitle}">
+                    <Border Background="{DynamicResource TabActiveBackgroundBrush}" CornerRadius="3" Padding="5,1"
+                            ToolTip.Tip="Public branches are never squashed/renamed - meant for many users to share. Private branches are for one user at a time and get squashed on merge.">
+                        <TextBlock Text="{Binding PublicPrivateLabel}" FontSize="9.5" Foreground="{DynamicResource TextMutedBrush}" />
+                    </Border>
+                    <Border Background="{DynamicResource TabActiveBackgroundBrush}" CornerRadius="3" Padding="5,1"
+                            IsVisible="{Binding HasPendingChanges}" ToolTip.Tip="This branch has uncommitted changes">
+                        <TextBlock Text="Pending Changes" FontSize="9.5" Foreground="{DynamicResource AccentBrush}" />
+                    </Border>
+                </StackPanel>
+            </StackPanel>
+        </Button>
+
+        <TextBlock Text="{Binding StatusMessage}" FontSize="11" Foreground="Crimson" TextWrapping="Wrap" Margin="10,0"
+                   IsVisible="{Binding StatusMessage, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}" />
+    </StackPanel>
+</UserControl>

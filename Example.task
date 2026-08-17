@@ -1,0 +1,99 @@
+# Example .task file - demonstrates every feature of AutoDev's task scripting language.
+#
+# Right-click this file in the Files sidebar and choose Run to try it (Stop cancels it mid-run; View
+# reopens its live/last output). Everything it does is confined to a "build/" folder next to this file,
+# so running it is harmless and repeatable.
+#
+# Comments start with "#" (after any leading whitespace) and blank lines are ignored everywhere except
+# inside a multi-line command body (see "run"/"file" below). There's no "end" keyword and no heredoc
+# delimiter - indentation alone marks where a block starts and ends, same as Python: a script's commands
+# are whatever's indented under its "script" line, and a "run"/"file" command's multi-line body (if any) is
+# whatever's indented one level deeper than THAT command. Use whatever consistent indentation reads best to
+# you (this file uses 4 spaces).
+
+# --- Variables -----------------------------------------------------------------
+# `var NAME = value` - the rest of the line, trimmed, becomes the value (no quoting needed). Reference a
+# variable anywhere below as %NAME%; every reference across the whole file is substituted up front, so an
+# undefined %VAR% fails immediately instead of partway through a run. Two variables can share a value, but
+# two scripts can't resolve to the same name.
+var BUILD_DIR = build
+var GREETING = Hello from the example task
+
+# --- Scripts ---------------------------------------------------------------------
+# Every "script <name>" block below runs CONCURRENTLY with every other one in the file - they all start at
+# once, and the run as a whole finishes only once every script has. Commands *within* one script run
+# sequentially, top to bottom, and that script stops at the first command that fails (a nonzero exit for
+# `run`, or a filesystem error) - other scripts keep going regardless. A script's name is the ENTIRE rest of
+# its header line, so "script Watch For Changes" (see below) names it "Watch For Changes" - no quoting
+# needed even though it has spaces.
+#
+# Each script gets its own live output panel in the Output tab, auto-arranged into a grid unless you pin it
+# to a specific cell with an "output <column> <row>" command inside it (1-based - see "Watch For Changes"
+# below) - placed and unplaced scripts can be mixed freely.
+
+script Setup
+    # `folder`/`file` make a directory or file. `conditional` means "do nothing if it already exists"
+    # instead of failing or requiring `overwrite`.
+    folder %BUILD_DIR% conditional
+
+    # Wrap a target in "double quotes" when it contains spaces.
+    folder "%BUILD_DIR%/staging area" conditional
+
+    # `file` can take a multi-line body: just indent the following lines deeper than the `file` command
+    # itself, and dedent (return to the command's own indent level, or shallower) to end it. The body is
+    # dedented by whatever leading whitespace every line shares, so you can indent it to match the
+    # surrounding script without that indentation ending up in the file - and %VAR% references inside it
+    # are still substituted, same as anywhere else.
+    file %BUILD_DIR%/notes.txt overwrite
+        %GREETING%
+        This file was written by the Setup script.
+
+    # `rename` changes a path's leaf name, keeping it in the same parent directory.
+    rename %BUILD_DIR%/notes.txt -> README.txt
+
+    # `move` places Target's own basename inside Destination (like `mv Target Destination/`), creating
+    # Destination if it doesn't exist. `overwrite` replaces anything already there at the new path;
+    # without it, a collision fails the script.
+    move %BUILD_DIR%/README.txt -> "%BUILD_DIR%/staging area" overwrite
+
+    # `purge` empties a directory's contents but leaves the directory itself; `delete` removes a file or
+    # directory (recursively) outright. Demonstrated on their own disposable scratch folder.
+    folder %BUILD_DIR%/scratch conditional
+    file %BUILD_DIR%/scratch/temp.txt overwrite
+        Temporary content, about to be purged.
+    purge %BUILD_DIR%/scratch
+    delete %BUILD_DIR%/scratch
+
+script Build
+    # Scripts run concurrently with no ordering guarantee between them, so this can't assume Setup's
+    # `folder %BUILD_DIR%` has already run by the time this script starts - it makes its own, idempotently
+    # (see `conditional` above), before `cd`-ing into it.
+    folder %BUILD_DIR% conditional
+
+    # `cd` changes the working directory for every later command in THIS script only - other scripts,
+    # running concurrently, are unaffected - resolved relative to wherever it already was.
+    cd %BUILD_DIR%
+
+    # `run` executes one shell command line and fails the script if it exits non-zero.
+    run echo "Building in $(pwd)"
+
+    # `wait <seconds>` pauses before the next command.
+    wait 1
+
+    # A bare `run` (nothing after it on the same line) takes its command from an indented multi-line body
+    # instead of a single line - same indentation rule as `file`'s body above.
+    run
+        echo "Step 1"
+        echo "Step 2"
+        echo "Step 3"
+
+    # `print` outputs its rest-of-line as-is, like a shell `echo` - unlike `run`, it never spawns a real
+    # process, so it's the lightweight way to leave a status line or a note in a script's output.
+    print Build finished.
+
+# "output <column> <row>" pins this script's output panel to a specific grid cell instead of letting the
+# Output tab auto-arrange it - handy for keeping a long-lived script (a watcher, a dev server) somewhere
+# predictable. Both are 1-based, so this is the panel in the 2nd column of the 1st row.
+script Watch For Changes
+    output 2 1
+    run echo "Watching for changes… (this demo exits immediately instead of actually watching)"

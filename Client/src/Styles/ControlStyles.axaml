@@ -1,0 +1,210 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{DynamicResource EditorBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="FontSize" Value="13" />
+    </Style>
+
+    <Style Selector="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style Selector="SelectableTextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBackgroundBrush}" />
+    </Style>
+
+    <Style Selector="Button">
+        <Setter Property="Background" Value="{DynamicResource HoverBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Padding" Value="10,5" />
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SelectionBackgroundBrush}" />
+    </Style>
+    <Style Selector="Button.accent">
+        <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.accent:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+    </Style>
+    <Style Selector="Button.danger">
+        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <!-- Declared for both Button and ToggleButton (e.g. the Edit tab's markdown edit toggle) - Avalonia's
+         compiled-XAML setter validation needs an explicit TargetType per selector, so a single type-unqualified
+         ".iconButton" selector doesn't work; these two blocks are kept in sync instead. -->
+    <Style Selector="Button.iconButton, ToggleButton.iconButton">
+        <Setter Property="Padding" Value="4" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="MinWidth" Value="24" />
+        <Setter Property="MinHeight" Value="24" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.iconButton TextBlock, ToggleButton.iconButton TextBlock">
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- Highlights whichever of a mutually-exclusive set of iconButtons is currently selected - a plain
+         Background (not the pointerover one) so it stays visible even while not hovered. -->
+    <Style Selector="Button.iconButton.active, ToggleButton.iconButton.active">
+        <Setter Property="Background" Value="{DynamicResource SelectionBackgroundBrush}" />
+    </Style>
+    <!-- Same idea as .active above, but for a real ToggleButton's own :checked state (e.g. the Edit tab's
+         markdown edit toggle) rather than a manually-bound Classes.active. -->
+    <Style Selector="ToggleButton.iconButton:checked">
+        <Setter Property="Background" Value="{DynamicResource SelectionBackgroundBrush}" />
+    </Style>
+    <!-- Shared small text-button look for sidebar section action bars (Version/Tasks/Files). -->
+    <Style Selector="Button.sidebarAction">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+
+    <!-- Sidebar section heading (Version/Tasks/Files) - the section name itself is the trigger for that
+         section's action dropdown (see each section View's Button.Flyout), so it reads as a plain left-aligned
+         label until hovered, rather than looking like an ordinary button. This padding is every section's only
+         source of inset around its heading - section Views must not add their own extra margin around it, or
+         the two stack up (see VersionSectionView, which used to double up this way). -->
+    <Style Selector="Button.sidebarHeading">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+    </Style>
+    <Style Selector="Button.sidebarHeading:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource HoverBackgroundBrush}" />
+    </Style>
+
+    <!-- On/off toggle button look (e.g. Version section's Direct Mode) - off is the same neutral look as a
+         plain Button, on switches to the accent color so the state reads at a glance without needing to
+         rely on a separate checkmark glyph. -->
+    <Style Selector="ToggleButton.toggleAction">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ToggleButton.toggleAction:checked">
+        <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="ToggleButton.toggleAction:checked:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+    </Style>
+
+    <Style Selector="TabControl">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="TabItem">
+        <Setter Property="Background" Value="{DynamicResource TabInactiveBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        <Setter Property="Padding" Value="12,7" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TabItem:selected">
+        <Setter Property="Background" Value="{DynamicResource TabActiveBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource TabActiveAccentBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+    </Style>
+    <!-- FluentTheme's own TabItem template draws its own selection indicator (PART_SelectedPipe);
+         hide it so only our full-width underline above shows, instead of two overlapping ones. -->
+    <Style Selector="TabItem:selected /template/ Border#PART_SelectedPipe">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+
+    <Style Selector="TreeViewItem">
+        <Setter Property="Padding" Value="2" />
+        <Setter Property="MinHeight" Value="22" />
+    </Style>
+    <Style Selector="TreeViewItem:selected /template/ Border#PART_LayoutRoot">
+        <Setter Property="Background" Value="{DynamicResource SelectionBackgroundBrush}" />
+    </Style>
+    <!--
+        No expand/collapse chevron - folders toggle via double-click instead (see FilesSectionView). Hiding
+        just the ToggleButton isn't enough: FluentTheme's TreeViewItem template wraps it in a
+        Panel#PART_ExpandCollapseChevronContainer that carries its own fixed 12px-each-side margin, and the
+        theme has a separate TreeViewItem:empty-scoped style that additionally pins that panel's Width to 12
+        (empty = zero children). Every folder here always has at least a placeholder child (see
+        FileTreeNodeViewModel, which seeds one so the tree can show an expander without eagerly scanning), so
+        folders are never :empty and skip that Width pin - only files (which really do have zero children)
+        get it, leaving their chevron column measurably wider than a folder's and shifting their name text
+        right of it. Forcing both the panel and the toggle to zero width/margin, for every row regardless of
+        :empty state, is what actually makes folder and file rows line up.
+    -->
+    <Style Selector="TreeViewItem /template/ Panel#PART_ExpandCollapseChevronContainer">
+        <Setter Property="IsVisible" Value="False" />
+        <Setter Property="Width" Value="0" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Margin" Value="0" />
+    </Style>
+    <Style Selector="TreeViewItem:empty /template/ Panel#PART_ExpandCollapseChevronContainer">
+        <Setter Property="IsVisible" Value="False" />
+        <Setter Property="Width" Value="0" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Margin" Value="0" />
+    </Style>
+    <Style Selector="TreeViewItem /template/ ToggleButton#PART_ExpandCollapseChevron">
+        <Setter Property="IsVisible" Value="False" />
+        <Setter Property="Width" Value="0" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Margin" Value="0" />
+    </Style>
+
+    <Style Selector="TextBox">
+        <Setter Property="Background" Value="#3C3C3C" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
+        <Setter Property="CornerRadius" Value="3" />
+    </Style>
+
+    <Style Selector="ListBox">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- Session/week usage percentage text (header) - default muted, switches to a soft red once usage
+         crosses the critical threshold (see HeaderViewModel.IsSessionUsageCritical/IsWeekUsageCritical). -->
+    <Style Selector="TextBlock.usageText">
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+    </Style>
+    <Style Selector="TextBlock.usageText.critical">
+        <Setter Property="Foreground" Value="{DynamicResource UsageCriticalBrush}" />
+    </Style>
+
+    <!-- Workspace tab title (header tab strip) - switches to accent blue while that tab's AI is working
+         (see WorkspaceTabViewModel.Version.IsAiWorking, mirrors the tab's own working-indicator dot). -->
+    <Style Selector="TextBlock.tabTitle.aiWorking">
+        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+
+    <Style Selector="Path.lineIcon">
+        <Setter Property="Stroke" Value="{DynamicResource TextMutedBrush}" />
+        <Setter Property="StrokeThickness" Value="1.2" />
+        <Setter Property="StrokeLineCap" Value="Round" />
+        <Setter Property="StrokeJoin" Value="Round" />
+        <Setter Property="Fill" Value="Transparent" />
+        <Setter Property="Stretch" Value="Uniform" />
+        <Setter Property="Width" Value="13" />
+        <Setter Property="Height" Value="13" />
+    </Style>
+</Styles>

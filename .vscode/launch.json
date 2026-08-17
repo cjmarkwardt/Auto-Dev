@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "AutoDev",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/Client/bin/Debug/net10.0/AutoDev.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/Client",
+            "stopAtEntry": false,
+            "console": "internalConsole"
+        }
+    ]
+}

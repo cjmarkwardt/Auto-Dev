@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/Client/">
+    <Project Path="Client/AutoDev.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/Tests.csproj" />
+  </Folder>
+</Solution>

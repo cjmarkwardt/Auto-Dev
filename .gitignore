@@ -1,0 +1,20 @@
+# Build outputs
+bin/
+obj/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# AutoDev's own per-workspace runtime state - generated locally whenever this repo is opened as a
+# workspace in AutoDev itself (session ids, drafts, generate-request history under .autodev/local/).
+.autodev/
+
+# Claude Code's own local session/tool state for this repo.
+.claude/
+
+# OS cruft
+.DS_Store
+Thumbs.db

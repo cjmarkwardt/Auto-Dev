@@ -1,0 +1,47 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Content"
+             x:Class="AutoDev.Views.Content.WorkspaceContentView"
+             x:DataType="vm:WorkspaceContentViewModel"
+             Background="{DynamicResource EditorBackgroundBrush}">
+    <!-- Edit is a permanent left pane; Generate/History/Output are tabbed on the right, split by a
+         resizable GridSplitter (same idiom as WorkspaceTabView's sidebar/content split). -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="{Binding EditColumnWidth, Mode=TwoWay}" MinWidth="300" />
+            <ColumnDefinition Width="4" />
+            <ColumnDefinition Width="{Binding TabsColumnWidth, Mode=TwoWay}" MinWidth="300" />
+        </Grid.ColumnDefinitions>
+
+        <ContentControl Grid.Column="0" Content="{Binding Edit}" />
+
+        <GridSplitter Grid.Column="1" Width="4" Background="Transparent" HorizontalAlignment="Stretch"
+                      ResizeDirection="Columns" Cursor="SizeWestEast" />
+
+        <!-- Visible divider line at the splitter's edge - same idiom as WorkspaceTabView's sidebar/content
+             border (a thin BorderBrush line layered against the transparent GridSplitter's wider drag area). -->
+        <Border Grid.Column="2" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1,0,0,0">
+            <!-- FluentTheme's TabControl mirrors its own Padding onto the selected content host's Margin, and
+                 the default theme Padding is non-zero on the trailing edge - override to 0 so tab content is flush. -->
+            <TabControl SelectedIndex="{Binding SelectedTabIndex}" Padding="0">
+                <TabControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Rows="1" />
+                    </ItemsPanelTemplate>
+                </TabControl.ItemsPanel>
+                <TabItem Header="Generate" HorizontalContentAlignment="Center">
+                    <ContentControl Content="{Binding Generate}" />
+                </TabItem>
+                <TabItem Header="History" HorizontalContentAlignment="Center">
+                    <ContentControl Content="{Binding History}" />
+                </TabItem>
+                <TabItem Header="Output" HorizontalContentAlignment="Center">
+                    <ContentControl Content="{Binding Output}" />
+                </TabItem>
+                <TabItem Header="Command" HorizontalContentAlignment="Center">
+                    <ContentControl Content="{Binding Command}" />
+                </TabItem>
+            </TabControl>
+        </Border>
+    </Grid>
+</UserControl>

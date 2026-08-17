@@ -1,0 +1,198 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Content"
+             xmlns:ae="using:AvaloniaEdit"
+             xmlns:mdxaml="https://github.com/whistyun/Markdown.Avalonia.Tight"
+             xmlns:conv="using:Avalonia.Data.Converters"
+             xmlns:syntaxHigh="using:Markdown.Avalonia.SyntaxHigh"
+             xmlns:hex="using:HexView.Avalonia.Controls"
+             xmlns:aconv="using:AutoDev.Converters"
+             xmlns:svc="using:AutoDev.Core.Services"
+             x:Class="AutoDev.Views.Content.EditTabView"
+             x:DataType="vm:EditTabViewModel">
+    <UserControl.Styles>
+        <Style Selector="Grid.diffAdded">
+            <Setter Property="Background" Value="#1E4620" />
+        </Style>
+        <Style Selector="Grid.diffRemoved">
+            <Setter Property="Background" Value="#4B1E1E" />
+        </Style>
+        <Style Selector="TextBlock.diffMarker">
+            <Setter Property="Text" Value=" " />
+        </Style>
+        <Style Selector="Grid.diffAdded TextBlock.diffMarker">
+            <Setter Property="Text" Value="+" />
+            <Setter Property="Foreground" Value="{DynamicResource GitAddedBrush}" />
+        </Style>
+        <Style Selector="Grid.diffRemoved TextBlock.diffMarker">
+            <Setter Property="Text" Value="-" />
+            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+        </Style>
+    </UserControl.Styles>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="{DynamicResource AccentBrush}" Padding="10,5" IsVisible="{Binding HasExternalChange}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="This file changed on disk." Foreground="White" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="Reload" Command="{Binding ReloadFromDiskCommand}" />
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}" Padding="10,4"
+                IsVisible="{Binding DisplayTitle, Converter={x:Static conv:StringConverters.IsNotNullOrEmpty}}">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <!-- Browser-style in-memory file history (see EditTabViewModel.GoBackCommand/GoForwardCommand) -
+                         also reachable via Alt+Left/Alt+Right (see EditTabView.axaml.cs's OnKeyDown). -->
+                    <Button Classes="iconButton" Content="◀" Command="{Binding GoBackCommand}" ToolTip.Tip="Back" Padding="4,2" FontSize="11" VerticalAlignment="Center" />
+                    <Button Classes="iconButton" Content="▶" Command="{Binding GoForwardCommand}" ToolTip.Tip="Forward" Padding="4,2" FontSize="11" VerticalAlignment="Center" />
+                    <Border Background="{DynamicResource TabActiveBackgroundBrush}" CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding KindLabel}" FontSize="10" Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="{Binding DisplayTitle}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding ReadOnlyReason}" FontSize="11" FontStyle="Italic"
+                               Foreground="{DynamicResource TextMutedBrush}" IsVisible="{Binding IsReadOnly}" VerticalAlignment="Center" />
+                    <!-- Diff mode is always read-only regardless of IsReadOnly (which tracks the current target/
+                         busy state, not this specific view) - see EditTabViewModel.LoadDiffAsync. Deliberately
+                         generic wording: this opens the same way for a specific historical commit (History
+                         tab) and for a not-yet-committed working-tree change (Files section's Changes Mode). -->
+                    <TextBlock Text="Read-only — viewing a diff" FontSize="11" FontStyle="Italic"
+                               Foreground="{DynamicResource TextMutedBrush}" IsVisible="{Binding IsDiff}" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                    <!-- Find-in-file toggle (see EditTabViewModel.IsFindBarOpen) - also reachable via Ctrl+F
+                         (EditTabView.axaml.cs's OnKeyDown) - hidden whenever there's no text to search at all
+                         (an image/hex view, or the large-file warning). Works against the rendered markdown
+                         preview the same as plain text - see EditTabViewModel.CanFind. -->
+                    <ToggleButton Classes="iconButton" IsChecked="{Binding IsFindBarOpen}"
+                                  IsVisible="{Binding CanFind}" ToolTip.Tip="Find (Ctrl+F)">
+                        <Path Classes="lineIcon" Data="{StaticResource FindIconGeometry}" Width="12" Height="12" />
+                    </ToggleButton>
+
+                    <!-- Markdown-only edit toggle (see EditTabViewModel.IsEditingMarkdown) - hidden entirely for any
+                         other file type. Off (default) renders the file; on edits it as plain text. -->
+                    <ToggleButton Classes="iconButton" IsChecked="{Binding IsEditingMarkdown}"
+                                  IsVisible="{Binding IsMarkdown}" ToolTip.Tip="Edit markdown">
+                        <Path Classes="lineIcon" Data="{StaticResource EditIconGeometry}" Width="12" Height="12" />
+                    </ToggleButton>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Find-in-file bar (see EditTabViewModel.IsFindBarOpen) - a non-modal row docked above the editor
+             rather than a blocking dialog, so the document stays fully visible/interactive underneath while
+             searching, same idiom as the "file changed on disk"/HasExternalChange banner above. -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}" Padding="10,6"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1"
+                IsVisible="{Binding IsFindBarOpen}">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBox Name="FindBox" Text="{Binding FindText}" PlaceholderText="Find" Width="220" FontSize="12" Padding="6,3" />
+                <TextBlock Text="{Binding FindMatchCountDisplay}" FontSize="11" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextMutedBrush}" MinWidth="60" />
+                <ToggleButton Classes="iconButton" Content="Aa" IsChecked="{Binding FindMatchCase}"
+                              ToolTip.Tip="Match case" FontSize="11" Padding="6,3" />
+                <ToggleButton Classes="iconButton" Content="&quot;W&quot;" IsChecked="{Binding FindMatchWholeWord}"
+                              ToolTip.Tip="Match whole word" FontSize="11" Padding="6,3" />
+                <Button Classes="iconButton" Content="▲" Command="{Binding FindPreviousCommand}"
+                        ToolTip.Tip="Previous match (Shift+Enter)" Padding="6,3" FontSize="10" />
+                <Button Classes="iconButton" Content="▼" Command="{Binding FindNextCommand}"
+                        ToolTip.Tip="Next match (Enter)" Padding="6,3" FontSize="10" />
+                <Button Classes="iconButton" Command="{Binding CloseFindBarCommand}" ToolTip.Tip="Close (Esc)" Padding="4,2">
+                    <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="10" Height="10" />
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <!-- ShowTextEditor/ShowMarkdownPreview are mutually exclusive for a markdown file (IsEditingMarkdown
+                 is a single bool), so both children can simply share the whole Grid full-size with only one
+                 ever visible - no column split needed now that Dual mode is gone. -->
+            <ae:TextEditor Name="Editor"
+                           IsVisible="{Binding ShowTextEditor}"
+                           FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace" FontSize="13"
+                           ShowLineNumbers="True" Padding="14,8" IsReadOnly="{Binding IsReadOnly}"
+                           Background="{DynamicResource EditorBackgroundBrush}"
+                           Foreground="{DynamicResource TextPrimaryBrush}"
+                           LineNumbersForeground="{DynamicResource TextMutedBrush}" />
+
+            <Border IsVisible="{Binding ShowMarkdownPreview}" Background="{DynamicResource EditorBackgroundBrush}">
+                <!-- Markdown is bound straight to Content, so it re-renders on every keystroke in the text
+                     editor with no extra glue code - the binding stays live even while this panel is hidden
+                     (edit mode), so it's already current the moment the toggle is switched off again.
+
+                     No wrapping ScrollViewer here - MarkdownScrollViewer already scrolls itself (it has its
+                     own ScrollValue), and by default (SaveScrollValueWhenContentUpdated="False") resets to
+                     the top whenever Markdown changes. A wrapping ScrollViewer would instead keep whatever
+                     offset it had, bleeding the previous file's scroll position into whatever's opened next.
+
+                     The FontFamily/Foreground/Background overrides for code spans/blocks live in App.axaml's
+                     Application.Styles, not nested here - MarkdownScrollViewer reconstructs its own Styles
+                     collection when Markdown updates, which was silently discarding a Styles override nested
+                     directly under this element (see App.axaml for the actual fix and why). -->
+                <mdxaml:MarkdownScrollViewer Name="MarkdownPreview" Markdown="{Binding RenderedContent}" Margin="14,8"
+                                             SelectionEnabled="True">
+                    <mdxaml:MarkdownScrollViewer.Plugins>
+                        <mdxaml:MdAvPlugins>
+                            <syntaxHigh:SyntaxHighlight />
+                            <svc:SvgMarkdownPlugin />
+                        </mdxaml:MdAvPlugins>
+                    </mdxaml:MarkdownScrollViewer.Plugins>
+                </mdxaml:MarkdownScrollViewer>
+            </Border>
+
+            <ScrollViewer IsVisible="{Binding IsImage}" Background="{DynamicResource EditorBackgroundBrush}">
+                <Image Source="{Binding ImageSource}" Stretch="Uniform" Margin="20"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </ScrollViewer>
+
+            <TextBlock Text="Unable to load image" IsVisible="{Binding ImageLoadFailed}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       FontSize="13" Foreground="{DynamicResource TextMutedBrush}" />
+
+            <!-- Confirmed via the IsLargeFile warning's Load Anyway button for a binary (non-image) file - see
+                 EditTabView.axaml.cs's SetupHexView, which memory-maps CurrentFilePath straight into
+                 LineReader the moment IsHexView flips true, so even a huge file never gets read into a string. -->
+            <Border IsVisible="{Binding IsHexView}" Background="{DynamicResource EditorBackgroundBrush}">
+                <hex:HexViewControl Name="HexViewer" IsEditable="False" />
+            </Border>
+
+            <!-- Diff mode (see EditTabViewModel.LoadDiffAsync) - one merged before/after sequence rather than
+                 side-by-side panes, each line individually colored/prefixed by DiffLineKind, with its own
+                 old/new gutter numbers (each blank on whichever side that line doesn't exist on). Read-only by
+                 construction - there's no editable control here at all, unlike the plain text editor above,
+                 whose own IsReadOnly binding this mode doesn't need or use. -->
+            <ScrollViewer IsVisible="{Binding IsDiff}" Background="{DynamicResource EditorBackgroundBrush}">
+                <ItemsControl ItemsSource="{Binding DiffLines}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:DiffLine">
+                            <Grid ColumnDefinitions="44,44,Auto,*" Classes.diffAdded="{Binding Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Added}"
+                                  Classes.diffRemoved="{Binding Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Removed}">
+                                <TextBlock Grid.Column="0" Text="{Binding OldLineNumber}" FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace"
+                                           FontSize="12" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" Padding="0,0,8,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding NewLineNumber}" FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace"
+                                           FontSize="12" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" Padding="0,0,8,0" />
+                                <TextBlock Grid.Column="2" Classes="diffMarker" Width="14" FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace" FontSize="13" />
+                                <TextBlock Grid.Column="3" Text="{Binding Text}" FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace"
+                                           FontSize="13" TextWrapping="NoWrap" Foreground="{DynamicResource TextPrimaryBrush}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <StackPanel IsVisible="{Binding IsLargeFile}" Background="{DynamicResource EditorBackgroundBrush}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                <TextBlock Text="{Binding LargeFileWarningTitle}" FontSize="16" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+                <TextBlock Text="{Binding LargeFileWarningDetail}" FontSize="12" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+                <Button Content="Load Anyway" Command="{Binding LoadLargeFileAnywayCommand}"
+                        HorizontalAlignment="Center" Margin="0,8,0,0" />
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding DisplayTitle, Converter={x:Static conv:StringConverters.IsNullOrEmpty}}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" IsHitTestVisible="False">
+                <TextBlock Text="No file open" FontSize="16" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+                <TextBlock Text="Select a file in the sidebar to view or edit it." FontSize="12" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

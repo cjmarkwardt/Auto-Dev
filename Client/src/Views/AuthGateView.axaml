@@ -1,0 +1,32 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels"
+             xmlns:views="using:AutoDev.Views"
+             x:Class="AutoDev.Views.AuthGateView"
+             x:DataType="vm:AuthGateViewModel"
+             Background="{DynamicResource EditorBackgroundBrush}">
+    <DockPanel>
+        <!-- No OS titlebar (see MainWindow's ExtendClientArea* hints) - this screen has no workspace tab
+             bar to double as one yet, so it gets its own minimal drag region + close/minimize controls. -->
+        <Border DockPanel.Dock="Top" Height="40" Background="{DynamicResource HeaderBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1"
+                PointerPressed="OnTitleBarPointerPressed">
+            <views:WindowControlsView HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
+        </Border>
+
+        <Grid HorizontalAlignment="Center" VerticalAlignment="Center" Width="360">
+            <StackPanel Spacing="16" HorizontalAlignment="Center">
+                <TextBlock Text="AutoDev" FontSize="28" FontWeight="Bold" HorizontalAlignment="Center" />
+                <TextBlock Text="AI-assisted development" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Center" />
+
+                <Button Content="{Binding LoginButtonLabel}" Classes="accent" HorizontalAlignment="Center"
+                        Padding="20,10" Margin="0,20,0,0"
+                        Command="{Binding LoginCommand}"
+                        IsEnabled="{Binding !IsBusy}" />
+
+                <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource TextMutedBrush}"
+                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

@@ -1,0 +1,106 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels"
+             xmlns:svm="using:AutoDev.ViewModels.Sidebar"
+             x:Class="AutoDev.Views.WorkspaceTabView"
+             x:DataType="vm:WorkspaceTabViewModel">
+    <UserControl.Styles>
+        <!-- ListBox (unlike TreeView) has no HorizontalContentAlignment property of its own to set directly,
+             but a Style Setter can still reach ListBoxItem's - without this, the F1 search popup's
+             selection/hover highlight (each ListBoxItem's own background) only spans as wide as its content,
+             not the popup's actual width. -->
+        <Style Selector="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        </Style>
+    </UserControl.Styles>
+    <Panel>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="{Binding SidebarWidth, Mode=TwoWay}" MinWidth="180" MaxWidth="600" />
+                <ColumnDefinition Width="4" />
+                <ColumnDefinition Width="*" MinWidth="300" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0" RowDefinitions="Auto,*" Background="{DynamicResource SideBarBackgroundBrush}">
+                <ContentControl Grid.Row="0" Content="{Binding Version}" />
+                <Border Grid.Row="0" VerticalAlignment="Bottom" Height="1" Background="{DynamicResource BorderSubtleBrush}" />
+                <ContentControl Grid.Row="1" Content="{Binding Files}" />
+            </Grid>
+
+            <GridSplitter Grid.Column="1" Width="4" Background="Transparent" HorizontalAlignment="Stretch"
+                          ResizeDirection="Columns" Cursor="SizeWestEast" />
+
+            <Border Grid.Column="2" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1,0,0,0">
+                <ContentControl Content="{Binding Content}" />
+            </Border>
+        </Grid>
+
+        <!-- F2 quick-open overlay -->
+        <Panel IsVisible="{Binding FileSearch.IsOpen}" Background="#88000000" x:Name="SearchBackdrop" PointerPressed="OnBackdropPointerPressed">
+            <Border Width="560" MaxHeight="420" VerticalAlignment="Top" Margin="0,90,0,0" HorizontalAlignment="Center"
+                    Background="{DynamicResource EditorBackgroundBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                    BorderThickness="1" CornerRadius="6" PointerPressed="OnPopupPointerPressed">
+                <DockPanel>
+                    <TextBox Name="SearchBox" DockPanel.Dock="Top" Text="{Binding FileSearch.Query}"
+                             PlaceholderText="{Binding FileSearch.Placeholder}" BorderThickness="0" Padding="12,10" FontSize="14"
+                             Background="Transparent" KeyDown="OnSearchKeyDown" />
+                    <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource BorderSubtleBrush}" />
+
+                    <ListBox IsVisible="{Binding FileSearch.IsFileNameMode}"
+                             ItemsSource="{Binding FileSearch.Results}" SelectedItem="{Binding FileSearch.SelectedResult}"
+                             Background="Transparent" MaxHeight="360">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="svm:FileSearchResultViewModel">
+                                <StackPanel Margin="4,2" HorizontalAlignment="Stretch" PointerPressed="OnResultPointerPressed">
+                                    <TextBlock Text="{Binding FileName}" FontSize="13" />
+                                    <TextBlock Text="{Binding RelativePath}" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <ListBox IsVisible="{Binding FileSearch.IsContentMode}"
+                             ItemsSource="{Binding FileSearch.ContentResults}" SelectedItem="{Binding FileSearch.SelectedContentResult}"
+                             Background="Transparent" MaxHeight="360">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="svm:ContentSearchResultViewModel">
+                                <StackPanel Margin="4,2" HorizontalAlignment="Stretch" PointerPressed="OnContentResultPointerPressed">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="{Binding FileName}" FontSize="13" />
+                                        <TextBlock Text="{Binding LineNumber, StringFormat=':{0}'}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding RelativePath}" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Snippet}" FontSize="11" FontFamily="monospace"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+        </Panel>
+
+        <!-- Blocks all input while a git action is in flight (Version section actions, History switches) -->
+        <Panel IsVisible="{Binding Version.IsBusy}" Background="#88000000">
+            <Border Background="{DynamicResource EditorBackgroundBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                    BorderThickness="1" CornerRadius="6" Padding="24,20" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                    <ProgressBar IsIndeterminate="True" Width="160" Height="4" />
+                    <TextBlock Text="Working…" FontSize="13" HorizontalAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </Panel>
+
+        <!-- Fully opaque, on top of everything else - covers the sidebar/content while this tab's own
+             InitializeAsync is still loading (repo state, output history), since those would otherwise
+             render prematurely empty for a moment right after opening a workspace. -->
+        <Panel IsVisible="{Binding IsLoading}" Background="{DynamicResource EditorBackgroundBrush}">
+            <StackPanel Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="160" Height="4" />
+                <TextBlock Text="Loading workspace…" FontSize="13" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+            </StackPanel>
+        </Panel>
+    </Panel>
+</UserControl>

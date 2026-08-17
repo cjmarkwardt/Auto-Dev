@@ -1,0 +1,117 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Content"
+             x:Class="AutoDev.Views.Content.OutputTabView"
+             x:DataType="vm:OutputTabViewModel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1"
+                Padding="10,6" IsVisible="{Binding HasEntries}">
+            <ComboBox ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch" PlaceholderText="Select a task…">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate DataType="vm:OutputTaskEntry">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}"
+                                       VerticalAlignment="Center" IsVisible="{Binding IsRunning}" />
+                            <TextBlock Text="{Binding Name}" FontSize="12" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}" Padding="10,4"
+                IsVisible="{Binding HasTask}">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding TaskName}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="5" IsVisible="{Binding ShowRunning}">
+                        <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="Running…" FontStyle="Italic" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                    </StackPanel>
+                    <TextBlock Text="✓ Succeeded" IsVisible="{Binding ShowSucceeded}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
+                    <TextBlock Text="⊘ Stopped" IsVisible="{Binding ShowStopped}" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                    <TextBlock Text="✗ Failed" IsVisible="{Binding ShowFailed}" FontSize="11" Foreground="Crimson" />
+                </StackPanel>
+                <Button Grid.Column="1" Classes="sidebarAction" Content="Stop" Command="{Binding StopCommand}"
+                        IsVisible="{Binding ShowRunning}" ToolTip.Tip="Forcefully stop this task" />
+            </Grid>
+        </Border>
+
+        <!-- A DockPanel only gives HorizontalAlignment/VerticalAlignment room to work with on its LAST
+             child (LastChildFill) - these two are mutually-exclusive alternates for the same body area, so
+             they're grouped in their own Grid where every child gets the full remaining space to center in. -->
+        <Grid>
+            <TextBlock Text="No task selected. Pick one from the dropdown above, or right-click a task in the sidebar and choose View."
+                       IsVisible="{Binding !HasTask}" TextWrapping="Wrap" TextAlignment="Center" Margin="24,0"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextMutedBrush}" FontSize="13" />
+
+            <DockPanel IsVisible="{Binding HasTask}">
+                <TextBlock DockPanel.Dock="Top" Text="{Binding ScriptRunError}" IsVisible="{Binding HasScriptRunError}"
+                           TextWrapping="Wrap" Margin="14,10,14,0" Foreground="Crimson" FontSize="12.5" />
+
+                <!-- One checkbox per block (including hidden ones) - toggles that block's panel below without
+                     removing it from the list, so a block can be hidden then shown again without losing its
+                     accumulated output. -->
+                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding ScriptBlocks}" Margin="14,10,14,0">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:ScriptBlockPanelViewModel">
+                            <CheckBox Content="{Binding Name}" IsChecked="{Binding IsVisible, Mode=TwoWay}" Margin="0,0,14,6" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Bound to VisibleScriptBlocks (not ScriptBlocks) so a hidden panel is actually absent from
+                     the grid rather than just invisible. GridRowCount/GridColumnCount and each panel's own
+                     ResolvedRow/ResolvedColumn are computed by ScriptBlockGridLayout (see OutputTabViewModel)
+                     - a script with no requested position auto-arranges as close to square as possible, same
+                     as the old UniformGrid; one with a requested Row/Column lands at that exact cell instead.
+                     Grid.RowDefinitions/ColumnDefinitions have no bindable setter in Avalonia (only the
+                     XAML-literal string form works) and per-item Grid.Row/Grid.Column can't be data-bound onto
+                     an ItemsControl's generated container either - OutputTabView's code-behind applies both
+                     directly via ItemsPanelRoot and the ContainerPrepared event. -->
+                <ItemsControl Name="ScriptBlockGrid" ItemsSource="{Binding VisibleScriptBlocks}" Margin="14,10,14,14"
+                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <Grid />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:ScriptBlockPanelViewModel">
+                            <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="4"
+                                    Margin="4" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}"
+                                            BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1" Padding="8,5">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+                                            <StackPanel Orientation="Horizontal" Spacing="5" IsVisible="{Binding ShowRunning}">
+                                                <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Text="Running…" FontStyle="Italic" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Text="✓ Succeeded" IsVisible="{Binding ShowSucceeded}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
+                                            <TextBlock Text="⊘ Stopped" IsVisible="{Binding ShowStopped}" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBlock Text="✗ Failed" IsVisible="{Binding ShowFailed}" FontSize="11" Foreground="Crimson" />
+                                        </StackPanel>
+                                    </Border>
+                                    <ScrollViewer>
+                                        <SelectableTextBlock Text="{Binding OutputText}" TextWrapping="Wrap" Margin="8"
+                                                              FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace" FontSize="12" />
+                                    </ScrollViewer>
+                                </DockPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

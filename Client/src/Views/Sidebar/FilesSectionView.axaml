@@ -1,0 +1,217 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Sidebar"
+             xmlns:cvm="using:AutoDev.ViewModels"
+             xmlns:conv="using:Avalonia.Data.Converters"
+             xmlns:aconv="using:AutoDev.Converters"
+             x:Class="AutoDev.Views.Sidebar.FilesSectionView"
+             x:DataType="vm:FilesSectionViewModel">
+    <DockPanel>
+        <!-- No "FILES" heading - its New File/New Folder/Open actions are now inline icon buttons, always
+             visible rather than tucked behind a menu. Each command's own CanExecute already disables its
+             button automatically, so no extra IsEnabled bindings are needed here. -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="2" Margin="6,4" HorizontalAlignment="Right">
+            <Button Classes="iconButton" ToolTip.Tip="New File" Command="{Binding NewFileCommand}">
+                <Path Classes="lineIcon" Data="{StaticResource NewFileIconGeometry}" Width="13" Height="13" />
+            </Button>
+            <Button Classes="iconButton" ToolTip.Tip="New Folder" Command="{Binding NewFolderCommand}">
+                <Path Classes="lineIcon" Data="{StaticResource NewFolderIconGeometry}" Width="13" Height="13" />
+            </Button>
+            <Button Classes="iconButton" ToolTip.Tip="Open in File Manager" Command="{Binding OpenInFileManagerCommand}">
+                <Path Classes="lineIcon" Data="{StaticResource OpenExternalIconGeometry}" Width="13" Height="13" />
+            </Button>
+            <Button Classes="iconButton" ToolTip.Tip="Collapse All" Command="{Binding CollapseAllCommand}">
+                <Path Classes="lineIcon" Data="{StaticResource CollapseAllIconGeometry}" Width="13" Height="13" />
+            </Button>
+            <!-- Purely a view-layer filter (see FilesSectionViewModel.ShowIgnoredFiles) - toggling it never
+                 re-scans the tree, just shows/hides rows already loaded. Active (accent-colored) state means
+                 "currently showing" ignored files, same convention as EditTabView's markdown-edit toggle.
+                 Disabled while Changes Mode is on - it has no effect on that tree (Changes Mode already only
+                 ever shows real, non-ignored changes). -->
+            <ToggleButton Classes="iconButton" IsChecked="{Binding ShowIgnoredFiles}" IsEnabled="{Binding !IsChangesMode}"
+                          ToolTip.Tip="Show/Hide Gitignored Files">
+                <Path Classes="lineIcon" Data="{StaticResource EyeIconGeometry}" Width="13" Height="13" />
+            </ToggleButton>
+            <!-- Swaps the whole tree below for a read-only view of just the workspace's own current
+                 uncommitted changes (see FilesSectionViewModel.IsChangesMode) - New File/Folder and every
+                 per-row mutation (rename/delete/duplicate/drag) are disabled for as long as it's on, since
+                 this mode is for reviewing what changed, not editing. -->
+            <ToggleButton Classes="iconButton" IsChecked="{Binding IsChangesMode}"
+                          ToolTip.Tip="Toggle Changes Mode">
+                <Path Classes="lineIcon" Data="{StaticResource ChangesIconGeometry}" Width="13" Height="13" />
+            </ToggleButton>
+        </StackPanel>
+
+        <!-- Drop target for a drag from outside the app (e.g. the OS file manager) landing on empty tree
+             space, below/between rows - moves into the workspace root. A drop that lands directly on a row
+             is handled by that row's own DragDrop.Drop (below) instead, which stops the event here via
+             e.Handled before it'd reach this one. -->
+        <!-- HorizontalScrollBarVisibility="Disabled": a long name just gets clipped by the sidebar's own fixed
+             column width instead of scrolling sideways, which reads better in a narrow sidebar tree - each
+             row's own MinWidth (in the ItemTemplate below) is the actual fix for rows stretching full-width. -->
+        <TreeView Padding="10,0,0,0" ItemsSource="{Binding RootNodes}" SelectedItem="{Binding SelectedNode}"
+                  IsVisible="{Binding !IsChangesMode}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                  DragDrop.AllowDrop="True" DragDrop.DragOver="OnTreeDragOver" DragDrop.Drop="OnTreeDrop">
+            <TreeView.Styles>
+                <Style Selector="TreeViewItem" x:DataType="vm:FileTreeNodeViewModel">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                    <!-- Without this, each row (and its custom Border below, which draws the hover/selection
+                         background) sizes to its own label's content width instead of spanning the sidebar. -->
+                    <Setter Property="HorizontalAlignment" Value="Stretch" />
+                    <!-- On the TreeViewItem CONTAINER itself, not just the row's own inner content (see the
+                         ItemTemplate's Border below) - hiding only the content left the container's own
+                         padding/min-height/indentation-guide still taking up space, so a hidden ignored file
+                         collapsed to a blank row instead of vanishing entirely. -->
+                    <Setter Property="IsVisible">
+                        <MultiBinding Converter="{x:Static BoolConverters.Or}">
+                            <Binding Path="!IsIgnored" />
+                            <Binding Path="$parent[UserControl].((vm:FilesSectionViewModel)DataContext).ShowIgnoredFiles" />
+                        </MultiBinding>
+                    </Setter>
+                </Style>
+                <!-- Git status colors (see FileTreeNodeViewModel.Status) - Unmodified (tracked, no pending
+                     changes) is deliberately not styled here at all, so it just falls through to the
+                     TextBlock's own default (white) foreground. -->
+                <Style Selector="TextBlock.added">
+                    <Setter Property="Foreground" Value="{DynamicResource GitAddedBrush}" />
+                </Style>
+                <Style Selector="TextBlock.modified">
+                    <Setter Property="Foreground" Value="{DynamicResource GitModifiedBrush}" />
+                </Style>
+                <!-- Gitignore-excluded files/folders (see FileTreeNodeViewModel.IsIgnored) - dimmed the same
+                     muted gray used elsewhere for de-emphasized text, not a distinct color of its own. -->
+                <Style Selector="TextBlock.ignored">
+                    <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                </Style>
+                <!-- .task files (see FileTreeNodeViewModel.IsTaskFile) are marked by TaskFileIconGeometry
+                     (below) rather than a text color of their own now - only IsTaskRunning still gets its own
+                     styling, bolding the name while that task actually has a run in flight. -->
+                <Style Selector="TextBlock.taskFileRunning">
+                    <Setter Property="FontWeight" Value="Bold" />
+                </Style>
+            </TreeView.Styles>
+            <TreeView.ItemTemplate>
+                <TreeDataTemplate DataType="vm:FileTreeNodeViewModel" ItemsSource="{Binding Children}">
+                    <!-- A file row is a valid drop target too (see OnRowDrop) - it just resolves to that
+                         file's own containing folder, the same way dropping "on" a sibling file in a real
+                         file manager usually means "into this folder" rather than being rejected outright. -->
+                    <!-- MinWidth forces the row at least as wide as the tree's own viewport, clipped there by
+                         the tree's own bounds - plain HorizontalAlignment="Stretch" alone isn't enough, since
+                         TreeView's internal ScrollViewer measures rows with unbounded width to figure out
+                         whether horizontal scrolling is needed, so every row naturally sizes to only as wide
+                         as the single widest sibling's content rather than to the actual visible width.
+                         HorizontalAlignment="Left" (not Stretch) here: once MinWidth makes a row wider than the
+                         space actually allotted to it, Stretch centers that overflow instead of anchoring it -
+                         clipping the icon on the left by the same amount as the unseen overflow on the right. -->
+                    <Border Background="Transparent" Padding="2,1" HorizontalAlignment="Left"
+                            MinWidth="{Binding $parent[TreeView].Bounds.Width}" PointerPressed="OnNodePointerPressed"
+                            PointerMoved="OnRowPointerMoved" PointerReleased="OnRowPointerReleased"
+                            DragDrop.AllowDrop="True" DragDrop.DragOver="OnRowDragOver" DragDrop.Drop="OnRowDrop">
+                        <Border.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="New File" IsVisible="{Binding IsDirectory}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).NewFileInFolderCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="New Folder" IsVisible="{Binding IsDirectory}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).NewFolderInFolderCommand}"
+                                          CommandParameter="{Binding}" />
+                                <Separator IsVisible="{Binding IsDirectory}" />
+                                <MenuItem Header="Open" IsVisible="{Binding IsDirectory}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).OpenFolderInFileManagerCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Open Folder" IsVisible="{Binding !IsDirectory}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).OpenFolderInFileManagerCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Copy Path"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).CopyPathCommand}"
+                                          CommandParameter="{Binding}" />
+                                <Separator />
+                                <MenuItem Header="Run" IsVisible="{Binding IsTaskFile}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).RunTaskCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Stop" IsVisible="{Binding IsTaskFile}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).StopTaskCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="View" IsVisible="{Binding IsTaskFile}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).ViewTaskCommand}"
+                                          CommandParameter="{Binding}" />
+                                <Separator IsVisible="{Binding IsTaskFile}" />
+                                <MenuItem Header="Rename"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).RenameCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Duplicate"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).DuplicateCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Delete"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).DeleteCommand}"
+                                          CommandParameter="{Binding}" />
+                            </ContextMenu>
+                        </Border.ContextMenu>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <!-- Fixed-size slot so the folder/file icon's own differing dimensions (12x12 vs
+                                 11x11) never shift where the name text starts - without this, file rows sat
+                                 1px left of folder rows at the same level. -->
+                            <Panel Width="12" Height="12">
+                                <Path Classes="lineIcon" Data="{StaticResource FolderIconGeometry}" Width="12" Height="12" IsVisible="{Binding IsDirectory}" />
+                                <Path Classes="lineIcon" Data="{StaticResource TaskFileIconGeometry}" Width="11" Height="11" IsVisible="{Binding IsTaskFile}" />
+                                <Path Classes="lineIcon" Data="{StaticResource FileIconGeometry}" Width="11" Height="11" IsVisible="{Binding IsPlainFile}" />
+                            </Panel>
+                            <TextBlock Text="{Binding Name}" FontSize="12" Classes.added="{Binding IsAdded}"
+                                       Classes.modified="{Binding IsModified}" Classes.ignored="{Binding IsIgnored}"
+                                       Classes.taskFileRunning="{Binding IsTaskRunning}" />
+                        </StackPanel>
+                    </Border>
+                </TreeDataTemplate>
+            </TreeView.ItemTemplate>
+        </TreeView>
+
+        <!-- Changes Mode (see FilesSectionViewModel.IsChangesMode/ChangedNodes) - a read-only view of just the
+             workspace's own current uncommitted changes, always fully expanded like the History tab's own
+             expanded-commit changes tree (which this reuses ChangeTreeNode from). Clicking a file opens its
+             HEAD-versus-on-disk diff in the Edit tab, same as clicking a file there opens its before/after for
+             that commit. -->
+        <TreeView Padding="10,0,0,0" ItemsSource="{Binding ChangedNodes}" IsVisible="{Binding IsChangesMode}"
+                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <TreeView.Styles>
+                <Style Selector="TreeViewItem" x:DataType="cvm:ChangeTreeNode">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                    <Setter Property="HorizontalAlignment" Value="Stretch" />
+                </Style>
+                <Style Selector="Border.historyRow">
+                    <Setter Property="Background" Value="Transparent" />
+                </Style>
+                <Style Selector="Border.historyRow:pointerover">
+                    <Setter Property="Background" Value="{DynamicResource HoverBackgroundBrush}" />
+                </Style>
+                <Style Selector="TextBlock.changeAdded">
+                    <Setter Property="Foreground" Value="{DynamicResource GitAddedBrush}" />
+                </Style>
+                <Style Selector="TextBlock.changeModified">
+                    <Setter Property="Foreground" Value="{DynamicResource GitModifiedBrush}" />
+                </Style>
+                <Style Selector="TextBlock.changeDeleted">
+                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                </Style>
+            </TreeView.Styles>
+            <TreeView.ItemTemplate>
+                <TreeDataTemplate DataType="cvm:ChangeTreeNode" ItemsSource="{Binding Children}">
+                    <!-- HorizontalAlignment="Left", not Stretch - see the equivalent row Border in the normal
+                         tree above for why. -->
+                    <Border Classes="historyRow" Padding="2,1" HorizontalAlignment="Left"
+                            MinWidth="{Binding $parent[TreeView].Bounds.Width}" Cursor="Hand" Tag="{Binding}" PointerPressed="OnChangePointerPressed">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Panel Width="12" Height="12">
+                                <Path Classes="lineIcon" Data="{StaticResource FolderIconGeometry}" Width="12" Height="12" IsVisible="{Binding IsDirectory}" />
+                                <Path Classes="lineIcon" Data="{StaticResource FileIconGeometry}" Width="11" Height="11" IsVisible="{Binding !IsDirectory}" />
+                            </Panel>
+                            <TextBlock Text="{Binding Name}" FontSize="12"
+                                       Classes.changeAdded="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Added}"
+                                       Classes.changeModified="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Modified}"
+                                       Classes.changeDeleted="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Deleted}" />
+                        </StackPanel>
+                    </Border>
+                </TreeDataTemplate>
+            </TreeView.ItemTemplate>
+        </TreeView>
+    </DockPanel>
+</UserControl>

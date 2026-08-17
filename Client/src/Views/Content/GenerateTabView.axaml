@@ -1,0 +1,206 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Content"
+             xmlns:conv="using:Avalonia.Data.Converters"
+             xmlns:mdxaml="https://github.com/whistyun/Markdown.Avalonia.Tight"
+             xmlns:syntaxHigh="using:Markdown.Avalonia.SyntaxHigh"
+             xmlns:svc="using:AutoDev.Core.Services"
+             x:Class="AutoDev.Views.Content.GenerateTabView"
+             x:DataType="vm:GenerateTabViewModel">
+    <UserControl.Styles>
+        <!-- Request status block (middle of the displayed request) - muted while Cancelled, accent blue
+             while Working, gold while Completed (mirrors ChatFinalTextBrush's existing "wrap-up/final-state"
+             use in TasksSectionView). -->
+        <Style Selector="TextBlock.requestStatus">
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        </Style>
+        <Style Selector="TextBlock.requestStatus.working">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+        </Style>
+        <Style Selector="TextBlock.requestStatus.completed">
+            <Setter Property="Foreground" Value="{DynamicResource ChatFinalTextBrush}" />
+        </Style>
+    </UserControl.Styles>
+    <Grid>
+        <Grid IsVisible="{Binding IsEditable}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" MinHeight="80" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="{Binding InputRowHeight, Mode=TwoWay}" MinHeight="44" MaxHeight="500" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" RowDefinitions="Auto,*">
+                <!-- Cycles through the last MaxRequests requests for this session - see GenerateTabViewModel.Requests/DisplayedIndex. -->
+                <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="14,10,14,0"
+                      IsVisible="{Binding DisplayedRequest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                    <Button Grid.Column="0" Classes="iconButton" Command="{Binding PreviousRequestCommand}"
+                            Content="◀" ToolTip.Tip="Previous request" />
+                    <TextBlock Grid.Column="1" Text="{Binding RequestPositionLabel}" HorizontalAlignment="Center"
+                               FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                    <Button Grid.Column="2" Classes="iconButton" Command="{Binding NextRequestCommand}"
+                            Content="▶" ToolTip.Tip="Next request" />
+                </Grid>
+
+                <ScrollViewer Name="Scroller" Grid.Row="1">
+                    <StackPanel Margin="14,10" Spacing="10" HorizontalAlignment="Stretch"
+                                IsVisible="{Binding DisplayedRequest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                        <!-- Request input. -->
+                        <Border Background="{DynamicResource HeaderBackgroundBrush}" CornerRadius="4" Padding="10,8">
+                            <SelectableTextBlock Text="{Binding DisplayedRequest.Input}" TextWrapping="Wrap" />
+                        </Border>
+
+                        <!-- Status: Working/Cancelled/Completed - its own larger, centered block. -->
+                        <Border Background="{DynamicResource HeaderBackgroundBrush}" CornerRadius="4" Padding="14,20">
+                            <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                                <TextBlock Text="●" FontSize="14" VerticalAlignment="Center"
+                                           Classes="requestStatus" Classes.working="{Binding DisplayedRequest.IsWorking}"
+                                           IsVisible="{Binding DisplayedRequest.IsWorking}" />
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <!-- LineHeight explicitly wider than FontSize - glyphs otherwise clip against
+                                         Avalonia's auto-computed line box at this font size (not visible at the
+                                         smaller size this text used to render at). -->
+                                    <TextBlock Text="{Binding DisplayedRequest.DisplayStatus}" FontSize="20" LineHeight="28"
+                                               TextWrapping="Wrap" TextAlignment="Center" MaxWidth="480"
+                                               HorizontalAlignment="Center"
+                                               Classes="requestStatus" Classes.working="{Binding DisplayedRequest.IsWorking}"
+                                               Classes.completed="{Binding DisplayedRequest.IsCompleted}" />
+                                    <!-- How long the AI has spent on the current action - see GenerateRequestViewModel.ElapsedDisplay. -->
+                                    <TextBlock Text="{Binding DisplayedRequest.ElapsedDisplay}" FontSize="12"
+                                               HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}"
+                                               IsVisible="{Binding DisplayedRequest.IsWorking}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Final output, rendered as full markdown (same renderer/plugins as .md files - see
+                             EditTabView.axaml's MarkdownScrollViewer). Nested here inside the outer Scroller
+                             rather than given its own bounded height, so it just contributes its natural content
+                             height to the StackPanel and the outer Scroller does the actual scrolling. -->
+                        <mdxaml:MarkdownScrollViewer Name="OutputMarkdown" Markdown="{Binding DisplayedRequest.RenderedOutput}"
+                                                      IsVisible="{Binding DisplayedRequest.HasOutput}"
+                                                      SelectionEnabled="True">
+                            <mdxaml:MarkdownScrollViewer.Plugins>
+                                <mdxaml:MdAvPlugins>
+                                    <syntaxHigh:SyntaxHighlight />
+                                    <svc:SvgMarkdownPlugin />
+                                </mdxaml:MdAvPlugins>
+                            </mdxaml:MarkdownScrollViewer.Plugins>
+                        </mdxaml:MarkdownScrollViewer>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- Drags the input row (below) taller/shorter, within its Min/MaxHeight - lets large pastes get more room. -->
+            <GridSplitter Grid.Row="1" Height="4" Background="Transparent" VerticalAlignment="Stretch"
+                          ResizeDirection="Rows" Cursor="SizeNorthSouth" />
+
+            <!-- TextBox is wrapped in a plain Border for the actual background/edge: FluentTheme's TextBox
+                 control template has its own internal chrome inset that HorizontalAlignment="Stretch" alone
+                 doesn't overcome, leaving a sliver of the page background visible on the sides. -->
+            <Border Grid.Row="2" Background="{DynamicResource HeaderBackgroundBrush}"
+                    BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0">
+                <DockPanel>
+                    <!-- Images/files pasted or dropped but not yet sent (see GenerateTabView.axaml.cs's paste
+                         handling) - two small strips above the text box, each entry removable before Send.
+                         Neither ever touches InputText - both live entirely as their own pending-attachment
+                         collections (see GenerateTabViewModel.Attachments/FileAttachments). -->
+                    <StackPanel DockPanel.Dock="Top" IsVisible="{Binding HasAnyAttachments}" Margin="10,8,10,0">
+                        <ItemsControl ItemsSource="{Binding Attachments}" IsVisible="{Binding HasAttachments}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:ChatImageAttachment">
+                                    <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="4"
+                                            Margin="0,0,6,6" ClipToBounds="True" Width="48" Height="48">
+                                        <Grid>
+                                            <Image Source="{Binding Bitmap}" Width="48" Height="48" Stretch="UniformToFill" />
+                                            <Button Classes="iconButton" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                    Background="#88000000" Padding="2" Margin="2"
+                                                    ToolTip.Tip="Remove"
+                                                    Command="{Binding $parent[UserControl].((vm:GenerateTabViewModel)DataContext).RemoveAttachmentCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="8" Height="8" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <ItemsControl ItemsSource="{Binding FileAttachments}" IsVisible="{Binding HasFileAttachments}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:ChatFileAttachment">
+                                    <Border Background="{DynamicResource HeaderBackgroundBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                                            BorderThickness="1" CornerRadius="4" Padding="6,4" Margin="0,0,6,6">
+                                        <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                                            <Path Classes="lineIcon" Data="{StaticResource FileIconGeometry}" Width="10" Height="10" />
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="11" VerticalAlignment="Center" />
+                                            <Button Classes="iconButton" Padding="1" MinWidth="16" MinHeight="16"
+                                                    ToolTip.Tip="Remove"
+                                                    Command="{Binding $parent[UserControl].((vm:GenerateTabViewModel)DataContext).RemoveFileAttachmentCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="7" Height="7" />
+                                            </Button>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- Deliberately no IsEnabled binding to HasRunningTasks (or anything else) here - typing/
+                         editing/the debounced draft autosave (see GenerateTabViewModel's draft-save timer)
+                         should always stay available regardless of what's blocking a genuine send. CanSend
+                         already covers HasRunningTasks (see SendCommand's CanExecute), so the Send action
+                         itself is what's actually disabled while a task is running, not the box. -->
+                    <TextBox Name="InputBox" Text="{Binding InputText}"
+                             PlaceholderText="Enter query… (Enter to send, Shift+Enter for a new line, paste images/files to attach)"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                             VerticalAlignment="Stretch" VerticalContentAlignment="Top"
+                             Padding="12,10" CornerRadius="0" BorderThickness="0"
+                             Background="Transparent">
+                        <TextBox.Resources>
+                            <SolidColorBrush x:Key="TextControlBorderBrushFocused">Transparent</SolidColorBrush>
+                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver">Transparent</SolidColorBrush>
+                        </TextBox.Resources>
+                    </TextBox>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Row="3" Background="{DynamicResource HeaderBackgroundBrush}"
+                    BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="10,6">
+                <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                    <ComboBox Grid.Column="0" ItemsSource="{Binding AvailableModels}" SelectedItem="{Binding SelectedModel}"
+                              IsEnabled="{Binding !IsSending}" FontSize="11" Padding="8,4" Margin="0,0,6,0"
+                              ToolTip.Tip="Model" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableEfforts}" SelectedItem="{Binding SelectedEffort}"
+                              IsEnabled="{Binding !IsSending}" FontSize="11" Padding="8,4"
+                              ToolTip.Tip="Effort" />
+                    <!-- Only shown while the displayed request is actively Working - see GenerateTabViewModel.CanCancel.
+                         FallbackValue is required: with no request at all, DisplayedRequest is null and the
+                         binding path breaks, which for a bool property otherwise leaves IsVisible at its own
+                         unset default (true) rather than false - showing Cancel with nothing to cancel. -->
+                    <Button Grid.Column="3" Content="Cancel" Command="{Binding CancelCommand}"
+                            IsVisible="{Binding DisplayedRequest.IsWorking, FallbackValue=False}" FontSize="11" Padding="10,4"
+                            ToolTip.Tip="Forcibly stop the current request" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <StackPanel IsVisible="{Binding !IsEditable}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+            <TextBlock Text="No feature targeted" FontSize="16" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+            <TextBlock Text="Start or switch to a feature, or enable Direct Mode on a version, to use Generate." FontSize="12" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+        </StackPanel>
+    </Grid>
+</UserControl>

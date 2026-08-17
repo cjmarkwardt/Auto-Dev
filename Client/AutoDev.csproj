@@ -1,0 +1,108 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <WarningsAsErrors>nullable</WarningsAsErrors>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Windows PE resource icon (taskbar/explorer); ignored harmlessly on non-Windows builds. -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- `dotnet publish` with no -c defaults to Release (so it always ships the optimized, single-file output
+         below); `dotnet build`/`dotnet run` with no -c are unaffected and still default to Debug. -->
+    <PublishRelease>true</PublishRelease>
+
+    <!-- Single-file publish for both platforms - `dotnet publish -c Release -r win-x64` or `-r linux-x64`
+         (RuntimeIdentifiers below makes both restorable from the same project) produces exactly one
+         executable in the publish output, with no separate runtime dependency, native .dll/.so files, or
+         .pdb sitting alongside it. Everything below except RuntimeIdentifiers is scoped to Release only:
+         SelfContained forces a specific-runtime, RID-suffixed build even for plain `dotnet build`, and the
+         rest are either no-ops outside `dotnet publish` anyway or (DebugType) would swap Debug's usual
+         separate/portable PDB - the one debuggers/IDEs expect - for an embedded one. Keeping them Release-only
+         means the normal Debug `dotnet build`/`run` dev loop is completely unaffected. -->
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+    <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
+    <PublishSingleFile Condition="'$(Configuration)' == 'Release'">true</PublishSingleFile>
+    <!-- Bundles native libraries (Skia, ANGLE, etc.) into the single file instead of leaving them as loose
+         files next to it - they're still extracted to a temp dir at process start (unavoidable for native
+         code), but the published *output folder* itself holds only the one executable. -->
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(Configuration)' == 'Release'">true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract Condition="'$(Configuration)' == 'Release'">true</IncludeAllContentForSelfExtract>
+    <!-- Embeds the PDB into the executable itself rather than publishing it as a separate .pdb file. -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <!-- Lets Tests.csproj exercise this project's `internal` types directly (TextSearch, TomlString,
+       CodexStreamEventParser, ...) instead of forcing everything under test to be public just for that. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Avalonia -->
+    <PackageReference Include="Avalonia" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.0" />
+    <!-- Line-level diffing for the History tab's read-only "open this file's change" view (see
+         EditTabViewModel's Diff mode) - plain MIT license, no native/unmanaged dependency. -->
+    <PackageReference Include="DiffPlex" Version="1.9.0" />
+    <!-- Renders the Edit tab's markdown preview (see EditTabViewModel.MarkdownMode) as native Avalonia
+         controls rather than requiring an embedded HTML/WebView renderer - .Tight pulls in just the core
+         control, not the optional HTML/SVG/syntax-highlighting extras the full Markdown.Avalonia meta-package
+         bundles. Pinned to the newest version with an Avalonia-12-targeting build, even though it's still
+         alpha-tagged (12.0.0-a3) - there's no stable release compatible with Avalonia 12 yet. -->
+    <PackageReference Include="Markdown.Avalonia.Tight" Version="12.0.0-a3" />
+    <!-- Adds language-aware syntax highlighting to fenced code blocks (```csharp etc.) via AvaloniaEdit's own
+         highlighting engine - the same one the plain text editor above already uses - registered as a plugin
+         on MarkdownScrollViewer rather than bundled by default. -->
+    <PackageReference Include="Markdown.Avalonia.SyntaxHigh" Version="12.0.0-a3" />
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
+    <PackageReference Include="AvaloniaEdit.TextMate" Version="12.0.0" />
+    <PackageReference Include="TextMateSharp.Grammars" Version="2.0.4" />
+    <!-- Renders the Edit tab's binary-file view (see EditTabViewModel.IsHexView) - MemoryMappedLineReader
+         memory-maps the file directly instead of reading it into a string, so opening a huge binary file
+         this way stays cheap regardless of its size. -->
+    <PackageReference Include="HexView" Version="12.0.0" />
+
+    <!-- MVVM / DI / Logging -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+
+    <!-- Process execution -->
+    <PackageReference Include="CliWrap" Version="3.10.2" />
+
+    <!-- Renders ```mermaid fenced blocks in markdown previews (see MermaidMarkdownProcessor) as actual
+         diagram images - pure .NET, no Node/browser dependency, plain MIT license. Mermaider only emits
+         SVG, so Svg.Skia rasterizes that to the PNG bytes MermaidRenderer actually returns. Also used
+         directly by SvgImageResolver to rasterize any other SVG a markdown preview links to (e.g. a
+         shields.io badge) - see that class for why, instead of the Markdown.Avalonia.Svg package's own
+         native-Avalonia SVG control. -->
+    <PackageReference Include="Mermaider" Version="0.12.1" />
+    <PackageReference Include="Svg.Skia" Version="5.1.1" />
+  </ItemGroup>
+
+  <!-- SkiaSharp/HarfBuzzSharp ship their native libraries' own .pdb symbol files as content assets - those
+       aren't touched by DebugType=embedded above (which only covers this project's own managed code), and
+       normally land in the publish output anyway (seen on win-x64; nothing extra ships this way on
+       linux-x64). Deleted here so a published build is truly just the one executable on every platform. -->
+  <Target Name="RemoveNativeSymbolFilesFromPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_NativeSymbolFilesToRemove Include="$(PublishDir)*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(_NativeSymbolFilesToRemove)" />
+  </Target>
+</Project>

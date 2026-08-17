@@ -1,0 +1,55 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:AutoDev"
+             xmlns:ctb="using:ColorTextBlock.Avalonia"
+             x:Class="AutoDev.App"
+             RequestedThemeVariant="Dark">
+
+    <Application.DataTemplates>
+        <local:ViewLocator />
+    </Application.DataTemplates>
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceInclude Source="avares://AutoDev/src/Styles/VsCodeColors.axaml" />
+                <ResourceInclude Source="avares://AutoDev/src/Styles/Icons.axaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+        <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
+        <StyleInclude Source="avares://AutoDev/src/Styles/ControlStyles.axaml" />
+
+        <!--
+            Markdown.Avalonia's code spans/blocks render via ColorTextBlock.Avalonia.CCode, a lightweight
+            StyledElement (not a Control - it builds its own TextRunProperties directly rather than going
+            through the visual tree), whose own MonospaceFontFamilyProperty every built-in MarkdownStyleName
+            theme (Standard/FluentTheme/GithubLike - it defaults to Standard) sets to the identical composite
+            font "menlo,monaco,consolas,droid sans mono,inconsolata,courier new,monospace,dejavu sans mono".
+            Avalonia 12.1.0 combined with this alpha's ColorTextBlock rendering doesn't actually fall through
+            that list on a font-creation failure - it throws instead of trying the next name, crashing the app
+            the moment any code span/block renders on a system missing "menlo"/"monaco"/"consolas" (i.e. any
+            non-Mac/Windows box). Because CCode isn't a Control, ordinary FontFamily inheritance through the
+            visual tree (e.g. setting FontFamily on an ancestor) has no effect on it at all - only a Style
+            explicitly matching CCode and setting ITS OWN MonospaceFontFamily property reaches it. Overriding
+            with the single generic "monospace" keyword - not a multi-name fallback list, and not a specific
+            named font, since Windows has no DejaVu/Liberation and Linux has no Consolas/Cascadia Code -
+            sidesteps that composite-font code path entirely on every platform instead of depending on it
+            working correctly.
+
+            This particular Setter does win against the built-in theme's own CCode style (see EditTabView.axaml.cs
+            for why the same isn't true of Foreground/Background): the built-in theme's selector is
+            ".Markdown_Avalonia_MarkdownViewer CCode", scoped by an ancestor class, which has higher specificity
+            than this plain "ctb|CCode" - it only happens to lose the Foreground/Background fight because the
+            built-in theme sets THOSE too, at that higher specificity, whereas it never sets MonospaceFontFamily
+            at all, leaving this the only setter in play for that one property.
+        -->
+        <Style Selector="ctb|CCode">
+            <Setter Property="MonospaceFontFamily" Value="monospace" />
+        </Style>
+
+    </Application.Styles>
+</Application>

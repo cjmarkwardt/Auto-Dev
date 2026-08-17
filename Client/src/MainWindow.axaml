@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AutoDev.ViewModels"
+        x:Class="AutoDev.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="AutoDev"
+        Icon="avares://AutoDev/Assets/app.png"
+        Width="1280" Height="800"
+        WindowStartupLocation="CenterScreen"
+        WindowDecorations="None"
+        Background="{DynamicResource EditorBackgroundBrush}">
+    <Grid>
+        <ContentControl Content="{Binding AuthGate}" IsVisible="{Binding !IsAuthenticated}" />
+        <ContentControl Content="{Binding Shell}" IsVisible="{Binding IsAuthenticated}" />
+    </Grid>
+</Window>

@@ -1,0 +1,46 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Content"
+             x:Class="AutoDev.Views.Content.CommandTabView"
+             x:DataType="vm:CommandTabViewModel">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" MinHeight="80" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="{Binding InputRowHeight, Mode=TwoWay}" MinHeight="44" MaxHeight="500" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" Name="Scroller">
+            <SelectableTextBlock Text="{Binding OutputText}" TextWrapping="Wrap" FontFamily="monospace" FontSize="12" Margin="14,10" />
+        </ScrollViewer>
+
+        <!-- Drags the input row (below) taller/shorter, within its Min/MaxHeight - same idea as GenerateTabView's splitter. -->
+        <GridSplitter Grid.Row="1" Height="4" Background="Transparent" VerticalAlignment="Stretch"
+                      ResizeDirection="Rows" Cursor="SizeNorthSouth" />
+
+        <Border Grid.Row="2" Background="{DynamicResource HeaderBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0">
+            <TextBox Name="CommandInput" Text="{Binding InputText}"
+                     PlaceholderText="Enter a shell command… (Enter to run, Shift+Enter for a new line, Up/Down for history)"
+                     AcceptsReturn="True" TextWrapping="Wrap" IsEnabled="{Binding !IsRunning}"
+                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                     VerticalAlignment="Stretch" VerticalContentAlignment="Top"
+                     Padding="12,10" CornerRadius="0" BorderThickness="0"
+                     Background="Transparent">
+                <TextBox.Resources>
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused">Transparent</SolidColorBrush>
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver">Transparent</SolidColorBrush>
+                </TextBox.Resources>
+            </TextBox>
+        </Border>
+
+        <Border Grid.Row="3" Background="{DynamicResource HeaderBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="10,6">
+            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right">
+                <Button Content="Run" Command="{Binding RunCommand}" IsVisible="{Binding !IsRunning}" />
+                <Button Content="Stop" Command="{Binding StopCommand}" IsVisible="{Binding IsRunning}" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

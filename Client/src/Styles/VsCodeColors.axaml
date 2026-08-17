@@ -1,0 +1,31 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="EditorBackgroundBrush" Color="#1E1E1E" />
+    <SolidColorBrush x:Key="SideBarBackgroundBrush" Color="#252526" />
+    <SolidColorBrush x:Key="ActivityBarBackgroundBrush" Color="#333333" />
+    <SolidColorBrush x:Key="HeaderBackgroundBrush" Color="#2D2D2D" />
+    <SolidColorBrush x:Key="TabActiveBackgroundBrush" Color="#1E1E1E" />
+    <SolidColorBrush x:Key="TabInactiveBackgroundBrush" Color="#2D2D2D" />
+    <SolidColorBrush x:Key="TabActiveAccentBrush" Color="#007ACC" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#007ACC" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#1F8AD2" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#CCCCCC" />
+    <SolidColorBrush x:Key="TextMutedBrush" Color="#969696" />
+    <SolidColorBrush x:Key="BorderSubtleBrush" Color="#3C3C3C" />
+    <SolidColorBrush x:Key="HoverBackgroundBrush" Color="#2A2D2E" />
+    <SolidColorBrush x:Key="SelectionBackgroundBrush" Color="#094771" />
+    <SolidColorBrush x:Key="DangerBrush" Color="#C74E39" />
+    <SolidColorBrush x:Key="UsageCriticalBrush" Color="#E57373" />
+    <SolidColorBrush x:Key="SuccessBrush" Color="#4EC9B0" />
+    <!-- Git status colors in the file tree (see FilesSectionView.axaml's TextBlock.added/.modified) - the same
+         green/gold VS Code itself uses for its own added/modified decorations. -->
+    <SolidColorBrush x:Key="GitAddedBrush" Color="#73C991" />
+    <SolidColorBrush x:Key="GitModifiedBrush" Color="#E2C08D" />
+    <!-- A wrap-up/final-state text color (see TasksSectionView.axaml) - deliberately its own resource, not a
+         repoint of AccentBrush, since that one's shared by buttons/dots/tab-underlines app-wide and
+         repointing it would recolor all of those too. -->
+    <SolidColorBrush x:Key="ChatFinalTextBrush" Color="#D4AF37" />
+
+    <!-- FluentTheme expects this specific key as a Color (not a Brush) - drives its accent-derived palette -->
+    <Color x:Key="SystemAccentColor">#007ACC</Color>
+</ResourceDictionary>
