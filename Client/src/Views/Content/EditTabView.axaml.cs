@@ -23,6 +23,7 @@ namespace AutoDev.Views.Content;
 public partial class EditTabView : UserControl
 {
     private readonly RegistryOptions _registryOptions = new(ThemeName.DarkPlus);
+    private readonly TaskSyntaxColorizer _taskColorizer = new();
     private TextEditor? _editor;
     private TextMate.Installation? _textMateInstallation;
     private bool _isSyncingFromVm;
@@ -534,6 +535,19 @@ public partial class EditTabView : UserControl
         }
 
         Vm.Content = _editor.Text;
+        UpdateTaskColorizerIfActive();
+    }
+
+    /// <summary>Re-parses the document's structure and forces a repaint - a no-op unless _taskColorizer is actually attached right now (see UpdateLanguage), i.e. the open file is a .task file.</summary>
+    private void UpdateTaskColorizerIfActive()
+    {
+        if (_editor is null || !_editor.TextArea.TextView.LineTransformers.Contains(_taskColorizer))
+        {
+            return;
+        }
+
+        _taskColorizer.UpdateStructure(_editor.Text);
+        _editor.TextArea.TextView.Redraw();
     }
 
     private void UpdateLanguage()
@@ -544,20 +558,27 @@ public partial class EditTabView : UserControl
         }
 
         var extension = System.IO.Path.GetExtension(Vm.CurrentFilePath);
+        var lineTransformers = _editor.TextArea.TextView.LineTransformers;
 
         if (extension.Equals(".task", StringComparison.OrdinalIgnoreCase))
         {
-            // No bundled TextMate grammar exists for this app's own custom DSL - use AvaloniaEdit's classic
-            // highlighting engine instead (see TaskFileHighlighting). Also clear TextMate's own grammar,
-            // left over from whatever file was open before this one, so it doesn't ALSO try to recolor this
-            // text using unrelated rules - both engines otherwise sit on the same TextView.LineTransformers
-            // list and would fight over the same text.
-            TaskFileHighlighting.EnsureRegistered();
+            // No bundled TextMate grammar exists for this app's own custom DSL - use a live, indentation-
+            // aware colorizer instead (see TaskSyntaxColorizer), re-parsed on every edit rather than a static
+            // XSHD grammar. Also clear TextMate's own grammar, left over from whatever file was open before
+            // this one, so it doesn't ALSO try to recolor this text using unrelated rules - both engines
+            // otherwise sit on the same TextView.LineTransformers list and would fight over the same text.
+            _editor.SyntaxHighlighting = null;
             _textMateInstallation.SetGrammar(null!);
-            _editor.SyntaxHighlighting = TaskFileHighlighting.GetDefinition();
+            if (!lineTransformers.Contains(_taskColorizer))
+            {
+                lineTransformers.Add(_taskColorizer);
+            }
+
+            UpdateTaskColorizerIfActive();
             return;
         }
 
+        lineTransformers.Remove(_taskColorizer);
         _editor.SyntaxHighlighting = null;
         var language = _registryOptions.GetLanguageByExtension(extension);
         _textMateInstallation.SetGrammar(language is not null ? _registryOptions.GetScopeByLanguageId(language.Id) : null!);

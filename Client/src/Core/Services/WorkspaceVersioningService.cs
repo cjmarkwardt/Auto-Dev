@@ -15,9 +15,7 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
 
         // A freshly cloned-from-empty-remote repo is still a real git work tree (IsRepoAsync above already
         // returns true for it) but has no commits yet - HEAD is an "unborn" branch. Treating that the same as
-        // "no repo yet" routes it through InitializeRepoAsync below just like a brand new plain folder, so a
-        // clone of an empty remote ends up with the same main-branch-plus-base-commit convention instead of
-        // being left as a bare, convention-less checkout.
+        // "no repo yet" routes it through InitializeRepoAsync below just like a brand new plain folder.
         return await git.HasCommitsAsync(workspacePath, cancellationToken);
     }
 
@@ -26,18 +24,16 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         await git.InitAsync(workspacePath, cancellationToken);
         await EnsureLocalGitExcludeAsync(cancellationToken);
 
-        // Staging everything already in the folder is correct here (unlike CommitEmptyAsync's base-commit
-        // markers elsewhere) - there's no prior state to preserve as "still pending", this commit IS the
-        // repo's starting content. isPublic: true - main is the repo's permanent, shared root branch, not a
-        // private one-user branch meant to be squashed/renamed away (see BranchConvention/GetActionStateAsync's
-        // CanSquash/CanRename, both gated on !IsPublic).
-        await git.CommitAsync(workspacePath, BranchConvention.BuildBaseCommitMessage("Main", parentId: null, isPublic: true, "main"), allowEmpty: true, cancellationToken);
+        // Deliberately empty - anything already in the folder is left as pending, uncommitted content the
+        // user commits explicitly afterward, same as any other edit, rather than silently folded into a
+        // commit they never asked for.
+        await git.CommitEmptyAsync(workspacePath, "Initial commit", cancellationToken);
         await git.RenameCurrentBranchAsync(workspacePath, "main", cancellationToken);
 
         // A no-op for a plain new folder (no "origin" yet - PushAsync itself checks and just returns false).
         // For a folder that reached here via a clone of an empty remote, "origin" is already configured from
-        // the clone, so this is what actually lands the new main branch/base commit on the remote instead of
-        // leaving it sitting local-only next to an otherwise-still-empty remote.
+        // the clone, so this is what actually lands the new main branch on the remote instead of leaving it
+        // sitting local-only next to an otherwise-still-empty remote.
         await git.PushAsync(workspacePath, "main", setUpstream: true, cancellationToken: cancellationToken);
     }
 
@@ -66,59 +62,18 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
             return null;
         }
 
+        var hash = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
+        var shortHash = hash.Length > 7 ? hash[..7] : hash;
+        var message = await git.GetCommitSubjectAsync(workspacePath, "HEAD", cancellationToken);
+
         var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
         if (branch is not null)
         {
-            var info = await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, branch, cancellationToken);
-            return new GitTarget(GitTargetKind.Branch, branch, info);
+            return new GitTarget(GitTargetKind.Branch, branch, null, shortHash, message);
         }
 
         var tag = await git.GetExactTagAsync(workspacePath, cancellationToken);
-        if (tag is not null)
-        {
-            return new GitTarget(GitTargetKind.Tag, tag);
-        }
-
-        var hash = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
-        return new GitTarget(GitTargetKind.Commit, hash.Length > 7 ? hash[..7] : hash);
-    }
-
-    public async Task<VersionActionState> GetActionStateAsync(CancellationToken cancellationToken = default)
-    {
-        var target = await GetCurrentTargetAsync(cancellationToken);
-        if (target is null)
-        {
-            return VersionActionState.Empty;
-        }
-
-        var hasPending = await git.HasUncommittedChangesAsync(workspacePath, cancellationToken);
-
-        if (target is not { Kind: GitTargetKind.Branch, Branch: { } info })
-        {
-            // Detached (tag/commit), or a branch whose base commit can't be resolved (predates this
-            // convention) - only Branch/Reset are meaningful without a known lineage.
-            return new VersionActionState(CanBranch: true, CanReset: hasPending, false, false, false, false, false);
-        }
-
-        var head = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
-        var hasCommitsAfterBase = head != info.BaseCommitHash;
-
-        var parentHasNewCommits = false;
-        if (info.ParentId is not null && await git.BranchExistsAsync(workspacePath, info.ParentId, cancellationToken))
-        {
-            var baseParent = await git.RevParseAsync(workspacePath, $"{info.BaseCommitHash}^", cancellationToken);
-            var parentTip = await git.RevParseAsync(workspacePath, info.ParentId, cancellationToken);
-            parentHasNewCommits = baseParent.Length > 0 && baseParent != parentTip && await git.IsAncestorAsync(workspacePath, baseParent, parentTip, cancellationToken);
-        }
-
-        return new VersionActionState(
-            CanBranch: true,
-            CanReset: hasPending,
-            CanSquash: (hasPending || hasCommitsAfterBase) && !info.IsPublic,
-            CanRebase: parentHasNewCommits,
-            CanMerge: info.ParentId is not null && !parentHasNewCommits && !hasCommitsAfterBase && !hasPending,
-            CanRename: !info.IsPublic,
-            CanCommit: hasPending);
+        return new GitTarget(tag is not null ? GitTargetKind.Tag : GitTargetKind.Commit, null, tag, shortHash, message);
     }
 
     public async Task ConfigureRemoteAsync(string url, CancellationToken cancellationToken = default) =>
@@ -161,77 +116,85 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         }
     }
 
-    public async Task<BranchCreationOutcome> CreateBranchAsync(string name, string id, bool isPublic, CancellationToken cancellationToken = default)
+    public async Task<GitActionSnapshot> CaptureSnapshotAsync(CancellationToken cancellationToken = default)
     {
-        if (await git.BranchExistsAsync(workspacePath, id, cancellationToken))
+        var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
+        var hash = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
+        return new GitActionSnapshot(branch, hash);
+    }
+
+    public async Task RevertToSnapshotAsync(GitActionSnapshot snapshot, CancellationToken cancellationToken = default)
+    {
+        if (await git.HasConflictsAsync(workspacePath, cancellationToken))
+        {
+            await git.RebaseAbortAsync(workspacePath, cancellationToken);
+            await git.MergeAbortAsync(workspacePath, cancellationToken);
+        }
+
+        if (snapshot.Branch is not null)
+        {
+            var currentBranch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
+            if (currentBranch != snapshot.Branch)
+            {
+                await git.DiscardChangesAsync(workspacePath, cancellationToken);
+                await git.CheckoutAsync(workspacePath, snapshot.Branch, cancellationToken);
+            }
+        }
+
+        await git.ResetHardAsync(workspacePath, snapshot.CommitHash, cancellationToken);
+    }
+
+    public async Task<BranchCreationOutcome> CreateBranchAsync(string name, string fromRef, CancellationToken cancellationToken = default)
+    {
+        if (await git.BranchExistsAsync(workspacePath, name, cancellationToken))
         {
             return BranchCreationOutcome.IdAlreadyExists;
         }
 
-        // Attached: the current branch IS its own id, no history walk needed. Detached (tag/commit): fall
-        // back to the "conceptual" containing branch found by walking HEAD's history for the nearest marker.
-        var currentBranch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
-        var parentId = currentBranch ?? (await BranchConvention.FindContainingBranchInfoAsync(git, workspacePath, "HEAD", cancellationToken))?.Id;
-
-        await git.CreateBranchAsync(workspacePath, id, "HEAD", cancellationToken);
-        await git.CheckoutAsync(workspacePath, id, cancellationToken);
-        await git.CommitEmptyAsync(workspacePath, BranchConvention.BuildBaseCommitMessage(name, parentId, isPublic, id), cancellationToken);
-        await git.PushAsync(workspacePath, id, force: false, setUpstream: true, cancellationToken: cancellationToken);
+        await git.CreateBranchAsync(workspacePath, name, fromRef, cancellationToken);
+        await git.CheckoutAsync(workspacePath, name, cancellationToken);
+        await git.PushAsync(workspacePath, name, force: false, setUpstream: true, cancellationToken: cancellationToken);
         return BranchCreationOutcome.Created;
     }
 
-    public async Task<TagCreationOutcome> CreateTagAsync(string id, string fullName, CancellationToken cancellationToken = default)
+    public async Task<TagCreationOutcome> CreateTagAsync(string id, string fullName, string atRef, CancellationToken cancellationToken = default)
     {
         if (await git.TagExistsAsync(workspacePath, id, cancellationToken))
         {
             return TagCreationOutcome.IdAlreadyExists;
         }
 
-        await git.CreateAnnotatedTagAsync(workspacePath, id, fullName, cancellationToken);
+        await git.CreateAnnotatedTagAsync(workspacePath, id, fullName, atRef, cancellationToken);
         await git.PushAsync(workspacePath, id, force: false, setUpstream: false, cancellationToken: cancellationToken);
         return TagCreationOutcome.Created;
     }
 
+    public async Task DeleteBranchAsync(string name, CancellationToken cancellationToken = default) =>
+        await git.DeleteBranchAsync(workspacePath, name, cancellationToken);
+
+    public async Task DeleteTagAsync(string name, CancellationToken cancellationToken = default) =>
+        await git.DeleteTagAsync(workspacePath, name, cancellationToken);
+
     public async Task ResetAsync(CancellationToken cancellationToken = default) =>
         await git.DiscardChangesAsync(workspacePath, cancellationToken);
 
-    public async Task SquashAsync(CancellationToken cancellationToken = default)
-    {
-        var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
-        var info = branch is null ? null : await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, branch, cancellationToken);
-        if (branch is null || info is null)
-        {
-            return;
-        }
+    public async Task<GitOperationOutcome> RebaseAsync(string ontoRef, CancellationToken cancellationToken = default) =>
+        await git.RebaseOntoAsync(workspacePath, ontoRef, cancellationToken);
 
-        await git.ResetSoftAsync(workspacePath, info.BaseCommitHash, cancellationToken);
-        var message = BranchConvention.BuildBaseCommitMessage(info.Name, info.ParentId, info.IsPublic, info.Id);
-        await git.AmendCommitAsync(workspacePath, message, allowEmpty: true, cancellationToken);
-        await git.PushAsync(workspacePath, branch, force: true, cancellationToken: cancellationToken);
-    }
-
-    public async Task<RebaseOutcome> RebaseAsync(CancellationToken cancellationToken = default)
-    {
-        var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
-        var info = branch is null ? null : await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, branch, cancellationToken);
-        if (info?.ParentId is not { } parentId)
-        {
-            return RebaseOutcome.Failed;
-        }
-
-        if (!info.IsPublic)
-        {
-            await SquashAsync(cancellationToken);
-        }
-
-        return await git.RebaseOntoAsync(workspacePath, parentId, cancellationToken);
-    }
-
-    public async Task<RebaseOutcome> ContinueRebaseAsync(CancellationToken cancellationToken = default) =>
+    public async Task<GitOperationOutcome> ContinueRebaseAsync(CancellationToken cancellationToken = default) =>
         await git.RebaseContinueAsync(workspacePath, cancellationToken);
 
     public async Task AbortRebaseAsync(CancellationToken cancellationToken = default) =>
         await git.RebaseAbortAsync(workspacePath, cancellationToken);
+
+    public async Task<GitOperationOutcome> MergeAsync(string sourceBranch, CancellationToken cancellationToken = default) =>
+        await git.MergeAsync(workspacePath, sourceBranch, cancellationToken);
+
+    public async Task<GitOperationOutcome> ContinueMergeAsync(CancellationToken cancellationToken = default) =>
+        await git.MergeContinueAsync(workspacePath, cancellationToken);
+
+    public async Task AbortMergeAsync(CancellationToken cancellationToken = default) =>
+        await git.MergeAbortAsync(workspacePath, cancellationToken);
 
     public async Task<bool> HasConflictsAsync(CancellationToken cancellationToken = default) =>
         await git.HasConflictsAsync(workspacePath, cancellationToken);
@@ -239,39 +202,9 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
     public async Task<IReadOnlyList<string>> GetConflictedFilesAsync(CancellationToken cancellationToken = default) =>
         await git.GetConflictedFilesAsync(workspacePath, cancellationToken);
 
-    public async Task FinishMergeAsync(CancellationToken cancellationToken = default)
-    {
-        var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
-        var info = branch is null ? null : await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, branch, cancellationToken);
-        if (info?.ParentId is not { } parentId)
-        {
-            return;
-        }
-
-        await git.CheckoutAsync(workspacePath, parentId, cancellationToken);
-        await git.FastForwardMergeAsync(workspacePath, info.Id, cancellationToken);
-        await git.DeleteBranchAsync(workspacePath, info.Id, cancellationToken);
-        await git.PushAsync(workspacePath, parentId, cancellationToken: cancellationToken);
-    }
-
-    public async Task RenameAsync(string newName, CancellationToken cancellationToken = default)
-    {
-        var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
-        var info = branch is null ? null : await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, branch, cancellationToken);
-        if (branch is null || info is null)
-        {
-            return;
-        }
-
-        await git.ResetSoftAsync(workspacePath, info.BaseCommitHash, cancellationToken);
-        var message = BranchConvention.BuildBaseCommitMessage(newName, info.ParentId, info.IsPublic, info.Id);
-        await git.AmendCommitAsync(workspacePath, message, allowEmpty: true, cancellationToken);
-        await git.PushAsync(workspacePath, branch, force: true, cancellationToken: cancellationToken);
-    }
-
     public async Task CommitAsync(string message, CancellationToken cancellationToken = default)
     {
-        await git.CommitAsync(workspacePath, message, allowEmpty: false, cancellationToken);
+        await git.CommitAsync(workspacePath, message, cancellationToken);
         var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
         if (branch is not null)
         {
@@ -291,6 +224,119 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
     public async Task CheckoutRefAsync(string refName, CancellationToken cancellationToken = default) =>
         await git.CheckoutAsync(workspacePath, refName, cancellationToken);
 
+    public async Task<IReadOnlyList<string>> GetEligibleBaseBranchesAsync(CancellationToken cancellationToken = default)
+    {
+        var current = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
+        if (current is null)
+        {
+            return []; // detached HEAD - Squash/Rebase are only ever offered while targeting a branch
+        }
+
+        var results = new List<string>();
+        foreach (var branch in await git.ListBranchesAsync(workspacePath, "", cancellationToken))
+        {
+            if (branch == current || !await git.BranchExistsAsync(workspacePath, branch, cancellationToken))
+            {
+                continue;
+            }
+
+            if (await git.IsAncestorAsync(workspacePath, branch, current, cancellationToken))
+            {
+                continue; // current is already built on top of this branch - nothing to squash/rebase against
+            }
+
+            results.Add(branch);
+        }
+
+        return [.. results.OrderBy(name => name, StringComparer.OrdinalIgnoreCase)];
+    }
+
+    public async Task<string> GetDefaultSquashMessageAsync(string baseBranch, CancellationToken cancellationToken = default)
+    {
+        var mergeBase = await git.MergeBaseAsync(workspacePath, baseBranch, "HEAD", cancellationToken);
+        var commits = await git.GetCommitsSinceAsync(workspacePath, mergeBase, "HEAD", cancellationToken);
+        return commits.Count > 0 ? commits[0].Subject : "";
+    }
+
+    public async Task SquashAsync(string baseBranch, string message, CancellationToken cancellationToken = default)
+    {
+        await SquashSinceBaseAsync(baseBranch, message, cancellationToken);
+        await PushCurrentBranchAsync(force: true, cancellationToken);
+    }
+
+    public async Task<GitOperationOutcome> RebaseWithSquashAsync(string ontoBranch, string squashMessage, CancellationToken cancellationToken = default)
+    {
+        await SquashSinceBaseAsync(ontoBranch, squashMessage, cancellationToken);
+        return await git.RebaseOntoAsync(workspacePath, ontoBranch, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<string>> GetEligibleMergeTargetBranchesAsync(CancellationToken cancellationToken = default)
+    {
+        var current = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
+        if (current is null)
+        {
+            return []; // detached HEAD - Merge is only ever offered while targeting a branch
+        }
+
+        var results = new List<string>();
+        foreach (var branch in await git.ListBranchesAsync(workspacePath, "", cancellationToken))
+        {
+            if (branch == current || !await git.BranchExistsAsync(workspacePath, branch, cancellationToken))
+            {
+                continue;
+            }
+
+            if (await git.IsAncestorAsync(workspacePath, branch, current, cancellationToken))
+            {
+                results.Add(branch); // current is ahead of this branch - a valid fast-forward target
+            }
+        }
+
+        return [.. results.OrderBy(name => name, StringComparer.OrdinalIgnoreCase)];
+    }
+
+    public async Task<bool> FastForwardMergeAsync(string targetBranch, string? squashMessage, CancellationToken cancellationToken = default)
+    {
+        var current = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
+        if (current is null)
+        {
+            return false;
+        }
+
+        var mergeBase = await git.MergeBaseAsync(workspacePath, targetBranch, "HEAD", cancellationToken);
+        var targetTip = await git.RevParseAsync(workspacePath, targetBranch, cancellationToken);
+        if (mergeBase != targetTip)
+        {
+            return false; // current isn't based on targetBranch's own head - can't fast-forward
+        }
+
+        if (squashMessage is not null)
+        {
+            var commitsSinceBase = await git.GetCommitsSinceAsync(workspacePath, mergeBase, "HEAD", cancellationToken);
+            if (commitsSinceBase.Count > 1)
+            {
+                await git.SquashSinceAsync(workspacePath, mergeBase, squashMessage, cancellationToken);
+            }
+        }
+
+        var currentTip = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
+        await git.CheckoutAsync(workspacePath, targetBranch, cancellationToken);
+        var fastForwarded = await git.FastForwardMergeAsync(workspacePath, currentTip, cancellationToken);
+        if (fastForwarded)
+        {
+            await git.PushAsync(workspacePath, targetBranch, cancellationToken: cancellationToken);
+        }
+
+        await git.CheckoutAsync(workspacePath, current, cancellationToken);
+        return fastForwarded;
+    }
+
+    private async Task SquashSinceBaseAsync(string baseBranch, string message, CancellationToken cancellationToken)
+    {
+        var mergeBase = await git.MergeBaseAsync(workspacePath, baseBranch, "HEAD", cancellationToken);
+        await git.SquashSinceAsync(workspacePath, mergeBase, message, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<BranchSummary>> ListAllBranchesAsync(CancellationToken cancellationToken = default)
     {
         var current = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
@@ -304,43 +350,21 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
                 continue; // remote-only, no local branch to show/select
             }
 
-            var info = await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, name, cancellationToken);
-            results.Add(new BranchSummary(info?.Id ?? name, info?.Name ?? name, info?.ParentId, info?.IsPublic ?? false, IsCurrent: name == current));
+            results.Add(new BranchSummary(name, IsCurrent: name == current));
         }
 
         return [.. results.OrderByDescending(b => b.IsCurrent).ThenBy(b => b.Name, StringComparer.OrdinalIgnoreCase)];
     }
 
-    public async Task<BranchTimelinePage?> GetBranchTimelinePageAsync(string branchId, int pageIndex, int pageSize = 100, CancellationToken cancellationToken = default)
+    public async Task<BranchTimelinePage?> GetBranchTimelinePageAsync(string branchName, int pageIndex, int pageSize = 100, CancellationToken cancellationToken = default)
     {
-        if (!await git.BranchExistsAsync(workspacePath, branchId, cancellationToken))
+        if (!await git.BranchExistsAsync(workspacePath, branchName, cancellationToken))
         {
             return null;
         }
 
-        var info = await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, branchId, cancellationToken);
-        var effectiveId = info?.Id ?? branchId;
-        var effectiveName = info?.Name ?? branchId;
-
-        var allCommits = await git.LogAsync(workspacePath, branchId, cancellationToken); // oldest-first
-        IReadOnlyList<GitCommit> commits = allCommits;
-        if (info is not null)
-        {
-            var startIndex = allCommits.ToList().FindIndex(c => c.Hash == info.BaseCommitHash);
-            if (startIndex >= 0)
-            {
-                commits = [.. allCommits.Skip(startIndex)];
-            }
-        }
-
-        // The oldest commit in this slice (position 0, if it's this branch's own recognized base marker) is
-        // kept and relabeled "Base" below; any OTHER base-commit-shaped commit further along was left behind
-        // by an earlier Rename/Squash that amended a later position instead of this one - not real work, so it
-        // isn't shown as its own node at all (see BranchTimelineEntry's doc comment).
-        var workCommits = commits
-            .Where((c, i) => i == 0 || !BranchConvention.TryParseBaseCommitMessage(c.Subject, out _, out _, out _, out _))
-            .Reverse() // newest first
-            .ToList();
+        var allCommits = await git.LogAsync(workspacePath, branchName, cancellationToken); // oldest-first
+        var workCommits = allCommits.Reverse().ToList(); // newest first
 
         var pageCount = Math.Max(1, (int)Math.Ceiling(workCommits.Count / (double)pageSize));
         pageIndex = Math.Clamp(pageIndex, 0, pageCount - 1);
@@ -348,43 +372,25 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
 
         var head = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
         var currentBranch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
-        var allBranches = await ListAllBranchesAsync(cancellationToken);
         var tagsByCommit = await git.GetTagsByCommitAsync(workspacePath, cancellationToken);
 
         var entries = new List<BranchTimelineEntry>();
-
-        if (pageIndex == 0)
-        {
-            foreach (var child in allBranches.Where(b => b.ParentId == effectiveId))
-            {
-                entries.Add(new BranchTimelineEntry(BranchTimelineEntryKind.ChildLink, child.Name, null, null, child.Id));
-            }
-        }
-
         foreach (var commit in pageCommits)
         {
-            var isCurrentCommit = currentBranch == branchId && commit.Hash == head;
+            var isCurrentCommit = currentBranch == branchName && commit.Hash == head;
 
             // Each tag gets its own node immediately above the commit it points at, rather than riding along
             // on the commit's own row - see BranchTimelineEntryKind.Tag. IsCurrentCommit carries over too, so
-            // TimelineEntryViewModel.CanSwitch doesn't offer a no-op "Switch" from a tag pointing at HEAD.
+            // the row's own "Checkout" menu item isn't offered as a no-op from a tag pointing at HEAD.
             foreach (var tag in tagsByCommit.GetValueOrDefault(commit.Hash, []))
             {
-                entries.Add(new BranchTimelineEntry(BranchTimelineEntryKind.Tag, tag, commit.Date, commit.Hash, null, isCurrentCommit));
+                entries.Add(new BranchTimelineEntry(BranchTimelineEntryKind.Tag, tag.DisplayName, commit.Date, commit.Hash, isCurrentCommit, tag.Name));
             }
 
-            var isBase = info is not null && commit.Hash == info.BaseCommitHash;
-            var label = isBase ? "Base" : commit.Subject;
-            entries.Add(new BranchTimelineEntry(BranchTimelineEntryKind.Commit, label, commit.Date, commit.Hash, null, isCurrentCommit, isBase));
+            entries.Add(new BranchTimelineEntry(BranchTimelineEntryKind.Commit, commit.Subject, commit.Date, commit.Hash, isCurrentCommit));
         }
 
-        if (pageIndex == pageCount - 1 && info?.ParentId is { } parentId)
-        {
-            var parentInfo = await BranchConvention.FindBranchInfoByIdAsync(git, workspacePath, parentId, cancellationToken);
-            entries.Add(new BranchTimelineEntry(BranchTimelineEntryKind.ParentLink, parentInfo?.Name ?? parentId, null, null, parentId));
-        }
-
-        return new BranchTimelinePage(effectiveId, effectiveName, entries, pageIndex, pageCount);
+        return new BranchTimelinePage(branchName, entries, pageIndex, pageCount);
     }
 
     public async Task<IReadOnlyList<GitChange>> GetCommitChangesAsync(string commitHash, CancellationToken cancellationToken = default) =>

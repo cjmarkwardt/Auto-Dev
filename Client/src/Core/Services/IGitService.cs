@@ -2,7 +2,8 @@ using AutoDev.Core.Models;
 
 namespace AutoDev.Core.Services;
 
-public enum RebaseOutcome
+/// <summary>The outcome of any git operation that can end in a merge conflict (a rebase or a merge alike).</summary>
+public enum GitOperationOutcome
 {
     Succeeded,
     Conflicts,
@@ -28,11 +29,14 @@ public enum GitFileStatus
 /// <summary>One commit as needed for building the History tab's timeline - Hash, single-line subject (%s), and commit date.</summary>
 public sealed record GitCommit(string Hash, string Subject, DateTimeOffset Date);
 
+/// <summary>One tag as needed for building the History tab's timeline - Name is the tag's actual git ref name (used to check it out or delete it); DisplayName is what's shown (an annotated tag's own message if it has one, otherwise the same as Name - see IGitService.GetTagsByCommitAsync).</summary>
+public sealed record GitTag(string Name, string DisplayName);
+
 /// <summary>
-/// Thin, safe git wrapper backing the version/release/feature workflow (see IWorkspaceVersioningService,
-/// which owns all the actual branch/tag naming conventions and business logic - this interface just runs
-/// git commands and parses their output). Grows incrementally as later phases of that workflow need more
-/// git primitives, rather than declaring the whole eventual surface up front.
+/// Thin, safe git wrapper backing the version/branch/tag workflow (see IWorkspaceVersioningService, which
+/// owns all the actual business logic - this interface just runs plain git commands and parses their output,
+/// with no naming convention or invented semantics of its own layered on top). Grows incrementally as later
+/// phases of that workflow need more git primitives, rather than declaring the whole eventual surface up front.
 /// </summary>
 public interface IGitService
 {
@@ -47,7 +51,10 @@ public interface IGitService
     Task<bool> CloneAsync(string parentDirectory, string url, string destinationName, CancellationToken cancellationToken = default);
 
     /// <summary>Stages every change in the working tree and commits it.</summary>
-    Task CommitAsync(string workspacePath, string message, bool allowEmpty = false, CancellationToken cancellationToken = default);
+    Task CommitAsync(string workspacePath, string message, CancellationToken cancellationToken = default);
+
+    /// <summary>Commits with nothing staged (`git commit --allow-empty`, no `git add` first) - used only for the repo's very first commit, which is deliberately kept content-free rather than dumping in whatever was already in the folder (see WorkspaceVersioningService.InitializeRepoAsync).</summary>
+    Task CommitEmptyAsync(string workspacePath, string message, CancellationToken cancellationToken = default);
 
     /// <summary>Renames the currently checked-out branch (used once, right after the initial commit, to become the first version branch).</summary>
     Task RenameCurrentBranchAsync(string workspacePath, string newName, CancellationToken cancellationToken = default);
@@ -82,63 +89,53 @@ public interface IGitService
 
     Task DeleteBranchAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
 
+    /// <summary>`git tag -d tagName`.</summary>
+    Task DeleteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default);
+
     /// <summary>Whether a local branch named `branchName` exists.</summary>
     Task<bool> BranchExistsAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
 
     /// <summary>Whether a tag named `tagName` exists.</summary>
     Task<bool> TagExistsAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default);
 
-    /// <summary>`git reset --soft <ref>` - moves HEAD/index to `ref` without touching the working tree, so everything between `ref` and the old HEAD (plus real pending changes) ends up staged. Foundation for Squash/Rename.</summary>
-    Task ResetSoftAsync(string workspacePath, string refName, CancellationToken cancellationToken = default);
-
-    /// <summary>Stages everything (`git add -A`, so new untracked files are swept in too) then `git commit --amend`, replacing the commit currently at HEAD with one containing `message` and whatever is now staged. Used after ResetSoftAsync for Squash/Rename - amending (rather than resetting to the base commit's parent and recommitting) works even when the base commit is the repo root, with no parent to resolve.</summary>
-    Task AmendCommitAsync(string workspacePath, string message, bool allowEmpty, CancellationToken cancellationToken = default);
-
-    /// <summary>`git commit --allow-empty -m message`, deliberately with no `git add -A` first. Used only for a branch's base-commit marker (see BranchConvention) - must not sweep pending changes on the source ref into the marker, since `git branch`/`checkout` never touch the working tree and a change valid on the source ref is still valid on the new branch's identical tree.</summary>
-    Task CommitEmptyAsync(string workspacePath, string message, CancellationToken cancellationToken = default);
-
-    /// <summary>`git merge --ff-only branchName` into the current HEAD. False if it can't fast-forward.</summary>
-    Task<bool> FastForwardMergeAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
-
     /// <summary>Moves a local branch's ref directly (`git branch -f branchName targetRef`) without checking it out or touching the working tree - used by background remote sync to keep a non-checked-out branch mirroring its remote counterpart.</summary>
     Task ForceUpdateBranchRefAsync(string workspacePath, string branchName, string targetRef, CancellationToken cancellationToken = default);
 
-    /// <summary>The single newest commit reachable from `refName` whose message matches `extendedRegexPattern` (POSIX extended regex, as accepted by `git log --extended-regexp --grep`), or null if none matches - lets a caller find "the nearest commit of a given shape" (e.g. a BranchConvention base-commit marker) via git's own commit walk with early exit, instead of pulling full history into this process to scan it.</summary>
-    Task<GitCommit?> FindFirstCommitMatchingAsync(string workspacePath, string refName, string extendedRegexPattern, CancellationToken cancellationToken = default);
+    Task<GitOperationOutcome> RebaseOntoAsync(string workspacePath, string ontoRef, CancellationToken cancellationToken = default);
 
-    /// <summary>Full commit message body (used to recover a feature's verbatim summary from its root commit, and a merged feature's summary from its squash-merge commit).</summary>
-    Task<string> GetCommitMessageAsync(string workspacePath, string commitRef, CancellationToken cancellationToken = default);
-
-    /// <summary>True if `ancestorRef` is reachable from `descendantRef` - i.e. descendantRef already contains everything on ancestorRef.</summary>
-    Task<bool> IsAncestorAsync(string workspacePath, string ancestorRef, string descendantRef, CancellationToken cancellationToken = default);
-
-    Task<RebaseOutcome> RebaseOntoAsync(string workspacePath, string ontoRef, CancellationToken cancellationToken = default);
-
-    Task<RebaseOutcome> RebaseContinueAsync(string workspacePath, CancellationToken cancellationToken = default);
+    Task<GitOperationOutcome> RebaseContinueAsync(string workspacePath, CancellationToken cancellationToken = default);
 
     Task RebaseAbortAsync(string workspacePath, CancellationToken cancellationToken = default);
+
+    /// <summary>`git merge branchName` into the current HEAD - a real merge commit if it can't fast-forward, exactly like the plain git command.</summary>
+    Task<GitOperationOutcome> MergeAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
+
+    /// <summary>`git merge --continue` - finishes an in-progress merge once its conflicts are resolved and staged.</summary>
+    Task<GitOperationOutcome> MergeContinueAsync(string workspacePath, CancellationToken cancellationToken = default);
+
+    Task MergeAbortAsync(string workspacePath, CancellationToken cancellationToken = default);
 
     Task<bool> HasConflictsAsync(string workspacePath, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<string>> GetConflictedFilesAsync(string workspacePath, CancellationToken cancellationToken = default);
 
-    /// <summary>Stages featureBranch's changes (squashed) into the working tree without committing - caller commits with its own message.</summary>
-    Task SquashMergeAsync(string workspacePath, string featureBranch, CancellationToken cancellationToken = default);
-
     Task<string?> GetRemoteUrlAsync(string workspacePath, CancellationToken cancellationToken = default);
 
     Task<string> RevParseAsync(string workspacePath, string refName, CancellationToken cancellationToken = default);
 
+    /// <summary>`refName`'s own one-line commit subject (`%s`) - used for the Version section's plain commit-message display.</summary>
+    Task<string> GetCommitSubjectAsync(string workspacePath, string refName, CancellationToken cancellationToken = default);
+
     Task<DateTimeOffset> GetCommitDateAsync(string workspacePath, string refName, CancellationToken cancellationToken = default);
 
-    /// <summary>Full history of `refName`, oldest first - used to build the History tab's timeline (releases + merged features, in commit order).</summary>
+    /// <summary>Full history of `refName`, oldest first - used to build the History tab's timeline.</summary>
     Task<IReadOnlyList<GitCommit>> LogAsync(string workspacePath, string refName, CancellationToken cancellationToken = default);
 
-    /// <summary>Every tag in the repo, grouped by the commit it ultimately points at (an annotated tag is dereferenced to the commit it tags, not left as its own tag object) - used to show tag badges on the History tab's timeline without one subprocess call per commit. Each entry is the tag's display name: an annotated tag's own message (its "full name" - see CreateAnnotatedTagAsync) if it has one, otherwise its short ref name.</summary>
-    Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetTagsByCommitAsync(string workspacePath, CancellationToken cancellationToken = default);
+    /// <summary>Every tag in the repo, grouped by the commit it ultimately points at (an annotated tag is dereferenced to the commit it tags, not left as its own tag object) - used to show tag badges on the History tab's timeline without one subprocess call per commit.</summary>
+    Task<IReadOnlyDictionary<string, IReadOnlyList<GitTag>>> GetTagsByCommitAsync(string workspacePath, CancellationToken cancellationToken = default);
 
-    /// <summary>Creates an annotated tag (`git tag -a`) at HEAD - `id` is the actual git ref name (short, unique, ref-safe), `fullName` becomes the tag's own annotation message and is what GetTagsByCommitAsync shows in the History tab's timeline instead of `id`.</summary>
-    Task CreateAnnotatedTagAsync(string workspacePath, string id, string fullName, CancellationToken cancellationToken = default);
+    /// <summary>Creates an annotated tag (`git tag -a`) at `atRef` - `id` is the actual git ref name (short, unique, ref-safe), `fullName` becomes the tag's own annotation message and is what GetTagsByCommitAsync shows in the History tab's timeline instead of `id`.</summary>
+    Task CreateAnnotatedTagAsync(string workspacePath, string id, string fullName, string atRef, CancellationToken cancellationToken = default);
 
     /// <summary>Every file `commitHash` changed relative to its first parent (`--root` makes this also work for a parentless root commit, diffing against the empty tree) - populates the History tab's per-commit expanded changes tree.</summary>
     Task<IReadOnlyList<GitChange>> GetCommitChangesAsync(string workspacePath, string commitHash, CancellationToken cancellationToken = default);
@@ -158,13 +155,16 @@ public interface IGitService
     /// <summary>Discards every uncommitted change - tracked modifications (`reset --hard`) and untracked new files/folders (`clean -fd`) alike. Destructive and irreversible; callers confirm with the user first.</summary>
     Task DiscardChangesAsync(string workspacePath, CancellationToken cancellationToken = default);
 
+    /// <summary>Hard-resets the currently checked-out branch to `commitHash` (`git reset --hard` + `clean -fd`, unlike DiscardChangesAsync which always resets to HEAD) - used to revert a cancelled busy action back to its pre-action state (see WorkspaceVersioningService.RevertToSnapshotAsync).</summary>
+    Task ResetHardAsync(string workspacePath, string commitHash, CancellationToken cancellationToken = default);
+
     /// <summary>Adds an "origin" remote, or repoints it if one already exists.</summary>
     Task SetRemoteAsync(string workspacePath, string url, CancellationToken cancellationToken = default);
 
     /// <summary>False if there's no remote, or the fetch failed (network down, auth failure - GIT_TERMINAL_PROMPT=0 means this fails fast rather than hanging). `prune` also removes remote-tracking refs for branches deleted on the remote (`git fetch --prune`).</summary>
     Task<bool> FetchAsync(string workspacePath, bool prune = false, CancellationToken cancellationToken = default);
 
-    /// <summary>Best-effort - false on failure, never throws (a push failure shouldn't roll back the local git action that already completed). `force` rewrites the remote branch's history (needed after Squash/Rebase/Rename locally rewrote it); `setUpstream` records the pushed branch as tracking `origin/refName` (used once, right after CreateBranchAsync).</summary>
+    /// <summary>Best-effort - false on failure, never throws (a push failure shouldn't roll back the local git action that already completed). `force` rewrites the remote branch's history (needed after Rebase/Squash locally rewrote it); `setUpstream` records the pushed branch as tracking `origin/refName` (used once, right after CreateBranchAsync).</summary>
     Task<bool> PushAsync(string workspacePath, string refName, bool force = false, bool setUpstream = false, CancellationToken cancellationToken = default);
 
     /// <summary>The commit `origin/{branchName}` currently points to, or null if there's no remote or that branch was never pushed.</summary>
@@ -172,4 +172,16 @@ public interface IGitService
 
     /// <summary>Fetches then fast-forwards the current branch onto `origin/{branchName}`. False if it can't fast-forward (real divergence) or there's no remote.</summary>
     Task<bool> FastForwardPullAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
+
+    /// <summary>`git merge --ff-only refName` against the currently checked-out branch - false (no merge commit, no partial state) if it can't fast-forward. Used by the Version section's Merge action, which validates the fast-forward precondition itself before calling this - see WorkspaceVersioningService.FastForwardMergeAsync.</summary>
+    Task<bool> FastForwardMergeAsync(string workspacePath, string refName, CancellationToken cancellationToken = default);
+
+    /// <summary>`git merge-base --is-ancestor ancestorRef descendantRef` - true if `ancestorRef` is reachable from `descendantRef`. Used both to filter Squash/Rebase's own base-branch picker down to branches that have actually diverged (excluded, since either action would be a no-op against an already-merged-in ancestor) and, the other way round, to filter Merge's own target-branch picker down to branches current is actually ahead of (included, since only those can be fast-forwarded).</summary>
+    Task<bool> IsAncestorAsync(string workspacePath, string ancestorRef, string descendantRef, CancellationToken cancellationToken = default);
+
+    /// <summary>`git merge-base refA refB` - the commit both refs' histories share.</summary>
+    Task<string> MergeBaseAsync(string workspacePath, string refA, string refB, CancellationToken cancellationToken = default);
+
+    /// <summary>Collapses every commit since `sinceRef` (exclusive) into one new commit at HEAD with `message` - `git reset --soft sinceRef` followed by `git commit`, which preserves HEAD's current tree/index exactly and only changes how many commits it took to get there.</summary>
+    Task SquashSinceAsync(string workspacePath, string sinceRef, string message, CancellationToken cancellationToken = default);
 }

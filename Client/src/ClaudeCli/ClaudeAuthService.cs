@@ -13,6 +13,8 @@ public sealed class ClaudeAuthService(ILogger<ClaudeAuthService> logger) : IAiAu
 
     public AiProvider Provider => AiProvider.Claude;
 
+    public bool IsInstalled => ClaudeCliLocator.IsInstalled;
+
     public async Task<AiAuthStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         try

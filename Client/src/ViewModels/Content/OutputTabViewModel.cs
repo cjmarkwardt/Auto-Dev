@@ -5,6 +5,7 @@ using AutoDev.Core.Services;
 using AutoDev.ViewModels.Infrastructure;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Markwardt.TaskRunner;
 
 namespace AutoDev.ViewModels.Content;
 
@@ -22,12 +23,47 @@ public sealed partial class OutputTaskEntry(string id, string name) : ViewModelB
     public void UpdateFrom(string name) => Name = name;
 }
 
-/// <summary>One task script's own output panel - independent Running/Succeeded/Failed/Stopped status and a "hide this panel" toggle, since a task's scripts run concurrently and can finish at different times (or never, for a long-lived one like a dev server). RequestedRow/RequestedColumn are the script's own optional Output tab grid placement (see TaskScript); ResolvedRow/ResolvedColumn are the concrete cell ScriptBlockGridLayout assigned it, which the View actually binds to.</summary>
-public sealed partial class ScriptBlockPanelViewModel(string name, int? requestedRow = null, int? requestedColumn = null) : ViewModelBase
+/// <summary>
+/// One script's own output panel within a task's run - Status maps directly onto Markwardt.TaskRunner's own
+/// ScriptStatus (Running/Waiting/Completed/Failed), the same status a live Markwardt.TaskRunner.ScriptRunner
+/// itself reports, so there's no separate app-level status vocabulary to keep in sync with the library's.
+/// Built one of two ways: live (see the ScriptRunner constructor overload), mirroring that script's own
+/// Status/LogText as they change for as long as the run continues; or historical (the plain constructor plus
+/// ApplyFinal), from an already-finished run's persisted ScriptRunRecord. IsVisible is this panel's own
+/// "hide this panel" toggle - a task's scripts run concurrently and can finish at different times (or never,
+/// for a long-lived one like a dev server).
+/// </summary>
+public sealed partial class ScriptPanelViewModel : ViewModelBase, IDisposable
 {
-    public string Name { get; } = name;
-    public int? RequestedRow { get; } = requestedRow;
-    public int? RequestedColumn { get; } = requestedColumn;
+    private readonly ScriptRunner? _liveRunner;
+    private readonly PropertyChangedEventHandler? _liveHandler;
+
+    /// <summary>Builds a panel from an already-finished run's persisted result - see ApplyFinal.</summary>
+    public ScriptPanelViewModel(string name) => Name = name;
+
+    /// <summary>Builds a panel that mirrors a currently-running script's own live Status/LogText - see Dispose.</summary>
+    public ScriptPanelViewModel(ScriptRunner runner, IUiDispatcher dispatcher)
+    {
+        Name = runner.Name;
+        Status = runner.Status;
+        OutputText = runner.LogText;
+
+        _liveRunner = runner;
+        _liveHandler = (_, e) => dispatcher.Post(() =>
+        {
+            if (e.PropertyName == nameof(ScriptRunner.Status))
+            {
+                Status = runner.Status;
+            }
+            else if (e.PropertyName == nameof(ScriptRunner.LogText))
+            {
+                OutputText = runner.LogText;
+            }
+        });
+        runner.PropertyChanged += _liveHandler;
+    }
+
+    public string Name { get; }
 
     [ObservableProperty]
     private int _resolvedRow;
@@ -39,47 +75,43 @@ public sealed partial class ScriptBlockPanelViewModel(string name, int? requeste
     private bool _isVisible = true;
 
     [ObservableProperty]
+    private ScriptStatus _status = ScriptStatus.Running;
+
+    [ObservableProperty]
     private string _outputText = "";
 
-    [ObservableProperty]
-    private bool _isRunning;
+    public bool ShowRunning => Status == ScriptStatus.Running;
+    public bool ShowWaiting => Status == ScriptStatus.Waiting;
+    public bool ShowSucceeded => Status == ScriptStatus.Completed;
+    public bool ShowFailed => Status == ScriptStatus.Failed;
 
-    [ObservableProperty]
-    private bool _hasResult;
-
-    [ObservableProperty]
-    private bool _failed;
-
-    /// <summary>True only when this block was ended by an explicit user Stop (of the whole task) rather than exiting on its own - drives showing "Stopped" instead of "Failed" on this panel.</summary>
-    [ObservableProperty]
-    private bool _wasStopped;
-
-    public bool ShowRunning => IsRunning;
-    public bool ShowSucceeded => !IsRunning && HasResult && !Failed;
-    public bool ShowStopped => !IsRunning && HasResult && Failed && WasStopped;
-    public bool ShowFailed => !IsRunning && HasResult && Failed && !WasStopped;
-
-    partial void OnIsRunningChanged(bool value) => RaiseStateChanged();
-    partial void OnHasResultChanged(bool value) => RaiseStateChanged();
-    partial void OnFailedChanged(bool value) => RaiseStateChanged();
-    partial void OnWasStoppedChanged(bool value) => RaiseStateChanged();
-
-    private void RaiseStateChanged()
+    partial void OnStatusChanged(ScriptStatus value)
     {
         OnPropertyChanged(nameof(ShowRunning));
+        OnPropertyChanged(nameof(ShowWaiting));
         OnPropertyChanged(nameof(ShowSucceeded));
-        OnPropertyChanged(nameof(ShowStopped));
         OnPropertyChanged(nameof(ShowFailed));
     }
 
-    public void AppendLine(string line) => OutputText = OutputText.Length > 0 ? $"{OutputText}\n{line}" : line;
-
-    public void ApplyResult(ScriptBlockRunRecord record)
+    /// <summary>
+    /// Force-applies a final, authoritative Status/OutputText - used both to seed a panel built straight from
+    /// a historical ScriptRunRecord, and to reconcile a live panel against its own run's final TaskRunRecord
+    /// once the run completes (belt-and-suspenders against Dispatcher post-ordering between this panel's own
+    /// live subscription and OutputTabViewModel.OnAnyRunCompleted - see that method).
+    /// </summary>
+    public void ApplyFinal(ScriptStatus status, string outputText)
     {
-        IsRunning = false;
-        HasResult = true;
-        Failed = !record.Success;
-        WasStopped = record.WasStopped;
+        Status = status;
+        OutputText = outputText;
+    }
+
+    /// <summary>Unsubscribes from the live ScriptRunner's PropertyChanged, if this panel was built from one - a no-op for a historical panel. Called once this panel is no longer shown (see OutputTabViewModel.ClearScriptBlocks), so a still-running task's continued progress doesn't keep posting into an orphaned view model after the viewer switches away from it.</summary>
+    public void Dispose()
+    {
+        if (_liveRunner is not null && _liveHandler is not null)
+        {
+            _liveRunner.PropertyChanged -= _liveHandler;
+        }
     }
 }
 
@@ -90,8 +122,8 @@ public sealed partial class ScriptBlockPanelViewModel(string name, int? requeste
 /// its whole lifetime, so multiple tasks can run concurrently with the dropdown/sidebar accurately reflecting
 /// all of them regardless of which one is currently selected for viewing.
 ///
-/// Every task's blocks run concurrently, each getting its own togglable output panel (see
-/// ScriptBlocks/VisibleScriptBlocks/ScriptBlockPanelViewModel) rather than one shared log.
+/// Every task's scripts run concurrently, each getting its own togglable output panel (see
+/// ScriptBlocks/VisibleScriptBlocks/ScriptPanelViewModel) rather than one shared log.
 /// </summary>
 public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
 {
@@ -111,9 +143,8 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
         VisibleScriptBlocks.CollectionChanged += (_, _) => RecomputeGridLayout();
 
         _scheduler.TaskRunStarted += OnAnyRunStarted;
+        _scheduler.TaskScriptsAvailable += OnTaskScriptsAvailable;
         _scheduler.TaskRunCompleted += OnAnyRunCompleted;
-        _scheduler.ScriptTaskProgress += OnScriptProgress;
-        _scheduler.ScriptBlockCompleted += OnScriptBlockCompleted;
     }
 
     public ObservableCollection<OutputTaskEntry> Entries { get; } = [];
@@ -142,14 +173,14 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _lastRunWasStopped;
 
-    /// <summary>Only ever set for a run-level failure that never got as far as any block (e.g. a script content parse error) - a per-block failure shows on that block's own panel instead.</summary>
+    /// <summary>Set only when the .task file itself failed to parse (see Markwardt.TaskRunner.TaskParseException) - a per-script failure shows on that script's own panel instead.</summary>
     [ObservableProperty]
-    private string _scriptRunError = "";
+    private string _parseError = "";
 
-    public ObservableCollection<ScriptBlockPanelViewModel> ScriptBlocks { get; } = [];
+    public ObservableCollection<ScriptPanelViewModel> ScriptBlocks { get; } = [];
 
     /// <summary>Same items as ScriptBlocks, filtered to IsVisible - what the panel grid actually renders, kept in sync via each panel's own PropertyChanged, so hidden panels don't reserve empty space (see OutputTabView.axaml's Grid). Every add/remove/visibility-toggle recomputes GridRowCount/GridColumnCount and each panel's ResolvedRow/ResolvedColumn via ScriptBlockGridLayout, then raises GridLayoutChanged (see the CollectionChanged hook in the constructor).</summary>
-    public ObservableCollection<ScriptBlockPanelViewModel> VisibleScriptBlocks { get; } = [];
+    public ObservableCollection<ScriptPanelViewModel> VisibleScriptBlocks { get; } = [];
 
     /// <summary>Sized by ScriptBlockGridLayout - Grid.RowDefinitions/ColumnDefinitions have no bindable setter in Avalonia (only the XAML-literal string form works), so OutputTabView's code-behind reads these as plain counts and builds the actual RowDefinition/ColumnDefinition entries itself, same idea as ResolvedRow/ResolvedColumn below driving Grid.SetRow/SetColumn per container.</summary>
     [ObservableProperty]
@@ -173,7 +204,7 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
     public bool ShowSucceeded => !IsRunning && HasResult && !LastRunFailed;
     public bool ShowStopped => !IsRunning && HasResult && LastRunFailed && LastRunWasStopped;
     public bool ShowFailed => !IsRunning && HasResult && LastRunFailed && !LastRunWasStopped;
-    public bool HasScriptRunError => ScriptRunError.Length > 0;
+    public bool HasParseError => ParseError.Length > 0;
 
     partial void OnIsRunningChanged(bool value)
     {
@@ -185,7 +216,7 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
     partial void OnLastRunFailedChanged(bool value) => RaiseStateChanged();
     partial void OnLastRunWasStoppedChanged(bool value) => RaiseStateChanged();
     partial void OnHasTaskChanged(bool value) => RaiseStateChanged();
-    partial void OnScriptRunErrorChanged(string value) => OnPropertyChanged(nameof(HasScriptRunError));
+    partial void OnParseErrorChanged(string value) => OnPropertyChanged(nameof(HasParseError));
 
     private void RaiseStateChanged()
     {
@@ -229,7 +260,7 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
 
     partial void OnSelectedEntryChanged(OutputTaskEntry? value)
     {
-        ScriptRunError = "";
+        ParseError = "";
         ClearScriptBlocks();
 
         if (value is null)
@@ -248,9 +279,9 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
             IsRunning = true;
             HasResult = true;
 
-            foreach (var layout in _scheduler.GetScriptBlockLayouts(value.Id))
+            foreach (var runner in _scheduler.GetLiveScripts(value.Id) ?? [])
             {
-                AddScriptBlockPanel(BuildLiveBlockPanel(value.Id, layout));
+                AddScriptBlockPanel(new ScriptPanelViewModel(runner, _dispatcher));
             }
 
             return;
@@ -258,27 +289,6 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
 
         IsRunning = false;
         _ = LoadMostRecentRunAsync(value.Id);
-    }
-
-    private ScriptBlockPanelViewModel BuildLiveBlockPanel(string taskId, ScriptBlockLayout layout)
-    {
-        var panel = new ScriptBlockPanelViewModel(layout.Name, layout.Row, layout.Column)
-        {
-            OutputText = string.Join("\n", _scheduler.GetScriptOutputSoFar(taskId, layout.Name)),
-        };
-
-        var completed = _scheduler.GetScriptBlockResult(taskId, layout.Name);
-        if (completed is not null)
-        {
-            panel.ApplyResult(completed);
-        }
-        else
-        {
-            panel.IsRunning = true;
-            panel.HasResult = panel.OutputText.Length > 0;
-        }
-
-        return panel;
     }
 
     private async Task LoadMostRecentRunAsync(string taskId)
@@ -311,17 +321,16 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
 
     private void ApplyHistoricalScriptBlocks(TaskRunRecord record)
     {
-        var blocks = record.ScriptBlocks;
-        if (blocks is null || blocks.Count == 0)
+        if (record.ParseError is { } parseError)
         {
-            ScriptRunError = !record.Success ? BuildDisplayText(record) : "";
+            ParseError = parseError;
             return;
         }
 
-        foreach (var block in blocks)
+        foreach (var script in record.Scripts)
         {
-            var panel = new ScriptBlockPanelViewModel(block.Name, block.Row, block.Column) { OutputText = block.Output };
-            panel.ApplyResult(block);
+            var panel = new ScriptPanelViewModel(script.Name);
+            panel.ApplyFinal(script.Status, script.Log);
             AddScriptBlockPanel(panel);
         }
     }
@@ -350,17 +359,31 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
         }
 
         // A run of the currently-viewed task just started - clear whatever the previous run left displayed
-        // right now, unconditionally, rather than waiting for the first progress event to infer a new run
-        // began from IsRunning having gone false. Re-running the same task that's already selected doesn't
-        // change SelectedEntry (same reference, so OnSelectedEntryChanged never re-fires), so this is the
-        // only reliable place left to reset for that case - without it, a re-run's output was appearing
-        // appended after the previous run's leftover text instead of replacing it.
-        ScriptRunError = "";
+        // right now, unconditionally, rather than waiting for its scripts to become available to infer a new
+        // run began. Re-running the same task that's already selected doesn't change SelectedEntry (same
+        // reference, so OnSelectedEntryChanged never re-fires), so this is the only reliable place left to
+        // reset for that case - without it, a re-run's output was appearing appended after the previous run's
+        // leftover text instead of replacing it.
+        ParseError = "";
         ClearScriptBlocks();
         IsRunning = true;
         HasResult = true;
         LastRunFailed = false;
         LastRunWasStopped = false;
+    });
+
+    /// <summary>The task's file has parsed and its scripts (see IWorkspaceTaskScheduler.GetLiveScripts) are now known - populates this task's panels if it's the one currently being viewed and they aren't already populated (e.g. OnSelectedEntryChanged already did it, for a task selected after its own run had already started).</summary>
+    private void OnTaskScriptsAvailable(TaskRef task) => _dispatcher.Post(() =>
+    {
+        if (SelectedEntry?.Id != task.Path || ScriptBlocks.Count > 0)
+        {
+            return;
+        }
+
+        foreach (var runner in _scheduler.GetLiveScripts(task.Path) ?? [])
+        {
+            AddScriptBlockPanel(new ScriptPanelViewModel(runner, _dispatcher));
+        }
     });
 
     private void OnAnyRunCompleted(TaskRunRecord record) => _dispatcher.Post(() =>
@@ -381,86 +404,32 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
         LastRunFailed = !record.Success;
         LastRunWasStopped = record.WasStopped;
 
-        if (record.ScriptBlocks is null || record.ScriptBlocks.Count == 0)
+        if (record.ParseError is { } parseError)
         {
-            // Never got as far as any block (e.g. a script content parse error) - every panel was already
-            // watching live progress, so this only matters when there's nothing to show per-block.
-            ScriptRunError = !record.Success ? BuildDisplayText(record) : "";
+            // Never got as far as constructing an engine (the file itself failed to parse) - every panel was
+            // already watching live progress, so this only matters when there's nothing to show per-script.
+            ParseError = parseError;
+            return;
         }
-        else
-        {
-            // Reconciles every block's panel against the final record - a no-op for a block whose own
-            // ScriptBlockCompleted already applied the same result, but the only place a Stop settles a
-            // block that was killed mid-flight: cancellation makes RunBlockAsync throw instead of returning
-            // normally, so onBlockCompleted (and the ScriptBlockCompleted event it drives) never fires for
-            // it, and without this it would be stuck showing "Running…" forever.
-            foreach (var block in record.ScriptBlocks)
-            {
-                var panel = ScriptBlocks.FirstOrDefault(p => p.Name == block.Name);
-                if (panel is null)
-                {
-                    panel = new ScriptBlockPanelViewModel(block.Name, block.Row, block.Column) { OutputText = block.Output };
-                    AddScriptBlockPanel(panel);
-                }
 
-                panel.ApplyResult(block);
+        // Reconciles every script's panel against the final record - belt-and-suspenders against Dispatcher
+        // post-ordering between a panel's own live subscription and this handler (see ScriptPanelViewModel.
+        // ApplyFinal), and the only place a Stop settles a script that was killed mid-flight before its own
+        // live ScriptRunner ever got the chance to post its final Status change.
+        foreach (var script in record.Scripts)
+        {
+            var panel = ScriptBlocks.FirstOrDefault(p => p.Name == script.Name);
+            if (panel is null)
+            {
+                panel = new ScriptPanelViewModel(script.Name);
+                AddScriptBlockPanel(panel);
             }
+
+            panel.ApplyFinal(script.Status, script.Log);
         }
     });
 
-    /// <summary>OutputSummary is always the actual accumulated output text (see WorkspaceTaskSchedulerService), never discarded on failure or stop - ErrorMessage is only ever a short reason appended below it, so a failed or stopped run's real history stays fully reviewable.</summary>
-    private static string BuildDisplayText(TaskRunRecord record) =>
-        string.IsNullOrEmpty(record.ErrorMessage) ? record.OutputSummary
-        : string.IsNullOrEmpty(record.OutputSummary) ? record.ErrorMessage
-        : $"{record.OutputSummary}\n\n{record.ErrorMessage}";
-
-    private void OnScriptProgress(string taskId, string blockName, string line)
-    {
-        if (taskId != SelectedEntry?.Id)
-        {
-            return;
-        }
-
-        _dispatcher.Post(() =>
-        {
-            IsRunning = true;
-            HasResult = true;
-
-            var panel = ScriptBlocks.FirstOrDefault(p => p.Name == blockName);
-            if (panel is null)
-            {
-                var layout = _scheduler.GetScriptBlockLayouts(taskId).FirstOrDefault(l => l.Name == blockName);
-                panel = new ScriptBlockPanelViewModel(blockName, layout?.Row, layout?.Column);
-                AddScriptBlockPanel(panel);
-            }
-
-            panel.IsRunning = true;
-            panel.HasResult = true;
-            panel.AppendLine(line);
-        });
-    }
-
-    private void OnScriptBlockCompleted(string taskId, ScriptBlockRunRecord result)
-    {
-        if (taskId != SelectedEntry?.Id)
-        {
-            return;
-        }
-
-        _dispatcher.Post(() =>
-        {
-            var panel = ScriptBlocks.FirstOrDefault(p => p.Name == result.Name);
-            if (panel is null)
-            {
-                panel = new ScriptBlockPanelViewModel(result.Name, result.Row, result.Column) { OutputText = result.Output };
-                AddScriptBlockPanel(panel);
-            }
-
-            panel.ApplyResult(result);
-        });
-    }
-
-    private void AddScriptBlockPanel(ScriptBlockPanelViewModel panel)
+    private void AddScriptBlockPanel(ScriptPanelViewModel panel)
     {
         ScriptBlocks.Add(panel);
         if (panel.IsVisible)
@@ -473,7 +442,7 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
 
     private void OnScriptBlockPanelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName != nameof(ScriptBlockPanelViewModel.IsVisible) || sender is not ScriptBlockPanelViewModel panel)
+        if (e.PropertyName != nameof(ScriptPanelViewModel.IsVisible) || sender is not ScriptPanelViewModel panel)
         {
             return;
         }
@@ -493,6 +462,12 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
 
     private void ClearScriptBlocks()
     {
+        foreach (var panel in ScriptBlocks)
+        {
+            panel.PropertyChanged -= OnScriptBlockPanelPropertyChanged;
+            panel.Dispose();
+        }
+
         ScriptBlocks.Clear();
         VisibleScriptBlocks.Clear();
     }
@@ -500,8 +475,8 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _scheduler.TaskRunStarted -= OnAnyRunStarted;
+        _scheduler.TaskScriptsAvailable -= OnTaskScriptsAvailable;
         _scheduler.TaskRunCompleted -= OnAnyRunCompleted;
-        _scheduler.ScriptTaskProgress -= OnScriptProgress;
-        _scheduler.ScriptBlockCompleted -= OnScriptBlockCompleted;
+        ClearScriptBlocks();
     }
 }

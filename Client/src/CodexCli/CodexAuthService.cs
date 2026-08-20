@@ -19,6 +19,8 @@ public sealed class CodexAuthService(ILogger<CodexAuthService> logger) : IAiAuth
 {
     public AiProvider Provider => AiProvider.Codex;
 
+    public bool IsInstalled => CodexCliLocator.IsInstalled;
+
     public async Task<AiAuthStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         try

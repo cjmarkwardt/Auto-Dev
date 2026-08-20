@@ -68,7 +68,7 @@ public sealed partial class WorkspaceContentViewModel(
         _lastTarget = target;
         UpdateEditReadOnly();
 
-        var sessionKey = target is { Kind: GitTargetKind.Branch, Branch: { } branch } ? branch.Id : null;
+        var sessionKey = target is { Kind: GitTargetKind.Branch, BranchName: { } branchName } ? branchName : null;
         await Generate.SwitchSessionAsync(sessionKey);
     }
 

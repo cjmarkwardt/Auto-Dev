@@ -93,6 +93,12 @@
          native-Avalonia SVG control. -->
     <PackageReference Include="Mermaider" Version="0.12.1" />
     <PackageReference Include="Svg.Skia" Version="5.1.1" />
+
+    <!-- Parses and executes .task files (see Docs/TaskAutomation.md) - the task language itself, its parser,
+         and its execution engine (TaskDocumentParser/TaskEngine/ScriptRunner) all live in this library now
+         rather than duplicated in this project; see WorkspaceTaskSchedulerService and TaskSyntaxColorizer for
+         where it's actually used. -->
+    <PackageReference Include="Markwardt.TaskRunner" Version="1.0.0" />
   </ItemGroup>
 
   <!-- SkiaSharp/HarfBuzzSharp ship their native libraries' own .pdb symbol files as content assets - those

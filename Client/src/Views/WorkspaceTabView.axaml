@@ -82,13 +82,33 @@
             </Border>
         </Panel>
 
-        <!-- Blocks all input while a git action is in flight (Version section actions, History switches) -->
+        <!-- Blocks all input while a git action is in flight (Version section actions, History switches) - also
+             shows that action's own live git command log (Version.GitOutputLog, cleared at the start of every
+             action - see VersionSectionViewModel.RunBusyAsync) and a Cancel button that reverts whatever the
+             action had done so far back to its pre-action snapshot (see RevertToSnapshotAsync). -->
         <Panel IsVisible="{Binding Version.IsBusy}" Background="#88000000">
             <Border Background="{DynamicResource EditorBackgroundBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
-                    BorderThickness="1" CornerRadius="6" Padding="24,20" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <StackPanel Spacing="10" HorizontalAlignment="Center">
-                    <ProgressBar IsIndeterminate="True" Width="160" Height="4" />
-                    <TextBlock Text="Working…" FontSize="13" HorizontalAlignment="Center" />
+                    BorderThickness="1" CornerRadius="6" Padding="24,20" Width="480"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                        <ProgressBar IsIndeterminate="True" Width="160" Height="4" VerticalAlignment="Center" />
+                        <TextBlock Text="Working…" FontSize="13" VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <ScrollViewer Name="GitLogScroll" MaxHeight="240" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding Version.GitOutputLog}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <TextBlock Text="{Binding}" FontFamily="monospace" FontSize="10.5" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextMutedBrush}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <Button Content="Cancel" Classes="danger" HorizontalAlignment="Center"
+                            Command="{Binding Version.CancelBusyCommand}" />
                 </StackPanel>
             </Border>
         </Panel>

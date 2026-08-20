@@ -20,6 +20,9 @@
             <Button Classes="iconButton" ToolTip.Tip="Open in File Manager" Command="{Binding OpenInFileManagerCommand}">
                 <Path Classes="lineIcon" Data="{StaticResource OpenExternalIconGeometry}" Width="13" Height="13" />
             </Button>
+            <Button Classes="iconButton" ToolTip.Tip="Copy Workspace Root Path" Command="{Binding CopyRootPathCommand}">
+                <Path Classes="lineIcon" Data="{StaticResource CopyIconGeometry}" Width="13" Height="13" />
+            </Button>
             <Button Classes="iconButton" ToolTip.Tip="Collapse All" Command="{Binding CollapseAllCommand}">
                 <Path Classes="lineIcon" Data="{StaticResource CollapseAllIconGeometry}" Width="13" Height="13" />
             </Button>
@@ -121,6 +124,9 @@
                                           CommandParameter="{Binding}" />
                                 <MenuItem Header="Open Folder" IsVisible="{Binding !IsDirectory}"
                                           Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).OpenFolderInFileManagerCommand}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Set Command Context" IsVisible="{Binding IsDirectory}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).SetCommandContextCommand}"
                                           CommandParameter="{Binding}" />
                                 <MenuItem Header="Copy Path"
                                           Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).CopyPathCommand}"

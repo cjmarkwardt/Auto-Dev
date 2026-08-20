@@ -74,24 +74,24 @@
         <Setter Property="HorizontalContentAlignment" Value="Center" />
     </Style>
 
-    <!-- Sidebar section heading (Version/Tasks/Files) - the section name itself is the trigger for that
-         section's action dropdown (see each section View's Button.Flyout), so it reads as a plain left-aligned
-         label until hovered, rather than looking like an ordinary button. This padding is every section's only
-         source of inset around its heading - section Views must not add their own extra margin around it, or
-         the two stack up (see VersionSectionView, which used to double up this way). -->
-    <Style Selector="Button.sidebarHeading">
+    <!-- The Version section (VersionSectionView) itself, as a click target for its own Commit/Reset Flyout -
+         plain/transparent until hovered so it still reads as a passive display, not an ordinary button. Pending
+         changes swap the background for a steadier highlight (not just the pointerover one) so it's visible
+         without needing to hover. -->
+    <Style Selector="Button.versionSection">
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="10,8" />
+        <Setter Property="Margin" Value="6" />
         <Setter Property="HorizontalAlignment" Value="Stretch" />
-        <Setter Property="HorizontalContentAlignment" Value="Left" />
-        <Setter Property="FontSize" Value="11.5" />
-        <Setter Property="FontWeight" Value="Bold" />
-        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
     </Style>
-    <Style Selector="Button.sidebarHeading:pointerover /template/ ContentPresenter">
+    <Style Selector="Button.versionSection:pointerover /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource HoverBackgroundBrush}" />
+    </Style>
+    <Style Selector="Button.versionSection.pendingChanges /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SelectionBackgroundBrush}" />
     </Style>
 
     <!-- On/off toggle button look (e.g. Version section's Direct Mode) - off is the same neutral look as a

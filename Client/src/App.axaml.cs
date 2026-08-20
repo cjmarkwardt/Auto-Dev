@@ -89,7 +89,6 @@ public partial class App : Application
         services.AddSingleton<IUsageAggregatorService, UsageAggregatorService>();
         services.AddSingleton<ITaskSchedulerServiceFactory, TaskSchedulerServiceFactory>();
         services.AddSingleton<ICommandExecutor, CommandExecutor>();
-        services.AddSingleton<IScriptTaskRunner, ScriptTaskRunner>();
         services.AddSingleton<IGitService, GitService>();
         services.AddSingleton<IVersioningServiceFactory, VersioningServiceFactory>();
         services.AddSingleton<ISoundService, SoundService>();

@@ -19,13 +19,28 @@
                 <TextBlock Text="AutoDev" FontSize="28" FontWeight="Bold" HorizontalAlignment="Center" />
                 <TextBlock Text="AI-assisted development" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Center" />
 
-                <Button Content="{Binding LoginButtonLabel}" Classes="accent" HorizontalAlignment="Center"
-                        Padding="20,10" Margin="0,20,0,0"
-                        Command="{Binding LoginCommand}"
-                        IsEnabled="{Binding !IsBusy}" />
+                <TextBlock Text="Checking installed providers…" Foreground="{DynamicResource TextMutedBrush}"
+                           HorizontalAlignment="Center" Margin="0,20,0,0" IsVisible="{Binding IsChecking}" />
 
-                <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource TextMutedBrush}"
-                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+                <!-- Neither Claude Code nor Codex is on this machine at all - nothing to sign into yet. -->
+                <TextBlock Text="Install the Claude Code or Codex CLI to use AutoDev." FontWeight="Bold"
+                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" Margin="0,20,0,0"
+                           IsVisible="{Binding NeitherInstalled}" />
+
+                <!-- One row per installed-but-signed-out provider (see AuthGateViewModel.CheckInitialStatusAsync)
+                     - one or both, whichever this machine actually has. -->
+                <ItemsControl ItemsSource="{Binding LoginRows}" IsVisible="{Binding !IsChecking}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ProviderLoginRowViewModel">
+                            <StackPanel Spacing="8" HorizontalAlignment="Center" Margin="0,20,0,0">
+                                <Button Content="{Binding LoginButtonLabel}" Classes="accent" HorizontalAlignment="Center"
+                                        Padding="20,10" Command="{Binding LoginCommand}" IsEnabled="{Binding !IsBusy}" />
+                                <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource TextMutedBrush}"
+                                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </StackPanel>
         </Grid>
     </DockPanel>

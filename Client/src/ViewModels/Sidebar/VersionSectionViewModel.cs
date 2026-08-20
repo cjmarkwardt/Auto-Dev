@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using AutoDev.Core.Models;
 using AutoDev.Core.Services;
 using AutoDev.ViewModels.Content;
@@ -7,9 +8,16 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace AutoDev.ViewModels.Sidebar;
 
+/// <summary>
+/// A passive display of the current git target (branch/tag/commit) and pending-changes state, plus every action
+/// that targets the currently checked-out branch directly rather than some other row in the History tab
+/// (Commit/Reset/Branch/Tag/Remote/Squash/Rebase/Merge - offered via a click on this section itself, see
+/// VersionSectionView) and the shared busy/lock machinery every other mutating git action (triggered from the
+/// History tab's own right-click menus - see HistoryTabViewModel) runs through.
+/// </summary>
 public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 {
-    /// <summary>Safety cap on the rebase-conflict auto-resolution loop, so a conflict Claude can't actually resolve doesn't spin forever - see ResolveRebaseConflictsAsync.</summary>
+    /// <summary>Safety cap on the rebase/merge-conflict auto-resolution loop, so a conflict Claude can't actually resolve doesn't spin forever - see ResolveConflictsAsync.</summary>
     private const int MaxConflictResolutionAttempts = 3;
 
     /// <summary>How often the background remote sync (fetch/prune/non-current-branch reset - see WorkspaceVersioningService.SyncWithRemoteAsync, folded into every RefreshAsync) runs even with no user action.</summary>
@@ -21,11 +29,9 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     private readonly IUiDispatcher dispatcher;
     private readonly System.Timers.Timer periodicSyncTimer;
 
-    public VersionSectionViewModel(
-        IWorkspaceVersioningService versioningService,
-        IDialogService dialogService,
-        GenerateTabViewModel generate,
-        IUiDispatcher dispatcher)
+    private CancellationTokenSource? busyCts;
+
+    public VersionSectionViewModel(IWorkspaceVersioningService versioningService, IDialogService dialogService, GenerateTabViewModel generate, IUiDispatcher dispatcher)
     {
         this.versioningService = versioningService;
         this.dialogService = dialogService;
@@ -52,37 +58,8 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private GitTarget? _target;
 
-    partial void OnTargetChanged(GitTarget? value)
-    {
-        OnPropertyChanged(nameof(DisplayName));
-        OnPropertyChanged(nameof(HasBranchSubtitle));
-        OnPropertyChanged(nameof(IsPublicBranch));
-        OnPropertyChanged(nameof(PublicPrivateLabel));
-    }
-
-    /// <summary>The big label at the top of the Version section - the branch's human name when resolvable, otherwise the raw ref (branch id, tag name, or short commit hash).</summary>
-    public string DisplayName => Target?.Branch?.Name ?? Target?.Ref ?? "";
-
-    /// <summary>Whether the small subtitle (the raw branch id, distinct from its display name) should show - only when targeting a branch with resolvable info.</summary>
-    public bool HasBranchSubtitle => Target?.Branch is not null;
-
-    /// <summary>Only meaningful while HasBranchSubtitle is true - see BranchInfo.IsPublic for what public/private actually means.</summary>
-    public bool IsPublicBranch => Target?.Branch?.IsPublic ?? false;
-
-    public string PublicPrivateLabel => IsPublicBranch ? "Public" : "Private";
-
     [ObservableProperty]
-    private VersionActionState _actionState = VersionActionState.Empty;
-
-    partial void OnActionStateChanged(VersionActionState value) => OnPropertyChanged(nameof(HasPendingChanges));
-
-    /// <summary>
-    /// Aliases ActionState.CanReset rather than tracking its own state - CanReset is already exactly
-    /// "does `git status` show any uncommitted changes" (see WorkspaceVersioningService.GetActionStateAsync,
-    /// which computes it identically for every target kind), so a separate field would just be the same value
-    /// under a clearer name for this specific use (a status indicator, not a button's enabled state).
-    /// </summary>
-    public bool HasPendingChanges => ActionState.CanReset;
+    private bool _hasPendingChanges;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -91,21 +68,46 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isAiWorking;
 
-    [ObservableProperty]
-    private string _statusMessage = "";
+    /// <summary>The current busy action's own live git command log (command lines plus their output) - see RunBusyAsync/GitCommandLogSink. Shown in the busy overlay; cleared at the start of every new action.</summary>
+    public ObservableCollection<string> GitOutputLog { get; } = [];
 
-    /// <summary>Blocks the Version section's own action buttons - true during either a git-only action (IsBusy) or the whole Generate-turn-plus-commit workflow (IsAiWorking).</summary>
+    /// <summary>Blocks every git action triggered from the History tab or this section's own Commit/Reset - true during either a git-only action (IsBusy) or the whole Generate-turn-plus-commit workflow (IsAiWorking).</summary>
     public bool IsInteractionBlocked => IsBusy || IsAiWorking;
 
-    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(IsInteractionBlocked));
-    partial void OnIsAiWorkingChanged(bool value) => OnPropertyChanged(nameof(IsInteractionBlocked));
+    /// <summary>Shared CanExecute for every command below.</summary>
+    private bool CanMutate() => !IsInteractionBlocked;
+
+    private void NotifyMutatingCommandsCanExecuteChanged()
+    {
+        CommitCommand.NotifyCanExecuteChanged();
+        ResetCommand.NotifyCanExecuteChanged();
+        BranchCommand.NotifyCanExecuteChanged();
+        TagCommand.NotifyCanExecuteChanged();
+        RemoteCommand.NotifyCanExecuteChanged();
+        SquashCommand.NotifyCanExecuteChanged();
+        RebaseCommand.NotifyCanExecuteChanged();
+        MergeCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsInteractionBlocked));
+        NotifyMutatingCommandsCanExecuteChanged();
+        CancelBusyCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsAiWorkingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsInteractionBlocked));
+        NotifyMutatingCommandsCanExecuteChanged();
+    }
 
     /// <summary>Raised whenever the targeted branch/tag/commit changes, at the end of every RefreshAsync.</summary>
     public event Action<GitTarget?>? TargetChanged;
 
     private void OnGenerateNormalTurnStarted() => IsAiWorking = true;
 
-    /// <summary>Unlocks the sidebar/Edit/History controls once a genuine user-submitted Generate turn finishes - whatever it changed is left as pending, uncommitted changes; the user commits explicitly via the Version section's Commit action, same as any other edit.</summary>
+    /// <summary>Unlocks the sidebar/Edit/History controls once a genuine user-submitted Generate turn finishes - whatever it changed is left as pending, uncommitted changes; the user commits explicitly via the History tab's Commit action, same as any other edit.</summary>
     private void OnGenerateNormalTurnCompleted(bool success) => IsAiWorking = false;
 
     /// <summary>Locks the workspace down for a hidden turn exactly like a visible one - see OnGenerateHiddenTurnFinished.</summary>
@@ -121,12 +123,12 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         _wasAiWorkingBeforeHiddenTurn = null;
     }
 
-    /// <summary>Called once when a workspace tab is opened - silently creates the repo (git init + the "main" branch's base commit) if one doesn't exist yet, then reads the current target and starts the periodic background sync.</summary>
+    /// <summary>Called once when a workspace tab is opened - silently creates the repo (git init + the initial "main" branch) if one doesn't exist yet, then reads the current target and starts the periodic background sync.</summary>
     public async Task EnsureRepoAsync()
     {
         if (!await versioningService.IsRepoInitializedAsync())
         {
-            await RunBusyAsync(() => versioningService.InitializeRepoAsync());
+            await RunBusyAsync(ct => versioningService.InitializeRepoAsync(ct));
         }
         else
         {
@@ -140,145 +142,77 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         periodicSyncTimer.Start();
     }
 
-    /// <summary>Configures or repoints the "origin" remote from the Version section, any time (not just at repo creation) - RunBusyAsync's trailing RefreshAsync re-raises TargetChanged, which is what tells the History tab to reload from the new remote.</summary>
-    [RelayCommand]
-    private async Task SetRemoteAsync()
-    {
-        var currentUrl = await versioningService.GetRemoteUrlAsync() ?? "";
-        var newUrl = await dialogService.ShowInputDialogAsync("Remote Repository", "Remote URL", currentUrl);
-        if (string.IsNullOrWhiteSpace(newUrl) || newUrl.Trim() == currentUrl)
-        {
-            return;
-        }
-
-        await RunBusyAsync(() => versioningService.ConfigureRemoteAsync(newUrl.Trim()));
-    }
-
-    [RelayCommand]
-    private async Task BranchAsync()
-    {
-        var result = await dialogService.ShowCreateBranchDialogAsync();
-        if (result is null)
-        {
-            return;
-        }
-
-        await RunBusyAsync(async () =>
-        {
-            var outcome = await versioningService.CreateBranchAsync(result.Name, result.Id, result.IsPublic);
-            if (outcome == BranchCreationOutcome.IdAlreadyExists)
-            {
-                StatusMessage = $"A branch named \"{result.Id}\" already exists.";
-            }
-        });
-    }
-
-    /// <summary>Creates an annotated tag at the current spot (HEAD) - see CreateTagDialogViewModel for the Full Name/Id prompt and IWorkspaceVersioningService.CreateTagAsync for why both exist (Id is the actual git ref name; Full Name becomes the tag's own message and is what the History tab's timeline shows).</summary>
-    [RelayCommand]
-    private async Task TagAsync()
-    {
-        var result = await dialogService.ShowCreateTagDialogAsync();
-        if (result is null)
-        {
-            return;
-        }
-
-        await RunBusyAsync(async () =>
-        {
-            var outcome = await versioningService.CreateTagAsync(result.Id, result.FullName);
-            if (outcome == TagCreationOutcome.IdAlreadyExists)
-            {
-                StatusMessage = $"A tag named \"{result.Id}\" already exists.";
-            }
-        });
-    }
-
-    [RelayCommand]
-    private async Task ResetAsync()
-    {
-        if (!await dialogService.ShowConfirmDialogAsync("Reset", "Discard all pending changes? This cannot be undone.", confirmLabel: "Reset"))
-        {
-            return;
-        }
-
-        await RunBusyAsync(() => versioningService.ResetAsync());
-    }
-
-    [RelayCommand]
-    private async Task SquashAsync()
-    {
-        if (!await dialogService.ShowConfirmDialogAsync("Squash", "Combine all pending changes and commits into this branch's base commit?", confirmLabel: "Squash", isDestructive: false))
-        {
-            return;
-        }
-
-        await RunBusyAsync(() => versioningService.SquashAsync());
-    }
-
-    [RelayCommand]
-    private async Task RebaseAsync()
-    {
-        await RunBusyAsync(async () =>
-        {
-            var outcome = await versioningService.RebaseAsync();
-            outcome = await ResolveRebaseConflictsAsync(outcome, BuildRebaseConflictInstruction);
-            await FinishRebaseAsync(outcome);
-        });
-    }
-
-    [RelayCommand]
-    private async Task MergeAsync()
-    {
-        await RunBusyAsync(async () =>
-        {
-            var outcome = await versioningService.RebaseAsync();
-            outcome = await ResolveRebaseConflictsAsync(outcome, BuildRebaseConflictInstruction);
-            if (await FinishRebaseAsync(outcome))
-            {
-                await versioningService.FinishMergeAsync();
-            }
-        });
-    }
-
-    /// <summary>Shared tail for Rebase/Merge once the conflict-resolution loop has settled on a final outcome - pushes on success, aborts and reports on unresolved conflicts or failure. Returns whether it succeeded.</summary>
-    private async Task<bool> FinishRebaseAsync(RebaseOutcome outcome)
-    {
-        if (outcome == RebaseOutcome.Succeeded)
-        {
-            await versioningService.PushCurrentBranchAsync(force: true);
-            return true;
-        }
-
-        if (outcome == RebaseOutcome.Conflicts)
-        {
-            await versioningService.AbortRebaseAsync();
-            StatusMessage = "Could not automatically resolve the rebase conflicts - aborted.";
-        }
-        else
-        {
-            StatusMessage = "Rebase failed.";
-        }
-
-        return false;
-    }
-
-    private static string BuildRebaseConflictInstruction(IReadOnlyList<string> conflictedFiles) =>
-        "The rebase produced merge conflicts in: " + string.Join(", ", conflictedFiles) + ". " +
-        "Open each file, resolve the conflict by editing it to the correct final content and removing the " +
-        "conflict markers (<<<<<<<, =======, >>>>>>>), then stage the resolved files with `git add`. Reply once " +
-        "every conflict is resolved and staged.";
+    /// <summary>
+    /// Set by WorkspaceTabViewModel to flush the Edit tab's pending debounced autosave before every mutating
+    /// action. Without this, typing in Edit then immediately triggering a branch action (within the 750ms
+    /// autosave debounce) lets the action happen while the edit still only exists in memory - the debounce
+    /// then fires afterward and silently writes that stale content onto whatever branch ended up checked out.
+    /// See EditTabViewModel.FlushPendingSaveAsync.
+    /// </summary>
+    public Func<Task>? FlushPendingEditBeforeMutation { get; set; }
 
     /// <summary>
-    /// Shared conflict-resolution loop for RebaseAsync/MergeAsync - a no-op unless the initial rebase attempt
-    /// already came back Conflicts. Locks the sidebar/Edit/History controls via IsAiWorking for the whole
-    /// loop, exactly like a normal Generate turn, since Claude is actively editing files here just the same -
-    /// only IsBusy (the full-screen overlay) drops out during the actual RunAutomatedTurnAsync call, so the
-    /// user can still watch the exchange happen in Generate. Restores IsAiWorking to whatever it was before
-    /// (rather than unconditionally clearing it) since this can run nested inside an already-locked flow.
+    /// Runs a mutating git action with the loading overlay up - also called by HistoryTabViewModel for its
+    /// checkout/merge/rebase/delete actions, so every one of them gets the same overlay (live git output log,
+    /// Cancel button) and refreshes Target/HasPendingChanges/TargetChanged the same way afterward. Captures a
+    /// pre-action snapshot first and, if cancelled (via CancelBusyCommand, below), reverts back to it - action
+    /// gets its own CancellationToken to thread into whichever IWorkspaceVersioningService calls it makes, so a
+    /// cancel can actually interrupt an in-flight git subprocess (see GitService.RunAsync) rather than just
+    /// racing to be first past a check.
     /// </summary>
-    private async Task<RebaseOutcome> ResolveRebaseConflictsAsync(RebaseOutcome outcome, Func<IReadOnlyList<string>, string> buildInstruction)
+    public async Task RunBusyAsync(Func<CancellationToken, Task> action)
     {
-        if (outcome != RebaseOutcome.Conflicts)
+        IsBusy = true;
+        GitOutputLog.Clear();
+        var snapshot = await versioningService.CaptureSnapshotAsync();
+        busyCts = new CancellationTokenSource();
+        CancelBusyCommand.NotifyCanExecuteChanged();
+        GitCommandLogSink.Current = line => GitOutputLog.Add(line);
+        try
+        {
+            if (FlushPendingEditBeforeMutation is not null)
+            {
+                await FlushPendingEditBeforeMutation();
+            }
+
+            await action(busyCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            GitOutputLog.Add("Cancelled - reverting…");
+            await versioningService.RevertToSnapshotAsync(snapshot);
+        }
+        finally
+        {
+            GitCommandLogSink.Current = null;
+            busyCts.Dispose();
+            busyCts = null;
+            IsBusy = false;
+            CancelBusyCommand.NotifyCanExecuteChanged();
+            await RefreshAsync();
+        }
+    }
+
+    private bool CanCancelBusy() => busyCts is not null;
+
+    /// <summary>The busy overlay's own Cancel button - signals the running action's CancellationToken, which RunBusyAsync's catch block turns into a revert back to the pre-action snapshot.</summary>
+    [RelayCommand(CanExecute = nameof(CanCancelBusy))]
+    private void CancelBusy() => busyCts?.Cancel();
+
+    /// <summary>
+    /// Shared conflict-resolution loop for this section's own Rebase/Merge and HistoryTabViewModel's Merge
+    /// Into Current/Rebase Current Onto This - a no-op unless the initial attempt already came back Conflicts.
+    /// Locks the sidebar/Edit/History controls via IsAiWorking for the whole loop, exactly like a normal
+    /// Generate turn, since Claude is actively editing files here just the same - only IsBusy (the busy
+    /// overlay) drops out during the actual RunAutomatedTurnAsync call, so the user can still watch the
+    /// exchange happen in Generate (and cancel it from there - the overlay's own Cancel button isn't shown
+    /// while IsBusy is down). Restores IsAiWorking to whatever it was before (rather than unconditionally
+    /// clearing it) since this can run nested inside an already-locked flow. continueAction is
+    /// ContinueRebaseAsync or ContinueMergeAsync, whichever this conflict belongs to.
+    /// </summary>
+    public async Task<GitOperationOutcome> ResolveConflictsAsync(GitOperationOutcome outcome, Func<CancellationToken, Task<GitOperationOutcome>> continueAction, CancellationToken cancellationToken)
+    {
+        if (outcome != GitOperationOutcome.Conflicts)
         {
             return outcome;
         }
@@ -287,29 +221,29 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         IsAiWorking = true;
         try
         {
-            for (var attempt = 0; outcome == RebaseOutcome.Conflicts && attempt < MaxConflictResolutionAttempts; attempt++)
+            for (var attempt = 0; outcome == GitOperationOutcome.Conflicts && attempt < MaxConflictResolutionAttempts; attempt++)
             {
-                var conflictedFiles = await versioningService.GetConflictedFilesAsync();
-                var instruction = buildInstruction(conflictedFiles);
+                var conflictedFiles = await versioningService.GetConflictedFilesAsync(cancellationToken);
+                var instruction = BuildConflictInstruction(conflictedFiles);
 
                 // Let the user watch/interact with Generate while Claude resolves the conflict - only the
-                // surrounding git-only work (rebasing, checking/continuing) blocks with the loading overlay.
+                // surrounding git-only work (rebasing/merging, checking/continuing) blocks with the loading overlay.
                 IsBusy = false;
                 try
                 {
-                    await generate.RunAutomatedTurnAsync(instruction);
+                    await generate.RunAutomatedTurnAsync(instruction, cancellationToken: cancellationToken);
                 }
                 finally
                 {
                     IsBusy = true;
                 }
 
-                if (await versioningService.HasConflictsAsync())
+                if (await versioningService.HasConflictsAsync(cancellationToken))
                 {
                     continue; // not actually resolved yet - ask again, within the same attempt budget
                 }
 
-                outcome = await versioningService.ContinueRebaseAsync();
+                outcome = await continueAction(cancellationToken);
             }
         }
         finally
@@ -320,81 +254,183 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         return outcome;
     }
 
-    [RelayCommand]
-    private async Task RenameAsync()
+    private static string BuildConflictInstruction(IReadOnlyList<string> conflictedFiles) =>
+        "This produced merge conflicts in: " + string.Join(", ", conflictedFiles) + ". " +
+        "Open each file, resolve the conflict by editing it to the correct final content and removing the " +
+        "conflict markers (<<<<<<<, =======, >>>>>>>), then stage the resolved files with `git add`. Reply once " +
+        "every conflict is resolved and staged.";
+
+    /// <summary>Re-syncs with the remote, re-reads the current target/pending-changes state from git, and re-raises TargetChanged - also called after checking out a different commit/branch/tag from the History tab, and periodically by periodicSyncTimer.</summary>
+    public async Task RefreshAsync()
     {
-        var newName = await dialogService.ShowInputDialogAsync("Rename Branch", "New name", Target?.Branch?.Name ?? "");
-        if (string.IsNullOrWhiteSpace(newName))
-        {
-            return;
-        }
-
-        if (!await dialogService.ShowConfirmDialogAsync("Rename Branch", "Renaming will squash all pending changes and commits on this branch into one. Continue?", confirmLabel: "Rename", isDestructive: false))
-        {
-            return;
-        }
-
-        await RunBusyAsync(() => versioningService.RenameAsync(newName.Trim()));
+        await versioningService.SyncWithRemoteAsync();
+        Target = await versioningService.GetCurrentTargetAsync();
+        HasPendingChanges = await versioningService.HasUncommittedChangesAsync();
+        TargetChanged?.Invoke(Target);
     }
 
-    /// <summary>
-    /// Defaults the message box to this branch's own name for a private branch (the common case - one user,
-    /// short-lived, "what it's called" is usually a perfectly good commit message) but leaves it empty for a
-    /// public one, so a shared/long-lived branch's history can't accidentally end up with a run of commits
-    /// all just reading the branch name because the box already had text and Enter was quicker than deleting
-    /// it - IsNullOrWhiteSpace below already treats an empty message as "cancelled", so an empty default is
-    /// exactly what makes typing a real message required rather than merely encouraged.
-    /// </summary>
-    [RelayCommand]
+    /// <summary>Commits pending changes to whatever's currently checked out - triggered by clicking this section, see VersionSectionView.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task CommitAsync()
     {
-        var defaultMessage = Target?.Branch is { IsPublic: false, Name: { } name } ? name : "";
-        var message = await dialogService.ShowInputDialogAsync("Commit", "Message", defaultMessage);
+        var message = await dialogService.ShowInputDialogAsync("Commit", "Message");
         if (string.IsNullOrWhiteSpace(message))
         {
             return;
         }
 
-        await RunBusyAsync(() => versioningService.CommitAsync(message.Trim()));
+        await RunBusyAsync(ct => versioningService.CommitAsync(message.Trim(), ct));
     }
 
-    /// <summary>
-    /// Set by WorkspaceTabViewModel to flush the Edit tab's pending debounced autosave before every mutating
-    /// action. Without this, typing in Edit then immediately triggering a branch action (within the 750ms
-    /// autosave debounce) lets the action happen while the edit still only exists in memory - the debounce
-    /// then fires afterward and silently writes that stale content onto whatever branch ended up checked out.
-    /// See EditTabViewModel.FlushPendingSaveAsync.
-    /// </summary>
-    public Func<Task>? FlushPendingEditBeforeMutation { get; set; }
-
-    /// <summary>Also called by HistoryTabViewModel for its checkout action, so the loading overlay (bound to IsBusy) covers that too.</summary>
-    public async Task RunBusyAsync(Func<Task> action)
+    /// <summary>Discards pending changes on whatever's currently checked out - triggered by clicking this section, see VersionSectionView.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task ResetAsync()
     {
-        IsBusy = true;
-        StatusMessage = "";
-        try
+        if (!await dialogService.ShowConfirmDialogAsync("Reset", "Discard all pending changes? This cannot be undone.", confirmLabel: "Reset"))
         {
-            if (FlushPendingEditBeforeMutation is not null)
+            return;
+        }
+
+        await RunBusyAsync(ct => versioningService.ResetAsync(ct));
+    }
+
+    /// <summary>Creates a new branch at the current target and checks it out.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task BranchAsync()
+    {
+        var name = await dialogService.ShowInputDialogAsync("Branch", "Branch name");
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        var trimmedName = name.Trim();
+        await RunBusyAsync(async ct =>
+        {
+            var outcome = await versioningService.CreateBranchAsync(trimmedName, "HEAD", ct);
+            if (outcome == BranchCreationOutcome.IdAlreadyExists)
             {
-                await FlushPendingEditBeforeMutation();
+                await dialogService.ShowMessageDialogAsync("Branch", $"A branch named \"{trimmedName}\" already exists.");
             }
-
-            await action();
-        }
-        finally
-        {
-            IsBusy = false;
-            await RefreshAsync();
-        }
+        });
     }
 
-    /// <summary>Re-syncs with the remote, re-reads the current target/action state from git, and re-raises TargetChanged - also called by HistoryTabViewModel after checking out a different commit from the History tab, and periodically by periodicSyncTimer.</summary>
-    public async Task RefreshAsync()
+    /// <summary>Creates an annotated tag at the current target.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task TagAsync()
     {
-        await versioningService.SyncWithRemoteAsync();
-        Target = await versioningService.GetCurrentTargetAsync();
-        ActionState = await versioningService.GetActionStateAsync();
-        TargetChanged?.Invoke(Target);
+        var result = await dialogService.ShowCreateTagDialogAsync();
+        if (result is null)
+        {
+            return;
+        }
+
+        await RunBusyAsync(async ct =>
+        {
+            var outcome = await versioningService.CreateTagAsync(result.Id, result.FullName, "HEAD", ct);
+            if (outcome == TagCreationOutcome.IdAlreadyExists)
+            {
+                await dialogService.ShowMessageDialogAsync("Tag", $"A tag named \"{result.Id}\" already exists.");
+            }
+        });
+    }
+
+    /// <summary>Configures or repoints the "origin" remote.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task RemoteAsync()
+    {
+        var currentUrl = await versioningService.GetRemoteUrlAsync() ?? "";
+        var newUrl = await dialogService.ShowInputDialogAsync("Remote", "Remote URL", currentUrl);
+        if (string.IsNullOrWhiteSpace(newUrl) || newUrl.Trim() == currentUrl)
+        {
+            return;
+        }
+
+        await RunBusyAsync(ct => versioningService.ConfigureRemoteAsync(newUrl.Trim(), ct));
+    }
+
+    /// <summary>Squashes the current branch's own commits since diverging from a chosen base branch into one - only offered while targeting a branch, see VersionSectionView.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task SquashAsync()
+    {
+        var branches = await versioningService.GetEligibleBaseBranchesAsync();
+        if (branches.Count == 0)
+        {
+            await dialogService.ShowMessageDialogAsync("Squash", "No other branch to squash against.");
+            return;
+        }
+
+        var result = await dialogService.ShowSquashDialogAsync(branches, branch => versioningService.GetDefaultSquashMessageAsync(branch));
+        if (result is null)
+        {
+            return;
+        }
+
+        await RunBusyAsync(ct => versioningService.SquashAsync(result.BaseBranch, result.Message.Trim(), ct));
+    }
+
+    /// <summary>Rebases the current branch onto a chosen branch, always squashing its own commits first - only offered while targeting a branch, see VersionSectionView. Merge conflicts, if any, are handed to Claude via ResolveConflictsAsync.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task RebaseAsync()
+    {
+        var branches = await versioningService.GetEligibleBaseBranchesAsync();
+        if (branches.Count == 0)
+        {
+            await dialogService.ShowMessageDialogAsync("Rebase", "No other branch to rebase onto.");
+            return;
+        }
+
+        var result = await dialogService.ShowRebaseDialogAsync(branches, branch => versioningService.GetDefaultSquashMessageAsync(branch));
+        if (result is null)
+        {
+            return;
+        }
+
+        await RunBusyAsync(async ct =>
+        {
+            var outcome = await versioningService.RebaseWithSquashAsync(result.OntoBranch, result.SquashMessage.Trim(), ct);
+            outcome = await ResolveConflictsAsync(outcome, ct2 => versioningService.ContinueRebaseAsync(ct2), ct);
+            if (outcome == GitOperationOutcome.Succeeded)
+            {
+                await versioningService.PushCurrentBranchAsync(force: true, ct);
+            }
+            else if (outcome == GitOperationOutcome.Conflicts)
+            {
+                await versioningService.AbortRebaseAsync(ct);
+                await dialogService.ShowMessageDialogAsync("Rebase", "Could not automatically resolve the rebase conflicts - aborted.");
+            }
+            else
+            {
+                await dialogService.ShowMessageDialogAsync("Rebase", "Rebase failed.");
+            }
+        });
+    }
+
+    /// <summary>Fast-forward merges the current branch onto a chosen target branch, squashing first if there's more than one commit to bring over - only offered while targeting a branch, see VersionSectionView. Never conflicts (a fast-forward can't) - fails outright if the current branch isn't actually based on the target's own head.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task MergeAsync()
+    {
+        var branches = await versioningService.GetEligibleMergeTargetBranchesAsync();
+        if (branches.Count == 0)
+        {
+            await dialogService.ShowMessageDialogAsync("Merge", "No branch this branch can be fast-forward merged onto.");
+            return;
+        }
+
+        var result = await dialogService.ShowMergeDialogAsync(branches, branch => versioningService.GetDefaultSquashMessageAsync(branch));
+        if (result is null)
+        {
+            return;
+        }
+
+        await RunBusyAsync(async ct =>
+        {
+            var succeeded = await versioningService.FastForwardMergeAsync(result.TargetBranch, result.SquashMessage?.Trim(), ct);
+            if (!succeeded)
+            {
+                await dialogService.ShowMessageDialogAsync("Merge", $"'{Target?.BranchName}' isn't based on the head of '{result.TargetBranch}' - can't fast-forward.");
+            }
+        });
     }
 
     public void Dispose()

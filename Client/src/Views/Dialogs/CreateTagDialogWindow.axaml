@@ -5,7 +5,7 @@
         x:DataType="vm:CreateTagDialogViewModel"
         Width="420" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterOwner"
-        Title="Create Tag"
+        Title="Tag"
         Background="{DynamicResource EditorBackgroundBrush}">
     <StackPanel Margin="16" Spacing="10">
         <TextBlock Text="Full Name" Foreground="{DynamicResource TextMutedBrush}" />

@@ -1,0 +1,22 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AutoDev.ViewModels.Dialogs"
+        x:Class="AutoDev.Views.Dialogs.SquashDialogWindow"
+        x:DataType="vm:SquashDialogViewModel"
+        Width="420" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Squash"
+        Background="{DynamicResource EditorBackgroundBrush}">
+    <StackPanel Margin="16" Spacing="10">
+        <TextBlock Text="Base Branch" Foreground="{DynamicResource TextMutedBrush}" />
+        <ComboBox ItemsSource="{Binding Branches}" SelectedItem="{Binding SelectedBranch}" HorizontalAlignment="Stretch" />
+
+        <TextBlock Text="Message" Foreground="{DynamicResource TextMutedBrush}" Margin="0,6,0,0" />
+        <TextBox Text="{Binding Message}" Name="MessageBox" IsEnabled="{Binding !IsLoadingMessage}" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+            <Button Content="Cancel" Command="{Binding CancelCommand}" />
+            <Button Content="Squash" Classes="accent" Command="{Binding OkCommand}" IsDefault="True" IsEnabled="{Binding CanConfirm}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

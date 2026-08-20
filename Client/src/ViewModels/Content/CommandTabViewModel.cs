@@ -6,10 +6,14 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace AutoDev.ViewModels.Content;
 
-/// <summary>A simple REPL-style shell console for the workspace, rooted at the workspace's own directory - runs
-/// arbitrary commands via the same ICommandExecutor/CliWrap backend the .task runner uses.</summary>
+/// <summary>A simple REPL-style shell console for the workspace, rooted at the workspace's own directory by
+/// default (see WorkingDirectory, changeable via GoHome or SetWorkingDirectory) - runs arbitrary commands via
+/// the same ICommandExecutor/CliWrap backend the .task runner uses.</summary>
 public sealed partial class CommandTabViewModel(string workspacePath, ICommandExecutor executor, IUiDispatcher dispatcher) : ViewModelBase, IDisposable
 {
+    /// <summary>Copied out of the primary constructor's own workspacePath parameter once, here, so nothing else in this class reads that parameter directly - it's also used to initialize WorkingDirectory below, and reading the same primary-constructor parameter from more than one member trips CS9124 (ambiguous whether it's meant as shared constant state or a one-off initializer value).</summary>
+    private readonly string workspaceRoot = workspacePath;
+
     private readonly List<string> _history = [];
     private int _historyIndex;
     private CancellationTokenSource? _cts;
@@ -27,11 +31,33 @@ public sealed partial class CommandTabViewModel(string workspacePath, ICommandEx
     [ObservableProperty]
     private GridLength _inputRowHeight = new(140);
 
+    /// <summary>The directory commands actually run in (see RunAsync) - defaults to the workspace root, and only ever changes via GoHome or SetWorkingDirectory (the Files sidebar's "Set Command Context"), never implicitly by `cd`-ing inside a command line (each RunAsync call is a fresh CliWrap process with no shared shell state to persist that across commands).</summary>
+    [ObservableProperty]
+    private string _workingDirectory = workspacePath;
+
+    /// <summary>WorkingDirectory rendered relative to the workspace root, workspace-relative-path style ("/" at the root itself, "/sub/folder" otherwise) rather than an absolute filesystem path - see CommandTabView.axaml's path bar.</summary>
+    public string WorkingDirectoryDisplay
+    {
+        get
+        {
+            var relative = Path.GetRelativePath(workspaceRoot, WorkingDirectory).Replace('\\', '/');
+            return relative == "." ? "/" : $"/{relative}";
+        }
+    }
+
     partial void OnIsRunningChanged(bool value)
     {
         RunCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
     }
+
+    partial void OnWorkingDirectoryChanged(string value) => OnPropertyChanged(nameof(WorkingDirectoryDisplay));
+
+    /// <summary>Called from FilesSectionViewModel's "Set Command Context" folder context menu item (wired in WorkspaceTabViewModel) - fullPath is always an existing directory already inside this workspace, so no validation beyond that is needed.</summary>
+    public void SetWorkingDirectory(string fullPath) => WorkingDirectory = fullPath;
+
+    [RelayCommand]
+    private void GoHome() => WorkingDirectory = workspaceRoot;
 
     private bool CanRun() => !IsRunning && InputText.Trim().Length > 0;
 
@@ -54,7 +80,7 @@ public sealed partial class CommandTabViewModel(string workspacePath, ICommandEx
 
         try
         {
-            var exitCode = await executor.RunAsync(workspacePath, commandLine,
+            var exitCode = await executor.RunAsync(WorkingDirectory, commandLine,
                 line => dispatcher.Post(() => AppendLine(line)),
                 line => dispatcher.Post(() => AppendLine(line)),
                 _cts.Token);

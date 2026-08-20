@@ -7,6 +7,9 @@ public interface IAiAuthService
 {
     AiProvider Provider { get; }
 
+    /// <summary>Whether this provider's CLI is even on PATH - checked before GetStatusAsync bothers asking it anything, so the AuthGate can tell "not installed" apart from "installed but not signed in".</summary>
+    bool IsInstalled { get; }
+
     Task<AiAuthStatus> GetStatusAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Starts this provider's own sign-in flow (typically a browser OAuth flow) without waiting for it to finish - callers should poll <see cref="GetStatusAsync"/>.</summary>

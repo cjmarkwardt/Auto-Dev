@@ -12,9 +12,11 @@ it) happens in one window without shelling out to a terminal.
 ### Requirements
 
 - The [`claude`](https://docs.claude.com/en/docs/claude-code) CLI and/or the
-  [`codex`](https://github.com/openai/codex) CLI, installed and signed in - AutoDev drives
-  whichever one is currently selected as a subprocess rather than talking to either service's API
-  directly, so it needs that CLI's own login to already be in place.
+  [`codex`](https://github.com/openai/codex) CLI - AutoDev drives whichever one is currently
+  selected as a subprocess rather than talking to either service's API directly. On first launch it
+  checks both: if one is already installed and signed in it's used automatically; otherwise it
+  offers a sign-in button for whichever CLI(s) it finds installed, or asks you to install one if
+  neither is present.
 - `git`.
 
 ### Opening a workspace
@@ -39,10 +41,14 @@ it) happens in one window without shelling out to a terminal.
 
 Each workspace tab has its own sidebar, split into two sections:
 
-- **Version** (top) - shows the currently targeted branch/tag/commit and exposes the
-  branch-workflow actions (Branch, Commit, Merge, Rebase, Squash, Tag, Reset, Rename, Set Remote)
-  that make sense for whatever's targeted. See [Version Control](Docs/VersionControl.md) for the
-  branch-naming convention this is built on.
+- **Version** (top) - a centered, passive display of the currently targeted branch/tag name and
+  HEAD's own commit message/hash; pending changes show as an asterisk in the corner plus a
+  highlighted background. Click it for Commit, Reset, Branch, Tag, Remote, and (while targeting a
+  branch) Squash/Rebase/Merge - a busy action shows its own live git output log with a Cancel
+  button that reverts it, and a failed one shows an OK popup rather than a persistent label.
+  Checkout, Merge Into Current, Rebase Current Onto This, and Delete for any *other* branch/commit/
+  tag live on the History tab's own right-click menus instead - see
+  [Version Control](Docs/VersionControl.md).
 - **Files** (bottom) - the workspace's file tree. Right-click an entry for New File/New Folder,
   Open (in the OS file manager), Copy Path, Rename, Duplicate, or Delete - a `.task` file also
   gets Run/Stop/View. A toggle switches the tree into "Changes Mode", showing only files with
@@ -66,8 +72,9 @@ Each workspace tab has its own sidebar, split into two sections:
   highlighting, a markdown preview/edit toggle, image preview, and a hex view for large/binary
   files. Ctrl+F opens find-in-file; Alt+Left/Alt+Right step back/forward through recently opened
   files.
-- **History** (**F3**) - a per-branch commit/tag timeline; click an entry to see what it changed
-  or switch the workspace to it.
+- **History** (**F3**) - a flat branch list plus the selected branch's own commit/tag timeline;
+  left-click a commit/tag entry to see what it changed, or right-click a branch/commit/tag for
+  Checkout, Merge Into Current, Rebase Current Onto This, or Delete.
 - **Output** (**F4**) - results from `.task` scripts you've run - see
   [Task Automation](Docs/TaskAutomation.md).
 - **Command** (**F5**) - run an ad hoc shell command against the workspace and see its output.
@@ -82,8 +89,8 @@ Escape closes the popup.
 
 - **[Architecture](Docs/Architecture.md)** - process bootstrap, dependency injection, the MVVM
   view/view-model split, per-workspace-tab composition, and the top-level shell.
-- **[Version Control](Docs/VersionControl.md)** - the branch-naming convention AutoDev layers on top of
-  plain git (base commits, parent/child branches, public vs. private), and the Version
+- **[Version Control](Docs/VersionControl.md)** - AutoDev's own thin `IGitService` wrapper around
+  plain git, with no naming convention or invented identity on top, and the Version
   sidebar/History tab built on it.
 - **[Workspaces & Files](Docs/Workspaces-and-Files.md)** - opening/cloning a workspace, recent-workspace
   and settings persistence, the file tree, and in-workspace file/content search.
@@ -109,8 +116,8 @@ AutoDev/
 │   └── src/
 │       ├── Program.cs, App.axaml(.cs), MainWindow.axaml(.cs), ViewLocator.cs   Composition root & shell
 │       ├── Core/                Platform-agnostic domain/service layer (no Avalonia dependency)
-│       │   ├── Models/           Plain data records (WorkspaceInfo, GitTarget, BranchInfo, TaskDocument, ...)
-│       │   ├── Services/         GitService, WorkspaceVersioningService, FileTreeService, ScriptTaskRunner, ...
+│       │   ├── Models/           Plain data records (WorkspaceInfo, GitTarget, BranchSummary, TaskRunRecord, ...)
+│       │   ├── Services/         GitService, WorkspaceVersioningService, FileTreeService, WorkspaceTaskSchedulerService, ...
 │       │   └── Serialization/    System.Text.Json source-gen context
 │       ├── AiCli/                Provider-agnostic AI session/usage/auth abstractions (IAiSessionClient, ...)
 │       │   └── Models/            Shared stream-event/data types both providers below translate into
@@ -121,7 +128,7 @@ AutoDev/
 │       ├── ViewModels/           CommunityToolkit.Mvvm view models, mirrors Views/ 1:1
 │       │   ├── Content/            Edit/Generate/History/Output/Command tab VMs + WorkspaceContentViewModel
 │       │   ├── Sidebar/            Files/Version sidebar sections, file search
-│       │   ├── Dialogs/            Modal dialog VMs (Input, Confirm, Create Branch)
+│       │   ├── Dialogs/            Modal dialog VMs (Input, Confirm, Create Tag)
 │       │   └── Infrastructure/     IDialogService/IUiDispatcher abstractions (kept Avalonia-free)
 │       ├── Views/                 Avalonia .axaml views, one per ViewModel, same folder layout
 │       ├── Infrastructure/        Avalonia-specific implementations of the above abstractions
@@ -141,6 +148,6 @@ AutoDev/
 - **Every workspace tab is fully isolated**: its own file watcher, task scheduler, AI session
   client, and git-versioning service instance, composed fresh per tab by
   `WorkspaceTabFactory`. Nothing about one open workspace leaks into another.
-- **Git is the source of truth** for almost everything - branch identity/parentage, task run
-  gating, read-only edit state - rather than a separate app-level database. See
-  [Version Control](Docs/VersionControl.md) for the specific convention this relies on.
+- **Git is the source of truth** for almost everything - branch/tag identity, task run gating,
+  read-only edit state - rather than a separate app-level database. AutoDev invents no naming
+  convention of its own on top; see [Version Control](Docs/VersionControl.md).

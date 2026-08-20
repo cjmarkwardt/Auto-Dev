@@ -1,3 +1,5 @@
+using AutoDev.AiCli;
+
 namespace AutoDev.ClaudeCli;
 
 /// <summary>
@@ -7,4 +9,6 @@ namespace AutoDev.ClaudeCli;
 public static class ClaudeCliLocator
 {
     public static string ExecutableName => "claude";
+
+    public static bool IsInstalled => ExecutableLocator.Exists(ExecutableName);
 }

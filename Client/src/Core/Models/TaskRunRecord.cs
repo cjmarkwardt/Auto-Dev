@@ -1,8 +1,11 @@
+using Markwardt.TaskRunner;
+
 namespace AutoDev.Core.Models;
 
-/// <summary>One task script's own result - see TaskDocument. Every script always finishes with an explicit Success, even a stopped one (recorded as false, WasStopped true, ErrorMessage "Stopped by user."). Row/Column mirror the script's own optional Output tab grid placement, so historical replay positions its panel the same way a live run did.</summary>
-public sealed record ScriptBlockRunRecord(string Name, bool Success, bool WasStopped, string? ErrorMessage, string Output, int? Row = null, int? Column = null);
+/// <summary>One script's own result from a task run, captured straight from the Markwardt.TaskRunner library's own <see cref="ScriptRunner"/> once it finishes - Log is exactly its LogText, including the automatic "&gt; instruction" announcements and any "Error: ..." line the library itself writes on failure, so historical replay renders identically to how it looked live.</summary>
+public sealed record ScriptRunRecord(string Name, ScriptStatus Status, string Log);
 
+/// <summary>One run of a .task file - see IWorkspaceTaskScheduler/WorkspaceTaskSchedulerService for how this gets built from a Markwardt.TaskRunner.TaskEngine, and IWorkspaceMetadataStore for how it's persisted.</summary>
 public sealed class TaskRunRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -15,14 +18,16 @@ public sealed class TaskRunRecord
 
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset CompletedAt { get; set; }
-    public bool Success { get; set; }
-    public string? ErrorMessage { get; set; }
 
-    /// <summary>True only for an explicit user Stop - distinct from a genuine failure, so the Output tab can show "Stopped" instead of "Failed".</summary>
+    /// <summary>True only when every script in the run reached Completed - false for any script left Failed, and always false when the run was stopped or the file failed to parse.</summary>
+    public bool Success { get; set; }
+
+    /// <summary>True only for an explicit user Stop - distinct from a genuine failure, so the Output tab can show "Stopped" instead of "Failed". A Markwardt.TaskRunner.ScriptRunner itself has no notion of this (a cancelled script just ends up Failed, same as any other failure) - this is purely AutoDev's own policy, tracked by WorkspaceTaskSchedulerService around the cancellation it already requests.</summary>
     public bool WasStopped { get; set; }
 
-    public required string OutputSummary { get; set; }
+    /// <summary>Set only when the .task file itself failed to parse (see Markwardt.TaskRunner.TaskParseException) - Scripts is empty in that case, since the document never loaded far enough to know what scripts it declares.</summary>
+    public string? ParseError { get; set; }
 
-    /// <summary>One entry per concurrently-run script (see TaskDocument), in declared order, so the Output tab can show each script's own output panel from history exactly as it appeared live. Null/empty only when the run never got as far as any script (e.g. a script content parse error).</summary>
-    public List<ScriptBlockRunRecord>? ScriptBlocks { get; set; }
+    /// <summary>One entry per script the document declared, in declaration order, so the Output tab can show each script's own output panel from history exactly as it appeared live. Empty only when ParseError is set.</summary>
+    public List<ScriptRunRecord> Scripts { get; set; } = [];
 }

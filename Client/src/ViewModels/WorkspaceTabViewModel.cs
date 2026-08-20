@@ -27,6 +27,7 @@ public sealed partial class WorkspaceTabViewModel : ViewModelBase, IAsyncDisposa
             Content.Output.SelectTask(task.Path, task.Name);
             Content.SelectedTabIndex = WorkspaceContentViewModel.OutputTabIndex;
         };
+        Files.SetCommandContextRequested += path => Content.Command.SetWorkingDirectory(path);
         FileSearch.FileChosen += path => Files.SelectPath(path); // also opens it in the Edit tab, via Files.FileSelected above
         // Deliberately bypasses Files.SelectPath (which would also raise FileSelected -> Content.OpenFileAsync(path)
         // without the line, racing/clobbering the seek) - a content-search open just opens+seeks directly, no

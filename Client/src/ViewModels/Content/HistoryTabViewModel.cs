@@ -10,12 +10,14 @@ using CommunityToolkit.Mvvm.Input;
 namespace AutoDev.ViewModels.Content;
 
 /// <summary>
-/// A read-only branch/timeline browser: every local branch as a fully-expanded hierarchy tree (current pinned
-/// first among roots), and the selected branch's own timeline, one page (100 entries) at a time - its base
-/// commit up to its tip, with a parent-branch node before the base commit and a node for every branch created
-/// from this one. Parent/child nodes only navigate this tab's own selection - no git action. A Commit row
-/// expands in place to show that commit's changed files, with its own "switch to this commit" button for the
-/// git action a plain click used to perform directly.
+/// A read-only branch/timeline browser, plus every git action that targets some other row instead of the
+/// currently checked-out branch itself (Commit/Reset/Branch/Tag/Remote/Squash/Rebase all live on the Version
+/// section instead - see VersionSectionViewModel) as a right-click context menu on a branch/commit/tag row -
+/// see BranchRows/TimelineEntries and the Checkout/MergeIntoCurrent/RebaseCurrentOnto/Delete/DeleteTag commands
+/// below. Every local branch is a flat row (current pinned first - see
+/// IWorkspaceVersioningService.ListAllBranchesAsync); the selected branch's own commit/tag history shows one
+/// page (100 entries) at a time, newest first. A Commit or Tag row's left-click expands in place to show that
+/// commit's changed files (right-click only opens its context menu - see HistoryTabView.OnEntryPointerPressed).
 /// </summary>
 public sealed partial class HistoryTabViewModel : ViewModelBase
 {
@@ -38,25 +40,35 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
             if (e.PropertyName == nameof(VersionSectionViewModel.IsInteractionBlocked))
             {
                 OnPropertyChanged(nameof(IsInteractionBlocked));
+                NotifyMutatingCommandsCanExecuteChanged();
             }
         };
     }
 
-    /// <summary>Disables every row in this tab while true - mirrors VersionSectionViewModel.IsInteractionBlocked, since a checkout here runs through _version.RunBusyAsync just like any Version-section action.</summary>
+    /// <summary>Disables every mutating action in this tab while true - mirrors VersionSectionViewModel.IsInteractionBlocked, since every action here runs through _version.RunBusyAsync just like the old Version section's own buttons did.</summary>
     public bool IsInteractionBlocked => _version.IsInteractionBlocked;
+
+    /// <summary>Shared CanExecute for every action command below (Checkout/MergeIntoCurrent/RebaseCurrentOnto/Delete/DeleteTag) - browsing the timeline itself (paging, expanding a commit's changes, selecting a branch) is pure local view state and stays interactive regardless, matching the old Version-section-vs-timeline split.</summary>
+    private bool CanMutate() => !IsInteractionBlocked;
+
+    private void NotifyMutatingCommandsCanExecuteChanged()
+    {
+        CheckoutCommand.NotifyCanExecuteChanged();
+        MergeIntoCurrentCommand.NotifyCanExecuteChanged();
+        RebaseCurrentOntoCommand.NotifyCanExecuteChanged();
+        DeleteBranchCommand.NotifyCanExecuteChanged();
+        DeleteTagCommand.NotifyCanExecuteChanged();
+    }
 
     private readonly List<BranchSummary> _branches = [];
 
-    /// <summary>Root-level nodes of the fully-expanded branch hierarchy tree (see BranchTreeNodeViewModel) - rebuilt from the flat branch list every time it changes.</summary>
-    public ObservableCollection<BranchTreeNodeViewModel> BranchTree { get; } = [];
+    /// <summary>The flat local-branch list (current branch first, then alphabetical - see IWorkspaceVersioningService.ListAllBranchesAsync) - rebuilt from scratch every time it changes, since the list is small and changes rarely enough that a full rebuild is simplest, at no real cost.</summary>
+    public ObservableCollection<BranchRowViewModel> BranchRows { get; } = [];
 
     public ObservableCollection<TimelineEntryViewModel> TimelineEntries { get; } = [];
 
     [ObservableProperty]
-    private string? _selectedBranchId;
-
-    [ObservableProperty]
-    private string _selectedBranchName = "";
+    private string? _selectedBranchName;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PreviousTimelinePageCommand))]
@@ -72,16 +84,16 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
 
     public string TimelinePageLabel => $"Page {TimelinePageIndex + 1} of {TimelinePageCount}";
 
-    partial void OnSelectedBranchIdChanged(string? value)
+    partial void OnSelectedBranchNameChanged(string? value)
     {
-        UpdateTreeSelection();
+        UpdateRowSelection();
         _ = LoadTimelineAsync(value, 0);
     }
 
     /// <summary>
     /// LoadBranchesAsync/LoadTimelineAsync can each be triggered from multiple independent sources at once
     /// (tab activation, _version.TargetChanged after every action AND every periodic background sync tick,
-    /// a user click reassigning SelectedBranchId) - without guarding against overlap, two concurrent calls
+    /// a user click reassigning SelectedBranchName) - without guarding against overlap, two concurrent calls
     /// each doing their own Clear()-then-Add() could interleave and leave the collection with duplicated
     /// rows. Each call captures its own token and only applies its results if no newer call has started
     /// since - a stale in-flight call's results are simply discarded rather than applied out of order.
@@ -89,7 +101,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     private int _branchesLoadToken;
     private int _timelineLoadToken;
 
-    /// <summary>Called each time the History tab is activated, and whenever the targeted branch changes elsewhere in the app, so it reflects the latest branch list/lineage.</summary>
+    /// <summary>Called each time the History tab is activated, and whenever the targeted branch changes elsewhere in the app, so it reflects the latest branch list.</summary>
     public async Task LoadBranchesAsync()
     {
         var token = ++_branchesLoadToken;
@@ -101,72 +113,47 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
 
         _branches.Clear();
         _branches.AddRange(branches);
-        RebuildBranchTree();
+        RebuildBranchRows();
 
-        var stillPresent = branches.Select(b => b.Id).ToHashSet();
-        if (SelectedBranchId is null || !stillPresent.Contains(SelectedBranchId))
+        var stillPresent = branches.Select(b => b.Name).ToHashSet();
+        if (SelectedBranchName is null || !stillPresent.Contains(SelectedBranchName))
         {
-            SelectedBranchId = branches.FirstOrDefault()?.Id; // current branch sorts first - see ListAllBranchesAsync
+            SelectedBranchName = branches.FirstOrDefault()?.Name; // current branch sorts first - see ListAllBranchesAsync
         }
         else
         {
-            UpdateTreeSelection();
-            await LoadTimelineAsync(SelectedBranchId, TimelinePageIndex);
+            UpdateRowSelection();
+            await LoadTimelineAsync(SelectedBranchName, TimelinePageIndex);
         }
     }
 
-    /// <summary>Rebuilds the whole tree from _branches - the branch list is small and changes rarely enough that a full rebuild (rather than the Files tree's incremental-diff approach) is simplest, at no real cost.</summary>
-    private void RebuildBranchTree()
+    private void RebuildBranchRows()
     {
-        BranchTree.Clear();
-        var byParent = _branches.ToLookup(b => b.ParentId);
-        var known = _branches.Select(b => b.Id).ToHashSet();
-
-        BranchTreeNodeViewModel Build(BranchSummary branch)
+        BranchRows.Clear();
+        foreach (var branch in _branches)
         {
-            var node = new BranchTreeNodeViewModel(branch) { IsSelected = branch.Id == SelectedBranchId };
-            foreach (var child in byParent[branch.Id].OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase))
-            {
-                node.Children.Add(Build(child));
-            }
-
-            return node;
-        }
-
-        // A root is any branch with no ParentId, or whose declared parent no longer exists locally (e.g. the
-        // parent branch was deleted after merging) - either way it has nowhere else to nest under.
-        var roots = _branches.Where(b => b.ParentId is null || !known.Contains(b.ParentId));
-        foreach (var root in roots.OrderByDescending(b => b.IsCurrent).ThenBy(b => b.Name, StringComparer.OrdinalIgnoreCase))
-        {
-            BranchTree.Add(Build(root));
+            BranchRows.Add(new BranchRowViewModel(branch) { IsSelected = branch.Name == SelectedBranchName });
         }
     }
 
-    private void UpdateTreeSelection()
+    private void UpdateRowSelection()
     {
-        void Walk(IEnumerable<BranchTreeNodeViewModel> nodes)
+        foreach (var row in BranchRows)
         {
-            foreach (var node in nodes)
-            {
-                node.IsSelected = node.Branch.Id == SelectedBranchId;
-                Walk(node.Children);
-            }
+            row.IsSelected = row.Branch.Name == SelectedBranchName;
         }
-
-        Walk(BranchTree);
     }
 
-    private async Task LoadTimelineAsync(string? branchId, int pageIndex)
+    private async Task LoadTimelineAsync(string? branchName, int pageIndex)
     {
         var token = ++_timelineLoadToken;
-        var page = branchId is null ? null : await _versioningService.GetBranchTimelinePageAsync(branchId, pageIndex, PageSize);
+        var page = branchName is null ? null : await _versioningService.GetBranchTimelinePageAsync(branchName, pageIndex, PageSize);
         if (token != _timelineLoadToken)
         {
             return; // a newer LoadTimelineAsync call started while this one was awaiting - let it win
         }
 
         TimelineEntries.Clear(); // also drops any expanded row's populated Changes - nothing stays loaded once its branch/page is left
-        SelectedBranchName = page?.BranchName ?? branchId ?? "";
         TimelinePageIndex = page?.PageIndex ?? 0;
         TimelinePageCount = page?.PageCount ?? 1;
         if (page is null)
@@ -187,18 +174,18 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     private bool CanGoToPreviousTimelinePage() => TimelinePageIndex > 0;
 
     [RelayCommand(CanExecute = nameof(CanGoToPreviousTimelinePage))]
-    private Task PreviousTimelinePage() => LoadTimelineAsync(SelectedBranchId, TimelinePageIndex - 1);
+    private Task PreviousTimelinePage() => LoadTimelineAsync(SelectedBranchName, TimelinePageIndex - 1);
 
     private bool CanGoToNextTimelinePage() => TimelinePageIndex < TimelinePageCount - 1;
 
     [RelayCommand(CanExecute = nameof(CanGoToNextTimelinePage))]
-    private Task NextTimelinePage() => LoadTimelineAsync(SelectedBranchId, TimelinePageIndex + 1);
+    private Task NextTimelinePage() => LoadTimelineAsync(SelectedBranchName, TimelinePageIndex + 1);
 
-    /// <summary>A parent/child node's click - pure view navigation to that branch's own timeline, no git action involved.</summary>
+    /// <summary>A branch row's left-click - pure view navigation to that branch's own timeline, no git action involved.</summary>
     [RelayCommand]
-    private void NavigateTo(string branchId) => SelectedBranchId = branchId;
+    private void SelectBranch(string branchName) => SelectedBranchName = branchName;
 
-    /// <summary>A Commit (or Tag - see BranchTimelineEntryKind.Tag) row's click - expands/collapses its commit's changes tree in place. Populated lazily on expand, and dropped again on collapse (see TimelineEntryViewModel).</summary>
+    /// <summary>A Commit (or Tag - see BranchTimelineEntryKind.Tag) row's left-click - expands/collapses its commit's changes tree in place. Populated lazily on expand, and dropped again on collapse (see TimelineEntryViewModel).</summary>
     [RelayCommand]
     private async Task ToggleExpandedAsync(TimelineEntryViewModel entry)
     {
@@ -243,33 +230,6 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
         }
     }
 
-    /// <summary>The expanded view's "switch to this commit" button - detaches HEAD at that exact commit, confirming discard of pending changes first (same warning style as the old switch-confirmation flow).</summary>
-    [RelayCommand]
-    private async Task CheckoutCommitAsync(string commitHash)
-    {
-        var hasPendingChanges = await _versioningService.HasUncommittedChangesAsync();
-        var message = hasPendingChanges
-            ? "Check out this commit? This will discard your pending changes."
-            : "Check out this commit? This detaches HEAD at a read-only historical snapshot.";
-        if (!await _dialogService.ShowConfirmDialogAsync("Checkout Commit", message, confirmLabel: hasPendingChanges ? "Discard and Checkout" : "Checkout", isDestructive: hasPendingChanges))
-        {
-            return;
-        }
-
-        await _version.RunBusyAsync(async () =>
-        {
-            // Checkout fails (silently stays put) with a dirty working tree - discard first, exactly like the
-            // confirmation just above already told the user would happen (see the old DiscardPendingChangesIfAnyAsync
-            // this carries forward the reasoning from).
-            if (hasPendingChanges)
-            {
-                await _versioningService.ResetAsync();
-            }
-
-            await _versioningService.CheckoutRefAsync(commitHash);
-        });
-    }
-
     /// <summary>A specific file's row within an expanded commit's changes tree - opens that file's before/after content for that exact commit in the Edit tab's read-only Diff mode. A no-op for a folder row (RelativePath/CommitHash are only ever set on a leaf - see ChangeTreeNode.Build).</summary>
     [RelayCommand]
     private async Task OpenChangeAsync(ChangeTreeNode node)
@@ -282,5 +242,103 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
         var diff = await _versioningService.GetFileDiffAsync(hash, path);
         await _edit.LoadDiffAsync(Path.GetFileName(path), diff);
         _edit.RequestFocus();
+    }
+
+    // --- Actions - see each row's ContextMenu in HistoryTabView.axaml for where these are actually offered. ---
+
+    /// <summary>Checks out a branch by name, or detaches HEAD at a specific commit/tag - shared by every row kind's own "Checkout" menu item.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task CheckoutAsync(string refName)
+    {
+        var hasPendingChanges = await _versioningService.HasUncommittedChangesAsync();
+        var message = hasPendingChanges
+            ? $"Check out '{refName}'? This will discard your pending changes."
+            : $"Check out '{refName}'?";
+        if (!await _dialogService.ShowConfirmDialogAsync("Checkout", message, confirmLabel: hasPendingChanges ? "Discard and Checkout" : "Checkout", isDestructive: hasPendingChanges))
+        {
+            return;
+        }
+
+        await _version.RunBusyAsync(async ct =>
+        {
+            // Checkout fails (silently stays put) with a dirty working tree - discard first, exactly like the
+            // confirmation just above already told the user would happen.
+            if (hasPendingChanges)
+            {
+                await _versioningService.ResetAsync(ct);
+            }
+
+            await _versioningService.CheckoutRefAsync(refName, ct);
+        });
+    }
+
+    /// <summary>Merges sourceBranch into whatever's currently checked out - offered on every non-current branch row.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task MergeIntoCurrentAsync(string sourceBranch)
+    {
+        await _version.RunBusyAsync(async ct =>
+        {
+            var outcome = await _versioningService.MergeAsync(sourceBranch, ct);
+            outcome = await _version.ResolveConflictsAsync(outcome, ct2 => _versioningService.ContinueMergeAsync(ct2), ct);
+            if (outcome == GitOperationOutcome.Succeeded)
+            {
+                await _versioningService.PushCurrentBranchAsync(force: true, ct);
+            }
+            else if (outcome == GitOperationOutcome.Conflicts)
+            {
+                await _versioningService.AbortMergeAsync(ct);
+                await _dialogService.ShowMessageDialogAsync("Merge", "Could not automatically resolve the merge conflicts - aborted.");
+            }
+            else
+            {
+                await _dialogService.ShowMessageDialogAsync("Merge", "Merge failed.");
+            }
+        });
+    }
+
+    /// <summary>Rebases whatever's currently checked out onto ontoBranch - offered on every non-current branch row.</summary>
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task RebaseCurrentOntoAsync(string ontoBranch)
+    {
+        await _version.RunBusyAsync(async ct =>
+        {
+            var outcome = await _versioningService.RebaseAsync(ontoBranch, ct);
+            outcome = await _version.ResolveConflictsAsync(outcome, ct2 => _versioningService.ContinueRebaseAsync(ct2), ct);
+            if (outcome == GitOperationOutcome.Succeeded)
+            {
+                await _versioningService.PushCurrentBranchAsync(force: true, ct);
+            }
+            else if (outcome == GitOperationOutcome.Conflicts)
+            {
+                await _versioningService.AbortRebaseAsync(ct);
+                await _dialogService.ShowMessageDialogAsync("Rebase", "Could not automatically resolve the rebase conflicts - aborted.");
+            }
+            else
+            {
+                await _dialogService.ShowMessageDialogAsync("Rebase", "Rebase failed.");
+            }
+        });
+    }
+
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task DeleteBranchAsync(string name)
+    {
+        if (!await _dialogService.ShowConfirmDialogAsync("Delete Branch", $"Delete branch '{name}'? This cannot be undone.", confirmLabel: "Delete"))
+        {
+            return;
+        }
+
+        await _version.RunBusyAsync(ct => _versioningService.DeleteBranchAsync(name, ct));
+    }
+
+    [RelayCommand(CanExecute = nameof(CanMutate))]
+    private async Task DeleteTagAsync(string name)
+    {
+        if (!await _dialogService.ShowConfirmDialogAsync("Delete Tag", $"Delete tag '{name}'? This cannot be undone.", confirmLabel: "Delete"))
+        {
+            return;
+        }
+
+        await _version.RunBusyAsync(ct => _versioningService.DeleteTagAsync(name, ct));
     }
 }

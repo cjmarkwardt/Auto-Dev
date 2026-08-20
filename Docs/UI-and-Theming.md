@@ -9,28 +9,47 @@ Avalonia-free - anything needing a native window goes through it:
 Task<string?> PickFolderAsync();
 Task<string?> ShowInputDialogAsync(string title, string label, string initialValue = "", bool requireValue = false);
 Task<bool> ShowConfirmDialogAsync(string title, string message, string confirmLabel = "Delete", bool isDestructive = true);
-Task<CreateBranchDialogResult?> ShowCreateBranchDialogAsync();
+Task<CreateTagDialogResult?> ShowCreateTagDialogAsync();
+Task<SquashDialogResult?> ShowSquashDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider);
+Task<RebaseDialogResult?> ShowRebaseDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider);
+Task<MergeDialogResult?> ShowMergeDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider);
+Task ShowMessageDialogAsync(string title, string message);
 ```
 
 `Infrastructure/AvaloniaDialogService` implements it: each `Show*DialogAsync` builds the matching
 `ViewModels/Dialogs/*ViewModel`, wraps it in the matching `Views/Dialogs/*Window`, sets
 `DataContext`, and awaits `window.ShowDialog<T>(OwnerWindow)`.
 
-Three dialog view models cover every modal in the app:
+Seven dialog view models cover every modal in the app:
 
 - **`InputDialogViewModel`** - single text field. `RequireValue: true` hides Cancel and blocks the
   native close button/Escape entirely, so confirming a non-blank value is the only way out (used
-  e.g. for naming a new file, where blank isn't a meaningful answer).
+  e.g. for naming a new file, or a new branch's name - see VersionSectionViewModel.BranchAsync -
+  where blank isn't a meaningful answer).
 - **`ConfirmDialogViewModel`** - yes/no, with a configurable `ConfirmLabel` (default `"Delete"`)
   and `IsDestructive` (default `true`, drives red-button styling).
-- **`CreateBranchDialogViewModel`** - `Name`, `Id`, `IsPublic`. `Id` auto-derives from `Name`
-  via `BranchConvention.Slugify` until the user hand-edits it, at which point it stops following
+- **`CreateTagDialogViewModel`** - `FullName`, `Id`. `Id` auto-derives from `FullName` via this
+  view model's own `Slugify` helper until the user hand-edits it, at which point it stops following
   (`MarkIdManuallyEdited`, called from the view's code-behind on the first manual keystroke into
   the Id field).
+- **`SquashDialogViewModel`** - a base-branch `ComboBox` (`Branches`/`SelectedBranch`) plus a
+  `Message` field whose default is re-fetched (`messageProvider`, an async delegate the caller
+  supplies) every time the selected branch changes - see VersionSectionViewModel.SquashAsync.
+- **`RebaseDialogViewModel`** - the same shape as `SquashDialogViewModel` (an onto-branch picker
+  plus a `SquashMessage` field with the same re-fetched default) - a rebase always squashes first,
+  so there's no separate toggle - see VersionSectionViewModel.RebaseAsync.
+- **`MergeDialogViewModel`** - same shape again (a target-branch picker plus a message field), for
+  Merge's own conditional squash-if-more-than-one-commit - see VersionSectionViewModel.MergeAsync.
+- **`MessageDialogViewModel`** - `Title`, `Message`, a single OK button - the popup a failed git
+  action shows instead of a persistent inline label (see VersionSectionViewModel/
+  HistoryTabViewModel, which route every failure message through
+  `IDialogService.ShowMessageDialogAsync` now).
 
-All three follow the same shape: `[ObservableProperty]` fields, `event Action<bool>? RequestClose`
-(the bool tells the hosting window whether to close with a result or `null`), and a Confirm/Cancel
-`[RelayCommand]` pair.
+All seven follow the same shape: `[ObservableProperty]` fields (`MessageDialogViewModel`'s
+`Title`/`Message` are plain `required init` properties instead, since it has nothing to edit),
+`event Action<bool>? RequestClose` (`Action?` with no bool for `MessageDialogViewModel` - there's
+only one way to close it), and a Confirm/Cancel `[RelayCommand]` pair (`MessageDialogViewModel` has
+only the one `OkCommand`).
 
 `Infrastructure/DialogWindowExtensions.DisableMinimize` sets `CanMinimize = false` on these small
 modal windows - a minimized owned dialog would otherwise leave the app with nothing clickable to

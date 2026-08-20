@@ -18,36 +18,32 @@ public partial class HistoryTabView : UserControl
 
     private void OnBranchPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is StyledElement { DataContext: BranchTreeNodeViewModel node } && Vm is { } vm)
+        if (sender is StyledElement { DataContext: BranchRowViewModel node } && Vm is { } vm && vm.SelectBranchCommand.CanExecute(node.Branch.Name))
         {
-            vm.SelectedBranchId = node.Branch.Id;
+            vm.SelectBranchCommand.Execute(node.Branch.Name);
         }
     }
 
-    /// <summary>A Commit or Tag row's click toggles its commit's expanded changes view in place; a ParentLink/ChildLink row's click still navigates directly, exactly as before - see HistoryTabViewModel.ToggleExpandedCommand/NavigateToCommand.</summary>
+    /// <summary>The current branch's own row has nothing left to offer on its context menu - Checkout/Merge/Rebase/Delete only make sense for a different branch, and every current-branch-only action (Commit/Reset/Branch/Tag/Remote/Squash/Rebase) lives on the Version section instead. Suppresses the (otherwise empty) popup for that row rather than letting it open with nothing in it.</summary>
+    private void OnBranchContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (sender is StyledElement { DataContext: BranchRowViewModel { Branch.IsCurrent: true } })
+        {
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>A Commit or Tag row's left-click toggles its commit's expanded changes view in place - see HistoryTabViewModel.ToggleExpandedCommand. A right-click only opens the row's context menu (see HistoryTabView.axaml), not this.</summary>
     private void OnEntryPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is not StyledElement { DataContext: TimelineEntryViewModel entry } || Vm is not { } vm)
+        if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
         {
             return;
         }
 
-        switch (entry.Entry.Kind)
+        if (sender is StyledElement { DataContext: TimelineEntryViewModel entry } && Vm is { } vm && vm.ToggleExpandedCommand.CanExecute(entry))
         {
-            case BranchTimelineEntryKind.ParentLink or BranchTimelineEntryKind.ChildLink when entry.Entry.LinkedBranchId is { } branchId:
-                if (vm.NavigateToCommand.CanExecute(branchId))
-                {
-                    vm.NavigateToCommand.Execute(branchId);
-                }
-
-                break;
-            case BranchTimelineEntryKind.Commit or BranchTimelineEntryKind.Tag:
-                if (vm.ToggleExpandedCommand.CanExecute(entry))
-                {
-                    vm.ToggleExpandedCommand.Execute(entry);
-                }
-
-                break;
+            vm.ToggleExpandedCommand.Execute(entry);
         }
     }
 

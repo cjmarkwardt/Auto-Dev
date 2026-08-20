@@ -43,17 +43,38 @@ public sealed class AvaloniaDialogService : IDialogService
         return await window.ShowDialog<bool>(OwnerWindow);
     }
 
-    public async Task<CreateBranchDialogResult?> ShowCreateBranchDialogAsync()
-    {
-        var vm = new CreateBranchDialogViewModel();
-        var window = new CreateBranchDialogWindow { DataContext = vm };
-        return await window.ShowDialog<CreateBranchDialogResult?>(OwnerWindow);
-    }
-
     public async Task<CreateTagDialogResult?> ShowCreateTagDialogAsync()
     {
         var vm = new CreateTagDialogViewModel();
         var window = new CreateTagDialogWindow { DataContext = vm };
         return await window.ShowDialog<CreateTagDialogResult?>(OwnerWindow);
+    }
+
+    public async Task<SquashDialogResult?> ShowSquashDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider)
+    {
+        var vm = new SquashDialogViewModel(branches, defaultMessageProvider);
+        var window = new SquashDialogWindow { DataContext = vm };
+        return await window.ShowDialog<SquashDialogResult?>(OwnerWindow);
+    }
+
+    public async Task<RebaseDialogResult?> ShowRebaseDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider)
+    {
+        var vm = new RebaseDialogViewModel(branches, defaultMessageProvider);
+        var window = new RebaseDialogWindow { DataContext = vm };
+        return await window.ShowDialog<RebaseDialogResult?>(OwnerWindow);
+    }
+
+    public async Task<MergeDialogResult?> ShowMergeDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider)
+    {
+        var vm = new MergeDialogViewModel(branches, defaultMessageProvider);
+        var window = new MergeDialogWindow { DataContext = vm };
+        return await window.ShowDialog<MergeDialogResult?>(OwnerWindow);
+    }
+
+    public async Task ShowMessageDialogAsync(string title, string message)
+    {
+        var vm = new MessageDialogViewModel { Title = title, Message = message };
+        var window = new MessageDialogWindow { DataContext = vm };
+        await window.ShowDialog(OwnerWindow);
     }
 }

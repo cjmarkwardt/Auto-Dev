@@ -138,16 +138,26 @@
 
         <!-- AI status bar - reflects the selected tab's own Version.IsAiWorking, the same flag that locks
              Tasks/Edit/History/Version-menu controls, so this bar's color always matches whether the
-             controls are actually locked right now. Must come before the main content Grid below: a
-             DockPanel's LAST child always fills remaining space regardless of its own Dock value
-             (LastChildFill), so the Grid - not this bar - needs to stay last. -->
+             controls are actually locked right now. It also reflects Files.HasRunningTasks the same way (same
+             accent-colored "working" look) - a running task doesn't lock those same controls the way
+             IsAiWorking does, but it does block a new Claude turn from starting (see GenerateTabViewModel.
+             CanSend), so this still needs to surface as a reason "the workspace can't be changed" right now.
+             IsAiWorking's own text always wins when both are somehow true at once (e.g. a task started
+             mid-turn), since it's the more disruptive state - the bar still just shows accent-colored either
+             way. Must come before the main content Grid below: a DockPanel's LAST child always fills remaining
+             space regardless of its own Dock value (LastChildFill), so the Grid - not this bar - needs to stay
+             last. -->
         <Border DockPanel.Dock="Bottom" Height="26" Padding="12,0"
                 Classes="aiStatusBar"
                 Classes.working="{Binding SelectedTab.Version.IsAiWorking}"
+                Classes.taskRunning="{Binding SelectedTab.Files.HasRunningTasks}"
                 IsVisible="{Binding SelectedTab, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
             <!-- Background is set entirely via these styles, not a local attribute on the Border - a local
                  value always wins over a style setter regardless of class, which would otherwise permanently
-                 shadow the "working" state below no matter what class was actually applied. -->
+                 shadow the "working"/"taskRunning" state below no matter what class was actually applied.
+                 Two independent selectors (rather than one combined-condition class) both map to the same
+                 accent color, since Classes.<name>="{Binding ...}" only accepts a single simple boolean
+                 binding, not a MultiBinding OR of the two source properties. -->
             <Border.Styles>
                 <Style Selector="Border.aiStatusBar">
                     <Setter Property="Background" Value="{DynamicResource HeaderBackgroundBrush}" />
@@ -155,11 +165,29 @@
                 <Style Selector="Border.aiStatusBar.working">
                     <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
                 </Style>
+                <Style Selector="Border.aiStatusBar.taskRunning">
+                    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+                </Style>
             </Border.Styles>
             <Grid>
                 <TextBlock Text="AI is waiting…" FontSize="11" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextMutedBrush}"
-                           IsVisible="{Binding !SelectedTab.Version.IsAiWorking}" />
+                           Foreground="{DynamicResource TextMutedBrush}">
+                    <TextBlock.IsVisible>
+                        <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
+                            <Binding Path="!SelectedTab.Version.IsAiWorking" />
+                            <Binding Path="!SelectedTab.Files.HasRunningTasks" />
+                        </MultiBinding>
+                    </TextBlock.IsVisible>
+                </TextBlock>
+                <TextBlock Text="Task is running…" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
+                           Foreground="White">
+                    <TextBlock.IsVisible>
+                        <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
+                            <Binding Path="!SelectedTab.Version.IsAiWorking" />
+                            <Binding Path="SelectedTab.Files.HasRunningTasks" />
+                        </MultiBinding>
+                    </TextBlock.IsVisible>
+                </TextBlock>
                 <TextBlock Text="AI work in progress…" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
                            Foreground="White"
                            IsVisible="{Binding SelectedTab.Version.IsAiWorking}" />

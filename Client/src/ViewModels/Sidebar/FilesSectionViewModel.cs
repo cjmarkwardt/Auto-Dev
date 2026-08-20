@@ -409,10 +409,20 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void OpenInFileManager() => _externalOpenService.OpenFolder(_rootPath);
 
+    /// <summary>Copies the workspace root's own absolute filesystem path to the clipboard - the header-level counterpart to a node's own "Copy Path" context menu item (CopyPath below). Non-mutating, so unlike New File/Folder it's never gated on CanMutate.</summary>
+    [RelayCommand]
+    private async Task CopyRootPath() => await _clipboardService.SetTextAsync(_rootPath);
+
     /// <summary>Used both for a folder's own "Open" (opens itself) and a file's "Open Folder" (opens its containing folder) - see the two separate, differently-labeled context menu items bound to this same command.</summary>
     [RelayCommand]
     private void OpenFolderInFileManager(FileTreeNodeViewModel node) =>
         _externalOpenService.OpenFolder(node.IsDirectory ? node.FullPath : Path.GetDirectoryName(node.FullPath) ?? _rootPath);
+
+    /// <summary>Raised by a folder's "Set Command Context" context menu item - wired in WorkspaceTabViewModel to CommandTabViewModel.SetWorkingDirectory, pointing the Command tab's working directory at that folder. Non-mutating (just view state elsewhere), so unlike New File/Folder it's never gated on CanMutate.</summary>
+    public event Action<string>? SetCommandContextRequested;
+
+    [RelayCommand]
+    private void SetCommandContext(FileTreeNodeViewModel node) => SetCommandContextRequested?.Invoke(node.FullPath);
 
     /// <summary>Copies the node's absolute filesystem path to the clipboard - non-mutating, so unlike New File/Folder it's never gated on CanMutate.</summary>
     [RelayCommand]

@@ -70,8 +70,8 @@ public sealed class WorkspaceTabFactory(/* ~14 shared singletons */) : IWorkspac
         var files = new FilesSectionViewModel(workspace.FullPath, fileTreeService, watcherFactory, ...);
         var edit = new EditTabViewModel(fileTreeService);
         var generate = new GenerateTabViewModel(workspace.FullPath, sessionClientFactory, ...);
-        var version = new VersionSectionViewModel(versioningService, dialogService, generate, dispatcher);
-        var history = new HistoryTabViewModel(versioningService, version, dialogService);
+        var version = new VersionSectionViewModel(versioningService, generate, dispatcher);
+        var history = new HistoryTabViewModel(versioningService, version, dialogService, edit);
         var output = new OutputTabViewModel(workspace.FullPath, metadataStore, scheduler, dispatcher);
         var command = new CommandTabViewModel(workspace.FullPath, commandExecutor, dispatcher);
         var content = new WorkspaceContentViewModel(edit, generate, history, output, command);

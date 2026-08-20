@@ -49,11 +49,11 @@
                        Foreground="{DynamicResource TextMutedBrush}" FontSize="13" />
 
             <DockPanel IsVisible="{Binding HasTask}">
-                <TextBlock DockPanel.Dock="Top" Text="{Binding ScriptRunError}" IsVisible="{Binding HasScriptRunError}"
+                <TextBlock DockPanel.Dock="Top" Text="{Binding ParseError}" IsVisible="{Binding HasParseError}"
                            TextWrapping="Wrap" Margin="14,10,14,0" Foreground="Crimson" FontSize="12.5" />
 
-                <!-- One checkbox per block (including hidden ones) - toggles that block's panel below without
-                     removing it from the list, so a block can be hidden then shown again without losing its
+                <!-- One checkbox per script (including hidden ones) - toggles that script's panel below without
+                     removing it from the list, so a script can be hidden then shown again without losing its
                      accumulated output. -->
                 <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding ScriptBlocks}" Margin="14,10,14,0">
                     <ItemsControl.ItemsPanel>
@@ -62,7 +62,7 @@
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="vm:ScriptBlockPanelViewModel">
+                        <DataTemplate DataType="vm:ScriptPanelViewModel">
                             <CheckBox Content="{Binding Name}" IsChecked="{Binding IsVisible, Mode=TwoWay}" Margin="0,0,14,6" />
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -70,13 +70,13 @@
 
                 <!-- Bound to VisibleScriptBlocks (not ScriptBlocks) so a hidden panel is actually absent from
                      the grid rather than just invisible. GridRowCount/GridColumnCount and each panel's own
-                     ResolvedRow/ResolvedColumn are computed by ScriptBlockGridLayout (see OutputTabViewModel)
-                     - a script with no requested position auto-arranges as close to square as possible, same
-                     as the old UniformGrid; one with a requested Row/Column lands at that exact cell instead.
-                     Grid.RowDefinitions/ColumnDefinitions have no bindable setter in Avalonia (only the
-                     XAML-literal string form works) and per-item Grid.Row/Grid.Column can't be data-bound onto
-                     an ItemsControl's generated container either - OutputTabView's code-behind applies both
-                     directly via ItemsPanelRoot and the ContainerPrepared event. -->
+                     ResolvedRow/ResolvedColumn are computed by ScriptBlockGridLayout (see OutputTabViewModel) -
+                     always as close to square as possible, since the task language has no notion of a script
+                     requesting a specific panel position. Grid.RowDefinitions/ColumnDefinitions have no
+                     bindable setter in Avalonia (only the XAML-literal string form works) and per-item
+                     Grid.Row/Grid.Column can't be data-bound onto an ItemsControl's generated container either
+                     - OutputTabView's code-behind applies both directly via ItemsPanelRoot and the
+                     ContainerPrepared event. -->
                 <ItemsControl Name="ScriptBlockGrid" ItemsSource="{Binding VisibleScriptBlocks}" Margin="14,10,14,14"
                               HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
                     <ItemsControl.ItemsPanel>
@@ -85,7 +85,7 @@
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="vm:ScriptBlockPanelViewModel">
+                        <DataTemplate DataType="vm:ScriptPanelViewModel">
                             <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="4"
                                     Margin="4" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
                                 <DockPanel>
@@ -97,8 +97,11 @@
                                                 <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
                                                 <TextBlock Text="Running…" FontStyle="Italic" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
                                             </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="5" IsVisible="{Binding ShowWaiting}">
+                                                <TextBlock Text="◷" FontSize="10" Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Text="Waiting…" FontStyle="Italic" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                                            </StackPanel>
                                             <TextBlock Text="✓ Succeeded" IsVisible="{Binding ShowSucceeded}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
-                                            <TextBlock Text="⊘ Stopped" IsVisible="{Binding ShowStopped}" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
                                             <TextBlock Text="✗ Failed" IsVisible="{Binding ShowFailed}" FontSize="11" Foreground="Crimson" />
                                         </StackPanel>
                                     </Border>

@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
@@ -11,14 +12,19 @@ namespace AutoDev.Views;
 public partial class WorkspaceTabView : UserControl
 {
     private readonly TextBox? _searchBox;
+    private readonly ScrollViewer? _gitLogScroll;
 
     /// <summary>The FileSearchViewModel OnFileSearchPropertyChanged is currently subscribed to, if any - tracked so OnDataContextChanged can unsubscribe it before subscribing to whatever replaces it. Without this, a DataContext change (e.g. Avalonia recycling this view across a tab switch) left the old subscription attached forever; if DataContext later went null on this same instance while an old FileSearchViewModel it was never unsubscribed from opened, the handler still fired here and crashed the whole app dereferencing a null Vm.</summary>
     private FileSearchViewModel? _subscribedFileSearch;
+
+    /// <summary>The VersionSectionViewModel OnGitOutputLogChanged is currently subscribed to, if any - same leak-prevention reasoning as _subscribedFileSearch.</summary>
+    private VersionSectionViewModel? _subscribedVersion;
 
     public WorkspaceTabView()
     {
         InitializeComponent();
         _searchBox = this.FindControl<TextBox>("SearchBox");
+        _gitLogScroll = this.FindControl<ScrollViewer>("GitLogScroll");
         DataContextChanged += OnDataContextChanged;
     }
 
@@ -32,12 +38,25 @@ public partial class WorkspaceTabView : UserControl
             _subscribedFileSearch = null;
         }
 
+        if (_subscribedVersion is not null)
+        {
+            _subscribedVersion.GitOutputLog.CollectionChanged -= OnGitOutputLogChanged;
+            _subscribedVersion = null;
+        }
+
         if (Vm is { } vm)
         {
             vm.FileSearch.PropertyChanged += OnFileSearchPropertyChanged;
             _subscribedFileSearch = vm.FileSearch;
+
+            vm.Version.GitOutputLog.CollectionChanged += OnGitOutputLogChanged;
+            _subscribedVersion = vm.Version;
         }
     }
+
+    /// <summary>Keeps the busy overlay's live git command log scrolled to its newest line as more arrive.</summary>
+    private void OnGitOutputLogChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        Dispatcher.UIThread.Post(() => _gitLogScroll?.ScrollToEnd(), DispatcherPriority.Background);
 
     /// <summary>Reads IsOpen off `sender` (guaranteed to be the exact FileSearchViewModel that raised this) rather than Vm.FileSearch - Vm re-reads DataContext live, which is exactly what could go stale/null out from under this handler (see _subscribedFileSearch's doc comment).</summary>
     private void OnFileSearchPropertyChanged(object? sender, PropertyChangedEventArgs e)

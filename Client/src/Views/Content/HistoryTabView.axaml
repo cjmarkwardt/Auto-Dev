@@ -15,12 +15,6 @@
         <Style Selector="Border.historyRow:pointerover">
             <Setter Property="Background" Value="{DynamicResource HoverBackgroundBrush}" />
         </Style>
-        <!-- The branch hierarchy is always shown fully expanded (see the History tab's own requirements) -
-             there's no user-facing collapse/expand toggle for it at all. -->
-        <Style Selector="TreeViewItem">
-            <Setter Property="IsExpanded" Value="True" />
-            <Setter Property="Padding" Value="0" />
-        </Style>
         <Style Selector="ListBoxItem">
             <Setter Property="Padding" Value="0" />
             <Setter Property="CornerRadius" Value="0" />
@@ -50,168 +44,189 @@
             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
         </Style>
     </UserControl.Styles>
-    <Grid ColumnDefinitions="1*,Auto,2*">
-        <TreeView Grid.Column="0" ItemsSource="{Binding BranchTree}" Padding="6,10,4,10"
-                  Background="Transparent" BorderThickness="0">
-            <TreeView.ItemTemplate>
-                <TreeDataTemplate DataType="vm:BranchTreeNodeViewModel" ItemsSource="{Binding Children}">
-                    <Border Classes="historyRow" Padding="8,6" CornerRadius="4" Cursor="Hand"
-                            Tag="{Binding}" PointerPressed="OnBranchPointerPressed">
-                        <TextBlock Text="{Binding Branch.Name}" FontSize="13" TextTrimming="CharacterEllipsis"
-                                   Classes.currentBranch="{Binding Branch.IsCurrent}"
-                                   Classes.selectedBranch="{Binding IsSelected}" />
-                    </Border>
-                </TreeDataTemplate>
-            </TreeView.ItemTemplate>
-        </TreeView>
+    <DockPanel>
+        <Grid ColumnDefinitions="1*,Auto,2*">
+            <!-- Flat local-branch list (current branch first, then alphabetical - see
+                 IWorkspaceVersioningService.ListAllBranchesAsync) - no more parent/child hierarchy, since the
+                 task language's own "branches have a parent" convention is gone; every git action other than
+                 Commit/Reset (which live on the Version section itself - see VersionSectionView) lives on each
+                 row's right-click menu instead. -->
+            <ItemsControl Grid.Column="0" ItemsSource="{Binding BranchRows}" Padding="6,10,4,10">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:BranchRowViewModel">
+                        <Border Classes="historyRow" Padding="8,6" CornerRadius="4" Cursor="Hand"
+                                Tag="{Binding}" PointerPressed="OnBranchPointerPressed" ContextRequested="OnBranchContextRequested">
+                            <Border.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Checkout" IsVisible="{Binding !Branch.IsCurrent}"
+                                              Command="{Binding $parent[UserControl].((vm:HistoryTabViewModel)DataContext).CheckoutCommand}"
+                                              CommandParameter="{Binding Branch.Name}" />
+                                    <MenuItem Header="Merge Into Current" IsVisible="{Binding !Branch.IsCurrent}"
+                                              Command="{Binding $parent[UserControl].((vm:HistoryTabViewModel)DataContext).MergeIntoCurrentCommand}"
+                                              CommandParameter="{Binding Branch.Name}" />
+                                    <MenuItem Header="Rebase Current Onto This" IsVisible="{Binding !Branch.IsCurrent}"
+                                              Command="{Binding $parent[UserControl].((vm:HistoryTabViewModel)DataContext).RebaseCurrentOntoCommand}"
+                                              CommandParameter="{Binding Branch.Name}" />
+                                    <Separator IsVisible="{Binding !Branch.IsCurrent}" />
+                                    <MenuItem Header="Delete" IsVisible="{Binding !Branch.IsCurrent}"
+                                              Command="{Binding $parent[UserControl].((vm:HistoryTabViewModel)DataContext).DeleteBranchCommand}"
+                                              CommandParameter="{Binding Branch.Name}" />
+                                </ContextMenu>
+                            </Border.ContextMenu>
+                            <TextBlock Text="{Binding Branch.Name}" FontSize="13" TextTrimming="CharacterEllipsis"
+                                       Classes.currentBranch="{Binding Branch.IsCurrent}"
+                                       Classes.selectedBranch="{Binding IsSelected}" />
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
 
-        <GridSplitter Grid.Column="1" Width="4" Background="{DynamicResource BorderSubtleBrush}"
-                       ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+            <GridSplitter Grid.Column="1" Width="4" Background="{DynamicResource BorderSubtleBrush}"
+                           ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
 
-        <!-- Deliberately no top-level IsEnabled gating on IsInteractionBlocked here - browsing the timeline
-             (paging, expanding a commit's changes) is pure local view state, not a git action, so it stays
-             interactive even while the AI is working. Only the Switch button actually changes what's checked
-             out, so only it is gated below. -->
-        <DockPanel Grid.Column="2">
-            <!-- Up/down pagers - always present (rather than collapsed for a single-page timeline) so the
-                 timeline's own vertical extent doesn't jump around as pages/branches are switched; each
-                 button's own Command.CanExecute already disables it (first/last page) without extra IsVisible
-                 bindings. -->
-            <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="20,16,20,6">
-                <Button Grid.Column="0" Classes="iconButton" Command="{Binding PreviousTimelinePageCommand}"
-                        Content="▲" ToolTip.Tip="Newer entries" />
-                <TextBlock Grid.Column="1" Text="{Binding TimelinePageLabel}" HorizontalAlignment="Center"
-                           FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
-            </Grid>
-            <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="20,6,20,10">
-                <Button Grid.Column="0" Classes="iconButton" Command="{Binding NextTimelinePageCommand}"
-                        Content="▼" ToolTip.Tip="Older entries" />
-            </Grid>
+            <!-- Deliberately no top-level IsEnabled gating on IsInteractionBlocked here - browsing the timeline
+                 (paging, expanding a commit's changes) is pure local view state, not a git action, so it stays
+                 interactive even while the AI is working. Every action command's own CanExecute (see
+                 HistoryTabViewModel.CanMutate) is what actually disables its menu item. -->
+            <DockPanel Grid.Column="2">
+                <!-- Up/down pagers - always present (rather than collapsed for a single-page timeline) so the
+                     timeline's own vertical extent doesn't jump around as pages/branches are switched; each
+                     button's own Command.CanExecute already disables it (first/last page) without extra IsVisible
+                     bindings. -->
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="20,16,20,6">
+                    <Button Grid.Column="0" Classes="iconButton" Command="{Binding PreviousTimelinePageCommand}"
+                            Content="▲" ToolTip.Tip="Newer entries" />
+                    <TextBlock Grid.Column="1" Text="{Binding TimelinePageLabel}" HorizontalAlignment="Center"
+                               FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                </Grid>
+                <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="20,6,20,10">
+                    <Button Grid.Column="0" Classes="iconButton" Command="{Binding NextTimelinePageCommand}"
+                            Content="▼" ToolTip.Tip="Older entries" />
+                </Grid>
 
-            <ScrollViewer>
-                <StackPanel Margin="20,0" Spacing="4">
-                    <ItemsControl ItemsSource="{Binding TimelineEntries}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="vm:TimelineEntryViewModel">
-                                <StackPanel>
-                                    <!-- Height is fixed (rather than left auto) specifically because of the Line below:
-                                         a Stretch="Fill" Line measured with the unbounded height a StackPanel normally
-                                         gives its children reports a huge/unbounded DesiredSize right back, which
-                                         inflates this Grid's own hit-test bounds far past what's visible - clicks well
-                                         below this row (meant for the expanded changes view beneath it) were landing
-                                         back on this row's own Border instead. Every row's actual content (a single
-                                         line of text/badge) comfortably fits well within this. -->
-                                    <Grid ColumnDefinitions="140,24,*" Height="32">
-                                        <!-- Threads every node in the timeline together into one continuous line - each
-                                             row draws only its own two half-segments (Stretch="Fill" scales each to half
-                                             the row's actual height), and since consecutive rows sit with no gap between
-                                             them, the segments line up into what reads as one unbroken dotted line top to
-                                             bottom. Split in two (rather than one Stretch="Fill" line spanning the whole
-                                             row) so the top half can be hidden on the first row and the bottom half on
-                                             the last row - otherwise either end draws a dangling stub with nothing above/
-                                             below it to connect to. Drawn first so every glyph below renders on top of it,
-                                             not the other way around. -->
-                                        <Grid Grid.Column="1" RowDefinitions="1*,1*">
-                                            <Line Grid.Row="0" StartPoint="0,0" EndPoint="0,1" Stretch="Fill"
-                                                  Stroke="{DynamicResource TextMutedBrush}" StrokeThickness="1" StrokeDashArray="1,2"
-                                                  HorizontalAlignment="Center" VerticalAlignment="Stretch"
-                                                  IsVisible="{Binding !IsFirstInPage}" />
-                                            <Line Grid.Row="1" StartPoint="0,0" EndPoint="0,1" Stretch="Fill"
-                                                  Stroke="{DynamicResource TextMutedBrush}" StrokeThickness="1" StrokeDashArray="1,2"
-                                                  HorizontalAlignment="Center" VerticalAlignment="Stretch"
-                                                  IsVisible="{Binding !IsLastInPage}" />
+                <ScrollViewer>
+                    <StackPanel Margin="20,0" Spacing="4">
+                        <ItemsControl ItemsSource="{Binding TimelineEntries}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:TimelineEntryViewModel">
+                                    <StackPanel>
+                                        <!-- Height is fixed (rather than left auto) specifically because of the Line below:
+                                             a Stretch="Fill" Line measured with the unbounded height a StackPanel normally
+                                             gives its children reports a huge/unbounded DesiredSize right back, which
+                                             inflates this Grid's own hit-test bounds far past what's visible - clicks well
+                                             below this row (meant for the expanded changes view beneath it) were landing
+                                             back on this row's own Border instead. Every row's actual content (a single
+                                             line of text/badge) comfortably fits well within this. -->
+                                        <Grid ColumnDefinitions="140,24,*" Height="32">
+                                            <!-- Threads every node in the timeline together into one continuous line - each
+                                                 row draws only its own two half-segments (Stretch="Fill" scales each to half
+                                                 the row's actual height), and since consecutive rows sit with no gap between
+                                                 them, the segments line up into what reads as one unbroken dotted line top to
+                                                 bottom. Split in two (rather than one Stretch="Fill" line spanning the whole
+                                                 row) so the top half can be hidden on the first row and the bottom half on
+                                                 the last row - otherwise either end draws a dangling stub with nothing above/
+                                                 below it to connect to. Drawn first so every glyph below renders on top of it,
+                                                 not the other way around. -->
+                                            <Grid Grid.Column="1" RowDefinitions="1*,1*">
+                                                <Line Grid.Row="0" StartPoint="0,0" EndPoint="0,1" Stretch="Fill"
+                                                      Stroke="{DynamicResource TextMutedBrush}" StrokeThickness="1" StrokeDashArray="1,2"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                                                      IsVisible="{Binding !IsFirstInPage}" />
+                                                <Line Grid.Row="1" StartPoint="0,0" EndPoint="0,1" Stretch="Fill"
+                                                      Stroke="{DynamicResource TextMutedBrush}" StrokeThickness="1" StrokeDashArray="1,2"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                                                      IsVisible="{Binding !IsLastInPage}" />
+                                            </Grid>
+
+                                            <!-- Blank for a Tag row - the commit it belongs to is the very next row down and
+                                                 already shows this same timestamp, so repeating it here would just be noise. -->
+                                            <TextBlock Grid.Column="0" Text="{Binding Entry.Date, StringFormat='{}{0:MMM d, yyyy h:mm tt}'}" FontSize="10.5"
+                                                       Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                       Margin="0,0,10,0"
+                                                       IsVisible="{Binding !IsTag}" />
+
+                                            <TextBlock Grid.Column="1" Text="●" Classes="commitGlyph" Classes.current="{Binding Entry.IsCurrentCommit}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsVisible="{Binding Entry.Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Commit}" />
+                                            <TextBlock Grid.Column="1" Text="🏷" FontSize="11"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsVisible="{Binding Entry.Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Tag}" />
+
+                                            <!-- One shared row style for both kinds, tags included - a tag's left-click opens
+                                                 the same expanded changes view its commit's own row would (they share the
+                                                 same CommitHash - see HistoryTabViewModel.ToggleExpandedCommand and
+                                                 OnEntryPointerPressed, which only acts on the left button so a right-click
+                                                 opens just the context menu below without also toggling it). Right-click
+                                                 offers Checkout (plus Delete Tag for a Tag row). -->
+                                            <Border Grid.Column="2" Classes="historyRow" Padding="10,7" CornerRadius="4" Cursor="Hand"
+                                                    Tag="{Binding}" PointerPressed="OnEntryPointerPressed">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Checkout" IsVisible="{Binding CanCheckout}"
+                                                                  Command="{Binding $parent[UserControl].((vm:HistoryTabViewModel)DataContext).CheckoutCommand}"
+                                                                  CommandParameter="{Binding Entry.CommitHash}" />
+                                                        <Separator IsVisible="{Binding IsTag}" />
+                                                        <MenuItem Header="Delete Tag" IsVisible="{Binding IsTag}"
+                                                                  Command="{Binding $parent[UserControl].((vm:HistoryTabViewModel)DataContext).DeleteTagCommand}"
+                                                                  CommandParameter="{Binding Entry.TagName}" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <TextBlock Text="{Binding Entry.Label}" FontSize="13" TextTrimming="CharacterEllipsis"
+                                                           Classes.current="{Binding Entry.IsCurrentCommit}" />
+                                            </Border>
                                         </Grid>
 
-                                        <!-- Blank for a Tag row - the commit it belongs to is the very next row down and
-                                             already shows this same timestamp, so repeating it here would just be noise. -->
-                                        <TextBlock Grid.Column="0" Text="{Binding Entry.Date, StringFormat='{}{0:MMM d, yyyy h:mm tt}'}" FontSize="10.5"
-                                                   Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                   Margin="0,0,10,0"
-                                                   IsVisible="{Binding !IsTag}" />
+                                        <!-- The expanded changes view - populated lazily (see HistoryTabViewModel.
+                                             ToggleExpandedCommand) only once this specific row is expanded, and dropped
+                                             again on collapse. -->
+                                        <Border IsVisible="{Binding IsExpanded}" Margin="164,4,0,6" Padding="10,8"
+                                                Background="{DynamicResource HeaderBackgroundBrush}" CornerRadius="4">
+                                            <StackPanel Spacing="8">
+                                                <TextBlock Text="Loading changes…" FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}"
+                                                           IsVisible="{Binding IsLoadingChanges}" />
+                                                <TextBlock Text="No changes" FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}"
+                                                           IsVisible="{Binding HasNoChanges}" />
 
-                                        <TextBlock Grid.Column="1" Text="▲" Foreground="{DynamicResource TextMutedBrush}"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   IsVisible="{Binding Entry.Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=ParentLink}" />
-                                        <TextBlock Grid.Column="1" Text="▼" Foreground="{DynamicResource TextMutedBrush}"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   IsVisible="{Binding Entry.Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=ChildLink}" />
-                                        <TextBlock Grid.Column="1" Text="●" Classes="commitGlyph" Classes.current="{Binding Entry.IsCurrentCommit}"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   IsVisible="{Binding Entry.Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Commit}" />
-                                        <TextBlock Grid.Column="1" Text="🏷" FontSize="11"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   IsVisible="{Binding Entry.Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Tag}" />
-
-                                        <!-- One shared row style for every kind, tags included - a tag's click opens the
-                                             same expanded changes view its commit's own row would (they share the same
-                                             CommitHash - see HistoryTabViewModel.ToggleExpandedCommand). -->
-                                        <Border Grid.Column="2" Classes="historyRow" Padding="10,7" CornerRadius="4" Cursor="Hand"
-                                                Tag="{Binding}" PointerPressed="OnEntryPointerPressed">
-                                            <TextBlock Text="{Binding Entry.Label}" FontSize="13" TextTrimming="CharacterEllipsis"
-                                                       Classes.current="{Binding Entry.IsCurrentCommit}" />
+                                                <!-- Capped so one huge commit's change list can't blow out the whole timeline's
+                                                     height - scrolls internally (both axes, since a deep folder tree can get
+                                                     wide too) once content exceeds this. -->
+                                                <ScrollViewer MaxHeight="400"
+                                                              HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                                              IsVisible="{Binding !IsLoadingChanges}">
+                                                    <TreeView ItemsSource="{Binding Changes}" Background="Transparent" BorderThickness="0">
+                                                        <TreeView.Styles>
+                                                            <Style Selector="TreeViewItem">
+                                                                <Setter Property="IsExpanded" Value="True" />
+                                                                <Setter Property="Padding" Value="0" />
+                                                            </Style>
+                                                        </TreeView.Styles>
+                                                        <TreeView.ItemTemplate>
+                                                            <TreeDataTemplate DataType="cvm:ChangeTreeNode" ItemsSource="{Binding Children}">
+                                                                <!-- A file row (never a folder row - OnChangePointerPressed no-ops for
+                                                                     one, since RelativePath/CommitHash are only ever set on a leaf)
+                                                                     opens that exact commit's before/after content for this path in
+                                                                     the Edit tab's read-only Diff mode. -->
+                                                                <StackPanel Orientation="Horizontal" Spacing="6" Cursor="Hand"
+                                                                            Tag="{Binding}" PointerPressed="OnChangePointerPressed">
+                                                                    <TextBlock Text="📁" IsVisible="{Binding IsDirectory}" FontSize="11" />
+                                                                    <TextBlock Text="{Binding Name}" FontSize="12"
+                                                                               Classes.changeAdded="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Added}"
+                                                                               Classes.changeModified="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Modified}"
+                                                                               Classes.changeDeleted="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Deleted}" />
+                                                                </StackPanel>
+                                                            </TreeDataTemplate>
+                                                        </TreeView.ItemTemplate>
+                                                    </TreeView>
+                                                </ScrollViewer>
+                                            </StackPanel>
                                         </Border>
-                                    </Grid>
-
-                                    <!-- The expanded changes view - populated lazily (see HistoryTabViewModel.
-                                         ToggleExpandedCommand) only once this specific row is expanded, and dropped
-                                         again on collapse. -->
-                                    <Border IsVisible="{Binding IsExpanded}" Margin="164,4,0,6" Padding="10,8"
-                                            Background="{DynamicResource HeaderBackgroundBrush}" CornerRadius="4">
-                                        <StackPanel Spacing="8">
-                                            <!-- Only the Switch button itself is gated on IsInteractionBlocked - browsing/
-                                                 expanding the timeline is pure local view state, not a git action, and
-                                                 stays interactive even while the AI is working (see the Grid.Column="2"
-                                                 DockPanel's own comment above). -->
-                                            <Button Content="Switch" Classes="accent" HorizontalAlignment="Left"
-                                                    Command="{Binding $parent[UserControl].((vm:HistoryTabViewModel)DataContext).CheckoutCommitCommand}"
-                                                    CommandParameter="{Binding Entry.CommitHash}"
-                                                    IsVisible="{Binding CanSwitch}"
-                                                    IsEnabled="{Binding !$parent[UserControl].((vm:HistoryTabViewModel)DataContext).IsInteractionBlocked}" />
-
-                                            <TextBlock Text="Loading changes…" FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}"
-                                                       IsVisible="{Binding IsLoadingChanges}" />
-                                            <TextBlock Text="No changes" FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}"
-                                                       IsVisible="{Binding HasNoChanges}" />
-
-                                            <!-- Capped so one huge commit's change list can't blow out the whole timeline's
-                                                 height - scrolls internally (both axes, since a deep folder tree can get
-                                                 wide too) once content exceeds this. -->
-                                            <ScrollViewer MaxHeight="400"
-                                                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                                                          IsVisible="{Binding !IsLoadingChanges}">
-                                                <TreeView ItemsSource="{Binding Changes}" Background="Transparent" BorderThickness="0">
-                                                    <TreeView.Styles>
-                                                        <Style Selector="TreeViewItem">
-                                                            <Setter Property="IsExpanded" Value="True" />
-                                                            <Setter Property="Padding" Value="0" />
-                                                        </Style>
-                                                    </TreeView.Styles>
-                                                    <TreeView.ItemTemplate>
-                                                        <TreeDataTemplate DataType="cvm:ChangeTreeNode" ItemsSource="{Binding Children}">
-                                                            <!-- A file row (never a folder row - OnChangePointerPressed no-ops for
-                                                                 one, since RelativePath/CommitHash are only ever set on a leaf)
-                                                                 opens that exact commit's before/after content for this path in
-                                                                 the Edit tab's read-only Diff mode. -->
-                                                            <StackPanel Orientation="Horizontal" Spacing="6" Cursor="Hand"
-                                                                        Tag="{Binding}" PointerPressed="OnChangePointerPressed">
-                                                                <TextBlock Text="📁" IsVisible="{Binding IsDirectory}" FontSize="11" />
-                                                                <TextBlock Text="{Binding Name}" FontSize="12"
-                                                                           Classes.changeAdded="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Added}"
-                                                                           Classes.changeModified="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Modified}"
-                                                                           Classes.changeDeleted="{Binding Status, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Deleted}" />
-                                                            </StackPanel>
-                                                        </TreeDataTemplate>
-                                                    </TreeView.ItemTemplate>
-                                                </TreeView>
-                                            </ScrollViewer>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </ScrollViewer>
-        </DockPanel>
-    </Grid>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
 </UserControl>

@@ -428,8 +428,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     /// <summary>
     /// Called whenever the workspace's editable target changes (including the first time, right after the
-    /// repo/target is established) - sessionKey is the checked-out branch's id while targeting a branch (see
-    /// GitTarget/BranchInfo.Id), null while detached at a tag/commit. Each distinct key has its own
+    /// repo/target is established) - sessionKey is the checked-out branch's own name while targeting a branch
+    /// (see GitTarget.BranchName), null while detached at a tag/commit. Each distinct key has its own
     /// independent Generate conversation - switching away from one ends its live subprocess (if any) without
     /// losing anything, since everything said is already persisted to Claude Code's own on-disk transcript
     /// (for conversational context) and to Requests (for display) and resumable/reloadable by key.

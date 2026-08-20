@@ -24,15 +24,14 @@ public sealed class GitService : IGitService
         return result.ExitCode == 0;
     }
 
-    public async Task CommitAsync(string workspacePath, string message, bool allowEmpty = false, CancellationToken cancellationToken = default)
+    public async Task CommitAsync(string workspacePath, string message, CancellationToken cancellationToken = default)
     {
         await RunAsync(workspacePath, ["add", "-A"], cancellationToken);
-
-        string[] args = allowEmpty
-            ? ["commit", "--allow-empty", "-m", message]
-            : ["commit", "-m", message];
-        await RunAsync(workspacePath, args, cancellationToken);
+        await RunAsync(workspacePath, ["commit", "-m", message], cancellationToken);
     }
+
+    public async Task CommitEmptyAsync(string workspacePath, string message, CancellationToken cancellationToken = default) =>
+        await RunAsync(workspacePath, ["commit", "--allow-empty", "-m", message], cancellationToken);
 
     public async Task RenameCurrentBranchAsync(string workspacePath, string newName, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["branch", "-m", newName], cancellationToken);
@@ -166,77 +165,50 @@ public sealed class GitService : IGitService
     public async Task DeleteBranchAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["branch", "-D", branchName], cancellationToken);
 
+    public async Task DeleteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default) =>
+        await RunAsync(workspacePath, ["tag", "-d", tagName], cancellationToken);
+
     public async Task<bool> BranchExistsAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default) =>
         (await RunAsync(workspacePath, ["show-ref", "--verify", "--quiet", $"refs/heads/{branchName}"], cancellationToken)).ExitCode == 0;
 
     public async Task<bool> TagExistsAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default) =>
         (await RunAsync(workspacePath, ["show-ref", "--verify", "--quiet", $"refs/tags/{tagName}"], cancellationToken)).ExitCode == 0;
 
-    public async Task ResetSoftAsync(string workspacePath, string refName, CancellationToken cancellationToken = default) =>
-        await RunAsync(workspacePath, ["reset", "--soft", refName], cancellationToken);
-
-    public async Task AmendCommitAsync(string workspacePath, string message, bool allowEmpty, CancellationToken cancellationToken = default)
-    {
-        await RunAsync(workspacePath, ["add", "-A"], cancellationToken);
-
-        string[] args = allowEmpty
-            ? ["commit", "--amend", "--allow-empty", "-m", message]
-            : ["commit", "--amend", "-m", message];
-        await RunAsync(workspacePath, args, cancellationToken);
-    }
-
-    public async Task CommitEmptyAsync(string workspacePath, string message, CancellationToken cancellationToken = default) =>
-        await RunAsync(workspacePath, ["commit", "--allow-empty", "-m", message], cancellationToken);
-
-    public async Task<bool> FastForwardMergeAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default) =>
-        (await RunAsync(workspacePath, ["merge", "--ff-only", branchName], cancellationToken)).ExitCode == 0;
-
     public async Task ForceUpdateBranchRefAsync(string workspacePath, string branchName, string targetRef, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["branch", "-f", branchName, targetRef], cancellationToken);
 
-    public async Task<GitCommit?> FindFirstCommitMatchingAsync(string workspacePath, string refName, string extendedRegexPattern, CancellationToken cancellationToken = default)
-    {
-        const char sep = '\x1f';
-        var result = await RunAsync(workspacePath, ["log", "-1", "--extended-regexp", $"--grep={extendedRegexPattern}", refName, $"--format=%H{sep}%cI{sep}%s"], cancellationToken);
-        var line = result.StandardOutput.Trim();
-        if (line.Length == 0)
-        {
-            return null;
-        }
+    public async Task CreateAnnotatedTagAsync(string workspacePath, string id, string fullName, string atRef, CancellationToken cancellationToken = default) =>
+        await RunAsync(workspacePath, ["tag", "-a", id, "-m", fullName, atRef], cancellationToken);
 
-        var parts = line.Split(sep);
-        return parts.Length == 3 && DateTimeOffset.TryParse(parts[1], out var date) ? new GitCommit(parts[0], parts[2], date) : null;
-    }
-
-    public async Task CreateAnnotatedTagAsync(string workspacePath, string id, string fullName, CancellationToken cancellationToken = default) =>
-        await RunAsync(workspacePath, ["tag", "-a", id, "-m", fullName], cancellationToken);
-
-    public async Task<string> GetCommitMessageAsync(string workspacePath, string commitRef, CancellationToken cancellationToken = default)
-    {
-        var result = await RunAsync(workspacePath, ["log", "-1", "--format=%B", commitRef], cancellationToken);
-        return result.StandardOutput.Trim();
-    }
-
-    public async Task<bool> IsAncestorAsync(string workspacePath, string ancestorRef, string descendantRef, CancellationToken cancellationToken = default)
-    {
-        var result = await RunAsync(workspacePath, ["merge-base", "--is-ancestor", ancestorRef, descendantRef], cancellationToken);
-        return result.ExitCode == 0;
-    }
-
-    public async Task<RebaseOutcome> RebaseOntoAsync(string workspacePath, string ontoRef, CancellationToken cancellationToken = default)
+    public async Task<GitOperationOutcome> RebaseOntoAsync(string workspacePath, string ontoRef, CancellationToken cancellationToken = default)
     {
         var result = await RunAsync(workspacePath, ["rebase", ontoRef], cancellationToken);
-        return await ClassifyRebaseResultAsync(workspacePath, result, cancellationToken);
+        return await ClassifyOperationResultAsync(workspacePath, result, cancellationToken);
     }
 
-    public async Task<RebaseOutcome> RebaseContinueAsync(string workspacePath, CancellationToken cancellationToken = default)
+    public async Task<GitOperationOutcome> RebaseContinueAsync(string workspacePath, CancellationToken cancellationToken = default)
     {
         var result = await RunAsync(workspacePath, ["rebase", "--continue"], cancellationToken);
-        return await ClassifyRebaseResultAsync(workspacePath, result, cancellationToken);
+        return await ClassifyOperationResultAsync(workspacePath, result, cancellationToken);
     }
 
     public async Task RebaseAbortAsync(string workspacePath, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["rebase", "--abort"], cancellationToken);
+
+    public async Task<GitOperationOutcome> MergeAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(workspacePath, ["merge", branchName], cancellationToken);
+        return await ClassifyOperationResultAsync(workspacePath, result, cancellationToken);
+    }
+
+    public async Task<GitOperationOutcome> MergeContinueAsync(string workspacePath, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(workspacePath, ["merge", "--continue"], cancellationToken);
+        return await ClassifyOperationResultAsync(workspacePath, result, cancellationToken);
+    }
+
+    public async Task MergeAbortAsync(string workspacePath, CancellationToken cancellationToken = default) =>
+        await RunAsync(workspacePath, ["merge", "--abort"], cancellationToken);
 
     public async Task<bool> HasConflictsAsync(string workspacePath, CancellationToken cancellationToken = default) =>
         (await GetConflictedFilesAsync(workspacePath, cancellationToken)).Count > 0;
@@ -246,9 +218,6 @@ public sealed class GitService : IGitService
         var result = await RunAsync(workspacePath, ["diff", "--name-only", "--diff-filter=U"], cancellationToken);
         return SplitLines(result.StandardOutput);
     }
-
-    public async Task SquashMergeAsync(string workspacePath, string featureBranch, CancellationToken cancellationToken = default) =>
-        await RunAsync(workspacePath, ["merge", "--squash", featureBranch], cancellationToken);
 
     public async Task<string?> GetRemoteUrlAsync(string workspacePath, CancellationToken cancellationToken = default)
     {
@@ -321,9 +290,36 @@ public sealed class GitService : IGitService
         return result.ExitCode == 0;
     }
 
+    public async Task<bool> FastForwardMergeAsync(string workspacePath, string refName, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(workspacePath, ["merge", "--ff-only", refName], cancellationToken);
+        return result.ExitCode == 0;
+    }
+
+    public async Task<bool> IsAncestorAsync(string workspacePath, string ancestorRef, string descendantRef, CancellationToken cancellationToken = default) =>
+        (await RunAsync(workspacePath, ["merge-base", "--is-ancestor", ancestorRef, descendantRef], cancellationToken)).ExitCode == 0;
+
+    public async Task<string> MergeBaseAsync(string workspacePath, string refA, string refB, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(workspacePath, ["merge-base", refA, refB], cancellationToken);
+        return result.StandardOutput.Trim();
+    }
+
+    public async Task SquashSinceAsync(string workspacePath, string sinceRef, string message, CancellationToken cancellationToken = default)
+    {
+        await RunAsync(workspacePath, ["reset", "--soft", sinceRef], cancellationToken);
+        await RunAsync(workspacePath, ["commit", "-m", message], cancellationToken);
+    }
+
     public async Task<string> RevParseAsync(string workspacePath, string refName, CancellationToken cancellationToken = default)
     {
         var result = await RunAsync(workspacePath, ["rev-parse", refName], cancellationToken);
+        return result.StandardOutput.Trim();
+    }
+
+    public async Task<string> GetCommitSubjectAsync(string workspacePath, string refName, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(workspacePath, ["log", "-1", "--format=%s", refName], cancellationToken);
         return result.StandardOutput.Trim();
     }
 
@@ -336,14 +332,14 @@ public sealed class GitService : IGitService
     public async Task<IReadOnlyList<GitCommit>> LogAsync(string workspacePath, string refName, CancellationToken cancellationToken = default) =>
         await LogCommitsAsync(workspacePath, refName, cancellationToken);
 
-    public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetTagsByCommitAsync(string workspacePath, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<GitTag>>> GetTagsByCommitAsync(string workspacePath, CancellationToken cancellationToken = default)
     {
         const char sep = '\x1f';
         var result = await RunAsync(workspacePath,
             ["for-each-ref", $"--format=%(objectname){sep}%(*objectname){sep}%(refname:short){sep}%(objecttype){sep}%(contents:subject)", "refs/tags"],
             cancellationToken);
 
-        var map = new Dictionary<string, List<string>>();
+        var map = new Dictionary<string, List<GitTag>>();
         foreach (var line in SplitLines(result.StandardOutput))
         {
             var parts = line.Split(sep);
@@ -356,13 +352,14 @@ public sealed class GitService : IGitService
             // %(*objectname) is git's own dereferenced-to-commit hash for that case, and empty for a plain
             // lightweight tag (whose %(objectname) already IS the commit hash).
             var commitHash = parts[1].Length > 0 ? parts[1] : parts[0];
+            var name = parts[2];
 
             // %(contents:subject) for a lightweight tag (objecttype "commit") is actually the pointed-at
             // commit's own subject line, not anything belonging to the tag - only an annotated tag
             // (objecttype "tag") has a real message of its own to show here (see CreateAnnotatedTagAsync's
-            // "full name"); anything else falls back to the tag's short ref name.
+            // "full name"); anything else falls back to the tag's own short ref name.
             var isAnnotated = parts[3] == "tag";
-            var displayName = isAnnotated && parts[4].Length > 0 ? parts[4] : parts[2];
+            var displayName = isAnnotated && parts[4].Length > 0 ? parts[4] : name;
 
             if (!map.TryGetValue(commitHash, out var tags))
             {
@@ -370,10 +367,10 @@ public sealed class GitService : IGitService
                 map[commitHash] = tags;
             }
 
-            tags.Add(displayName);
+            tags.Add(new GitTag(name, displayName));
         }
 
-        return map.ToDictionary(kv => kv.Key, IReadOnlyList<string> (kv) => kv.Value);
+        return map.ToDictionary(kv => kv.Key, IReadOnlyList<GitTag> (kv) => kv.Value);
     }
 
     public async Task<IReadOnlyList<GitChange>> GetCommitChangesAsync(string workspacePath, string commitHash, CancellationToken cancellationToken = default)
@@ -475,6 +472,12 @@ public sealed class GitService : IGitService
         await RunAsync(workspacePath, ["clean", "-fd"], cancellationToken);
     }
 
+    public async Task ResetHardAsync(string workspacePath, string commitHash, CancellationToken cancellationToken = default)
+    {
+        await RunAsync(workspacePath, ["reset", "--hard", commitHash], cancellationToken);
+        await RunAsync(workspacePath, ["clean", "-fd"], cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<GitCommit>> LogCommitsAsync(string workspacePath, string revisionRange, CancellationToken cancellationToken)
     {
         const char sep = '\x1f';
@@ -493,14 +496,14 @@ public sealed class GitService : IGitService
         return commits;
     }
 
-    private async Task<RebaseOutcome> ClassifyRebaseResultAsync(string workspacePath, BufferedCommandResult result, CancellationToken cancellationToken)
+    private async Task<GitOperationOutcome> ClassifyOperationResultAsync(string workspacePath, BufferedCommandResult result, CancellationToken cancellationToken)
     {
         if (result.ExitCode == 0)
         {
-            return RebaseOutcome.Succeeded;
+            return GitOperationOutcome.Succeeded;
         }
 
-        return await HasConflictsAsync(workspacePath, cancellationToken) ? RebaseOutcome.Conflicts : RebaseOutcome.Failed;
+        return await HasConflictsAsync(workspacePath, cancellationToken) ? GitOperationOutcome.Conflicts : GitOperationOutcome.Failed;
     }
 
     private static IReadOnlyList<string> SplitLines(string text) =>
@@ -512,7 +515,8 @@ public sealed class GitService : IGitService
     /// otherwise want to open one), and GIT_TERMINAL_PROMPT=0 makes a remote operation needing credentials
     /// fail fast with an error instead of hanging forever on a terminal prompt that will never come in this
     /// GUI app. Uses CliWrap's array-form arguments (never a shell string) so free-form user text - commit
-    /// messages, feature summaries - is passed through literally and can never be shell-interpreted.
+    /// messages, feature summaries - is passed through literally and can never be shell-interpreted. Reports
+    /// the command line and its output to GitCommandLogSink.Current, if set, for the busy overlay's live log.
     /// </summary>
     private static async Task<BufferedCommandResult> RunAsync(string workspacePath, IReadOnlyList<string> args, CancellationToken cancellationToken, PipeSource? standardInput = null)
     {
@@ -530,6 +534,24 @@ public sealed class GitService : IGitService
             command = command.WithStandardInputPipe(standardInput);
         }
 
-        return await command.ExecuteBufferedAsync(cancellationToken);
+        var sink = GitCommandLogSink.Current;
+        sink?.Invoke($"$ git {string.Join(' ', args)}");
+
+        var result = await command.ExecuteBufferedAsync(cancellationToken);
+
+        if (sink is not null)
+        {
+            if (result.StandardOutput.Trim().Length > 0)
+            {
+                sink(result.StandardOutput.TrimEnd());
+            }
+
+            if (result.StandardError.Trim().Length > 0)
+            {
+                sink(result.StandardError.TrimEnd());
+            }
+        }
+
+        return result;
     }
 }

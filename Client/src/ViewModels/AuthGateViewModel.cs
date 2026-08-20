@@ -1,76 +1,77 @@
+using System.Collections.ObjectModel;
 using AutoDev.AiCli;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 
 namespace AutoDev.ViewModels;
 
 /// <summary>
-/// Blocks the app until the currently-selected AI provider (see IAiProviderSelectionService - Claude by
-/// default) is signed in. Only ever checks/signs in that one provider - switching provider later from
-/// inside the app (the title bar's own switcher) doesn't re-run this gate; an unauthenticated provider
-/// picked that way instead surfaces as an ordinary failed turn the first time it's used, same as any other
-/// CLI-side error.
+/// Blocks the app until an AI provider is ready to use. Checks every provider's own IAiAuthService up front:
+/// if one is already installed and signed in, that provider is assumed (preferring the persisted choice - see
+/// IAiProviderSelectionService - if it's among the signed-in ones) and the gate never shows at all. Otherwise
+/// it shows either "neither is installed" (NeitherInstalled) or a login row per installed-but-signed-out
+/// provider (LoginRows) - one, or both, depending what's actually on this machine.
 /// </summary>
 public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authServices, IAiProviderSelectionService providerSelection) : ViewModelBase
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan PollTimeout = TimeSpan.FromMinutes(5);
-
     private readonly IAiAuthService[] _authServices = [.. authServices];
 
     [ObservableProperty]
-    private bool _isLoggedIn;
+    private bool _isChecking = true;
 
     [ObservableProperty]
-    private bool _isBusy;
+    private bool _neitherInstalled;
 
-    [ObservableProperty]
-    private string _statusMessage = "";
+    public ObservableCollection<ProviderLoginRowViewModel> LoginRows { get; } = [];
 
     public event Action? Authenticated;
 
-    public string LoginButtonLabel => $"Sign in with {providerSelection.CurrentProvider.DisplayName()}";
-
-    private IAiAuthService AuthService => _authServices.First(s => s.Provider == providerSelection.CurrentProvider);
-
     public async Task CheckInitialStatusAsync()
     {
-        IsBusy = true;
-        StatusMessage = $"Checking {providerSelection.CurrentProvider.DisplayName()} account status…";
-        var status = await AuthService.GetStatusAsync();
-        IsLoggedIn = status.LoggedIn;
-        IsBusy = false;
-        StatusMessage = IsLoggedIn ? "" : $"Sign in to your {providerSelection.CurrentProvider.DisplayName()} account to continue.";
-        if (IsLoggedIn)
+        IsChecking = true;
+
+        var statusByProvider = new Dictionary<AiProvider, (bool Installed, bool LoggedIn)>();
+        foreach (var authService in _authServices)
         {
-            Authenticated?.Invoke();
+            var installed = authService.IsInstalled;
+            var loggedIn = installed && (await authService.GetStatusAsync()).LoggedIn;
+            statusByProvider[authService.Provider] = (installed, loggedIn);
         }
+
+        // Prefer the already-persisted provider choice if it's one of the signed-in ones, so switching
+        // machines/CLIs doesn't silently flip which provider a returning user lands on.
+        var signedInProvider = statusByProvider.TryGetValue(providerSelection.CurrentProvider, out var current) && current.LoggedIn
+            ? providerSelection.CurrentProvider
+            : statusByProvider.Where(kv => kv.Value.LoggedIn).Select(kv => (AiProvider?)kv.Key).FirstOrDefault();
+
+        if (signedInProvider is { } provider)
+        {
+            await providerSelection.SetProviderAsync(provider);
+            IsChecking = false;
+            Authenticated?.Invoke();
+            return;
+        }
+
+        NeitherInstalled = statusByProvider.Values.All(status => !status.Installed);
+
+        LoginRows.Clear();
+        foreach (var authService in _authServices)
+        {
+            if (!statusByProvider[authService.Provider].Installed)
+            {
+                continue;
+            }
+
+            var row = new ProviderLoginRowViewModel(authService);
+            row.Authenticated += () => OnRowAuthenticated(authService.Provider);
+            LoginRows.Add(row);
+        }
+
+        IsChecking = false;
     }
 
-    [RelayCommand]
-    private async Task LoginAsync()
+    private async void OnRowAuthenticated(AiProvider provider)
     {
-        var authService = AuthService;
-        IsBusy = true;
-        StatusMessage = "Opening browser to sign in…";
-        _ = authService.LoginAsync();
-
-        var deadline = DateTimeOffset.UtcNow + PollTimeout;
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            await Task.Delay(PollInterval);
-            var status = await authService.GetStatusAsync();
-            if (status.LoggedIn)
-            {
-                IsLoggedIn = true;
-                IsBusy = false;
-                StatusMessage = "";
-                Authenticated?.Invoke();
-                return;
-            }
-        }
-
-        IsBusy = false;
-        StatusMessage = "Still waiting for sign-in - try again if the browser didn't open.";
+        await providerSelection.SetProviderAsync(provider);
+        Authenticated?.Invoke();
     }
 }

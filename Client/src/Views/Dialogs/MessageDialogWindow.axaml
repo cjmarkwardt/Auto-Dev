@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AutoDev.ViewModels.Dialogs"
+        x:Class="AutoDev.Views.Dialogs.MessageDialogWindow"
+        x:DataType="vm:MessageDialogViewModel"
+        Width="420" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="{Binding Title}"
+        Background="{DynamicResource EditorBackgroundBrush}">
+    <StackPanel Margin="16" Spacing="14">
+        <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="OK" Classes="accent" Command="{Binding OkCommand}" IsDefault="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>

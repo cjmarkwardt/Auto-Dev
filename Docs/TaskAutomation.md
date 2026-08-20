@@ -3,58 +3,78 @@
 Alongside AI-driven changes, AutoDev has a small, file-defined scripting system for repeatable
 scripted work (build, publish, run tests, ...) - `.task` files, shown in the file tree colored
 distinctly and offered `Run`/`Stop`/`View` instead of (well, alongside) the normal file context
-menu. See `examples/example.task` for a real sample.
+menu. See `Example.task` (repo root) for a real sample - right-click it in the Files sidebar and
+choose Run to try it (Stop cancels it mid-run; View reopens its live/last output). Everything it
+does is confined to a `build/` folder next to it, so running it is harmless and repeatable. The
+task language has no comment syntax (see below), so unlike most example files this one has no
+inline prose of its own explaining what each line does - that explanation lives here instead.
 
-## The `.task` DSL
+The task language itself - its parser and its execution engine - is **not** AutoDev's own code: it
+comes from the [Markwardt.TaskRunner](https://github.com/cjmarkwardt/Task-Runner) NuGet package
+(`Core/Core.csproj` in that repo), referenced directly by `Client/AutoDev.csproj`. AutoDev's own
+code is everything *around* that: scheduling/tracking multiple concurrent runs across a workspace,
+persisting run history, the Files sidebar's Run/Stop/View actions, the Output tab, and a
+syntax colorizer for the Edit tab.
 
-A hand-written, indentation-sensitive, Python-like syntax (no `end` keyword):
+## The `.task` language
+
+A hand-written, indentation-sensitive, Python-like syntax (no `end` keyword), fully specified by
+Markwardt.TaskRunner:
 
 ```
-var BUILD_DIR = build
+var BuildDir = build
 
 script Build
-    folder %BUILD_DIR% conditional
-    cd %BUILD_DIR%
+    folder {BuildDir}
+    switch {BuildDir}
     run echo "Building in $(pwd)"
     wait 1
     run
         echo "Step 1"
         echo "Step 2"
-    print Build finished.
+    . Build finished.
 
-script Watch For Changes
-    output 2 1
-    run echo "watching…"
+script Package
+    after Build
+    . Packaging what Build already produced.
 ```
 
-- `var NAME = value` - top-level variables, substituted wherever `%NAME%` appears elsewhere in the
-  file.
-- `script <name>` - one script block. **Every script in a file runs concurrently** with every
-  other script in that same file (they all start together; the whole `.task` run only finishes
-  once every script has); commands *within* one script run sequentially and that script stops at
-  its first failing command.
-- Commands: `run <cmd>` (or a bare `run` with an indented multi-line shell body), `print <text>`
-  (no process spawned), `wait <seconds>`, `move`/`rename`/`file`/`folder`/`delete`/`purge` (direct
-  filesystem operations, each with optional `overwrite`/`conditional` modifiers), `cd <path>`
-  (that script's own working directory).
-- `output <column> <row>` (1-based) pins a script's live output panel to a specific cell in the
-  Output tab's grid instead of letting it auto-arrange.
+- `var Name = value` - top-level variables, substituted wherever `{Name}` appears elsewhere in the
+  file (`{{` escapes a literal `{`). Two special names are always available inside a script without
+  being declared: `{Script}` (that script's own name) and `{Location}` (its current working
+  directory, changed by `switch`).
+- `script <name>` - one script block. **Every script in a file runs concurrently** with every other
+  script in that same file (they all start together; the whole `.task` run only finishes once every
+  script has); instructions *within* one script run sequentially, and a failing instruction fails
+  that script (logged, not thrown) without stopping any other script.
+- Instructions: `run <cmd>` (or a bare `run` with an indented multi-line shell body), `.` `<text>`
+  (writes straight to the script's own output, no process spawned), `wait <seconds>`,
+  `after <script>` (pause until another script in the same file finishes, success or not),
+  `switch <path>` (that script's own working directory), `move`/`copy`/`rename source newName`,
+  `file`/`append <path> [content]`, `folder <path>`, `delete`/`clean <path>`, `read <path>` (writes
+  a file's content to the output). None of `file`/`folder`/`move`/`copy` take `overwrite`/
+  `conditional` modifiers any more - they always replace/no-op as appropriate. There's no comment
+  syntax; blank lines are ignored.
+- There is no longer any way to pin a script's live output panel to a specific position (the old
+  `output <col> <row>` instruction) - the Output tab always auto-arranges every script's panel into
+  a square-ish grid (see `ScriptBlockGridLayout`).
 
-`Core/Services/TaskFileParser.Parse` turns raw text into an unresolved `TaskDocument` (variables
-and commands still containing literal `%VAR%` text) - pure syntax parsing, throwing a
-`FormatException` with a line number on any error. A separate resolution pass substitutes
-variables and validates the result before it's ever executed.
+`Markwardt.TaskRunner.TaskDocumentParser.Parse` turns raw text into a fully resolved
+`Markwardt.TaskRunner.TaskDocument` in one pass - variable resolution (detecting unknown/circular
+references) and instruction parsing together, throwing a `Markwardt.TaskRunner.TaskParseException`
+with a line number on any error.
 
-## Execution (`ScriptTaskRunner`)
+## Execution (`Markwardt.TaskRunner.TaskEngine`/`ScriptRunner`)
 
-`Core/Services/ScriptTaskRunner.RunAsync` runs every `TaskScript` in a resolved `TaskDocument`
-concurrently (`Task.WhenAll`), executing each script's commands sequentially and halting that one
-script on its first failure. Filesystem commands (`Create`/`Move`/`Rename`/`Delete`/`Purge`) run
-directly against `File`/`Directory` APIs in-process; `run` commands go through the same
-`ICommandExecutor` shell backend the Command tab uses (`/bin/sh -c` via `CliWrap`), and a nonzero
-exit code fails that command. Every step is reported through an `IProgress<ScriptOutputLine>`
-callback before it runs (`"$ Run: ..."`-style trace lines), and a `ScriptBlockResult` fires once
-each script finishes.
+A `TaskEngine` wraps one parsed `TaskDocument` plus the working directory every script starts in;
+`RunAsync` runs every script's own `ScriptRunner` concurrently (`Task.WhenAll`) and completes once
+they all have - a `ScriptRunner` never throws out of `RunAsync`, even on cancellation: a failure
+(or a cancelled `run`/`wait`/`after`) is caught, logged as an `Error: ...` line, and leaves that
+script `Failed`, so one script's trouble never aborts its siblings or the engine's own `RunAsync`
+call. Each `ScriptRunner` exposes live `Status` (`Running`/`Waiting`/`Completed`/`Failed`,
+`INotifyPropertyChanged`) and `Log`/`LogText` (every instruction's own `"> ..."` announcement plus
+whatever it writes), which AutoDev's Output tab binds to directly for a live run rather than
+re-buffering output itself.
 
 ## Scheduling and concurrency (`IWorkspaceTaskScheduler`)
 
@@ -65,12 +85,18 @@ manual-trigger tracker/broadcaster - no polling loop:
 - `_activeRuns` (a `ConcurrentDictionary` used as a set) prevents double-starting the *same*
   `.task` file (`RunNowAsync`'s `TryAdd` guard); different `.task` files run fully concurrently,
   each with its own linked `CancellationTokenSource` so `StopRun(taskId)` only cancels that one
-  run.
-- Four events surface everything: `TaskRunStarted(TaskRef)`, `TaskRunCompleted(TaskRunRecord)`,
-  `ScriptTaskProgress(taskPath, blockName, line)` (one output line at a time),
-  `ScriptBlockCompleted(taskPath, ScriptBlockRunRecord)`.
+  run's `TaskEngine`.
+- Three events surface everything: `TaskRunStarted(TaskRef)` (fires immediately, before the file is
+  even read), `TaskScriptsAvailable(TaskRef)` (fires once the file has parsed and
+  `GetLiveScripts(taskId)` - the run's live `ScriptRunner`s - is ready), and
+  `TaskRunCompleted(TaskRunRecord)`.
+- A `TaskRunRecord` stopped by the user is marked `WasStopped` - purely AutoDev's own policy (the
+  library itself has no such concept; a cancelled script is just `Failed` like any other) - tracked
+  by recording that `StopRun` was actually called for that run before persisting its record.
 - Completed runs persist via `IWorkspaceMetadataStore.AppendTaskRunAsync`, under
-  `.autodev/local/task-runs/<sanitized task path>/<runId>.json`.
+  `.autodev/local/task-runs/<sanitized task path>/<runId>.json`, as a `TaskRunRecord` - one
+  `ScriptRunRecord` (`Name`/`Status`/`Log`) per script the document declared, or a `ParseError`
+  string instead if the file never parsed at all.
 
 `FilesSectionViewModel` is the main consumer of the start/complete events: it drives each file
 tree node's "currently running" indicator (re-applied after every tree refresh, since a refresh
@@ -86,11 +112,31 @@ Two different, purpose-built consoles:
 
 - **Output tab** (`OutputTabViewModel`) - a read-only, dropdown-switchable viewer over the
   scheduler above. `Entries` lists every task that's currently running or has ever run (seeded from
-  persisted history); for the selected task, one `ScriptBlockPanelViewModel` per concurrently
-  running script shows its own Running/Succeeded/Failed/Stopped state and live output, arranged in
-  a grid that honors each script's `output <col> <row>` pin. It can either watch a run live or
-  browse the most recent historical run for a task that isn't currently running.
+  persisted history); for the selected task, one `ScriptPanelViewModel` per concurrently running
+  script shows its own Running/Waiting/Succeeded/Failed state (mirroring
+  `Markwardt.TaskRunner.ScriptStatus` directly) and live output, auto-arranged in a square-ish grid.
+  A live panel wraps and mirrors an actual `ScriptRunner`; a panel for a historical (already
+  finished) run is built straight from its persisted `ScriptRunRecord` instead - either way the
+  same `ApplyFinal`-populated view model, so the Output tab's own XAML doesn't need to care which.
+  It can either watch a run live or browse the most recent historical run for a task that isn't
+  currently running.
 - **Command tab** (`CommandTabViewModel`) - a separate, general-purpose REPL-style shell console,
-  entirely unrelated to `.task` files. Runs arbitrary one-off command lines rooted at the workspace
-  directory through the same `ICommandExecutor` backend, with output buffering and up/down history
+  entirely unrelated to `.task` files. Runs arbitrary one-off command lines rooted at a chosen
+  working directory (defaulting to the workspace root; see its own "Set Command Context"/home
+  controls) through the same `ICommandExecutor` backend, with output buffering and up/down history
   recall. This is the ad-hoc counterpart to the structured, file-defined `.task` automation above.
+
+## Syntax highlighting (`TaskSyntaxColorizer`)
+
+The Edit tab colors `.task` files with `TaskSyntaxColorizer`, an AvaloniaEdit
+`DocumentColorizingTransformer` (attached to the editor's `TextView.LineTransformers` only while a
+`.task` file is open, and re-run on every edit - see `EditTabView.axaml.cs`'s `UpdateLanguage`/
+`OnEditorTextChanged`) rather than the older static XSHD-grammar approach: it re-parses the
+document's indentation structure via `Markwardt.TaskRunner.IndentationParser` on every change and
+colors each line only according to the structural role that parse actually assigns it (a
+`var`/`script` keyword, an instruction label, a script/variable name, a `{Name}` insertion) - never
+a plain regex/keyword-text match, so an instruction word appearing inside a `run`'s shell body or a
+`file`'s content never gets miscolored as if it were a real instruction. Ported from
+Markwardt.TaskRunner's own `Runner` reference app (not part of the published library itself, since
+it's an Avalonia-specific tool, but written entirely against the library's own public parsing
+types) rather than duplicated from scratch.
