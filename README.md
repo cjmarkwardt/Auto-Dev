@@ -11,13 +11,14 @@ it) happens in one window without shelling out to a terminal.
 
 ### Requirements
 
+- `git` on `PATH` - checked on launch before anything else; AutoDev refuses to start at all without
+  it, since there's no part of the app that doesn't eventually need to run a git command.
 - The [`claude`](https://docs.claude.com/en/docs/claude-code) CLI and/or the
   [`codex`](https://github.com/openai/codex) CLI - AutoDev drives whichever one is currently
   selected as a subprocess rather than talking to either service's API directly. On first launch it
   checks both: if one is already installed and signed in it's used automatically; otherwise it
   offers a sign-in button for whichever CLI(s) it finds installed, or asks you to install one if
   neither is present.
-- `git`.
 
 ### Opening a workspace
 

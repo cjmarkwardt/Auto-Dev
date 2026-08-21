@@ -22,6 +22,12 @@
                 <TextBlock Text="Checking installed providers…" Foreground="{DynamicResource TextMutedBrush}"
                            HorizontalAlignment="Center" Margin="0,20,0,0" IsVisible="{Binding IsChecking}" />
 
+                <!-- git isn't on PATH at all - a hard prerequisite checked before anything AI-provider-related,
+                     since every git action would otherwise crash the app the moment it tried to run one. -->
+                <TextBlock Text="Install git to use AutoDev." FontWeight="Bold"
+                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" Margin="0,20,0,0"
+                           IsVisible="{Binding GitMissing}" />
+
                 <!-- Neither Claude Code nor Codex is on this machine at all - nothing to sign into yet. -->
                 <TextBlock Text="Install the Claude Code or Codex CLI to use AutoDev." FontWeight="Bold"
                            HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" Margin="0,20,0,0"

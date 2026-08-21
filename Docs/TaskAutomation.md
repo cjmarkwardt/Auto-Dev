@@ -43,7 +43,9 @@ script Package
 - `var Name = value` - top-level variables, substituted wherever `{Name}` appears elsewhere in the
   file (`{{` escapes a literal `{`). Two special names are always available inside a script without
   being declared: `{Script}` (that script's own name) and `{Location}` (its current working
-  directory, changed by `switch`).
+  directory, changed by `switch` - every script starts at the *workspace root*, not the `.task`
+  file's own containing folder, even for one nested in a subfolder - see
+  `WorkspaceTaskSchedulerService.RunAndTrackAsync`).
 - `script <name>` - one script block. **Every script in a file runs concurrently** with every other
   script in that same file (they all start together; the whole `.task` run only finishes once every
   script has); instructions *within* one script run sequentially, and a failing instruction fails
@@ -70,7 +72,10 @@ with a line number on any error.
 
 ## Execution (`Markwardt.TaskRunner.TaskEngine`/`ScriptRunner`)
 
-A `TaskEngine` wraps one parsed `TaskDocument` plus the working directory every script starts in;
+A `TaskEngine` wraps one parsed `TaskDocument` plus the working directory every script starts in -
+`WorkspaceTaskSchedulerService` always constructs it with the workspace root, regardless of where in
+the workspace the `.task` file itself lives (unlike `TaskEngine.Load`, a convenience static the
+library's own standalone Runner app uses instead, which defaults to the file's containing folder).
 `RunAsync` runs every script's own `ScriptRunner` concurrently (`Task.WhenAll`) and completes once
 they all have - a `ScriptRunner` never throws out of `RunAsync`, even on cancellation: a failure
 (or a cancelled `run`/`wait`/`after`) is caught, logged as an `Error: ...` line, and leaves that

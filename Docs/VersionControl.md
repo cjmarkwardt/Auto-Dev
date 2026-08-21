@@ -8,10 +8,19 @@ command.
 ## Layers
 
 - **`Core/Services/IGitService`/`GitService`** - thin, safe wrapper around the `git` CLI (via
-  `CliWrap`). Every call goes through one `RunAsync` helper that sets `GIT_EDITOR`/
-  `GIT_SEQUENCE_EDITOR=true` (so nothing can ever block on an interactive editor) and
-  `GIT_TERMINAL_PROMPT=0` (so a remote operation needing credentials fails fast instead of
-  hanging). No business logic lives here - just running plain git commands and parsing output.
+  `CliWrap`). `IsInstalled` (`GitCliLocator`, checking `PATH` exactly like `ClaudeCliLocator`/
+  `CodexCliLocator` do for their own CLIs) is checked once at launch by `AuthGateViewModel`, which
+  refuses to start the app at all without it - every other member here would otherwise throw the
+  moment it tried to launch a `git` process that doesn't exist. Every call goes through one
+  `RunAsync` helper that sets `GIT_EDITOR`/`GIT_SEQUENCE_EDITOR=true` (so nothing can ever block on
+  an interactive editor) and three separate things aimed at the same goal - a remote operation
+  needing credentials AutoDev can't supply fails fast with a real error instead of hanging or
+  popping up a login flow of its own: `GIT_TERMINAL_PROMPT=0` (git's own username/password prompt),
+  `-c credential.helper=` (an external GUI credential helper/keychain prompt, which
+  `GIT_TERMINAL_PROMPT` has no effect on, for this invocation only), and `GIT_SSH_COMMAND` with
+  `BatchMode=yes` (the SSH-transport equivalent) plus `StrictHostKeyChecking=accept-new` (so that
+  doesn't also block a legitimate first-time clone from a never-before-seen host). No business
+  logic lives here - just running plain git commands and parsing output.
 - **`Core/Services/IWorkspaceVersioningService`/`WorkspaceVersioningService`** - the actual
   branch/tag workflow (Checkout, Branch, Tag, Delete, Reset, Rebase, Merge, Squash, Commit), built
   directly on the above.
@@ -160,7 +169,14 @@ subprocess, not just race to be first past a check. `RunBusyAsync` catches the r
 undo: abort any in-progress rebase/merge, check out the pre-action branch again if a different one
 ended up checked out, then hard-reset it back to the pre-action commit hash and discard pending
 changes. It doesn't know or care which specific action it's undoing; every mutating action's own
-effect reduces to "the checked-out branch moved and/or its tip advanced", which this reverses.
+effect reduces to "the checked-out branch moved and/or its tip advanced", which this reverses. A
+normal git failure (bad credentials, no permission, a rejected push, ...) never reaches this at all
+- it comes back as an ordinary `false`/`GitOperationOutcome.Failed` result, which each action's own
+caller turns into its own specific message (e.g. Rebase's "Rebase failed."). `RunBusyAsync` also
+catches any *other* exception as a backstop - reverts the same way, logs it to `GitOutputLog`, and
+shows a generic "The git action failed unexpectedly" popup - so something truly unexpected (not a
+normal git failure, which the `RunAsync` overrides above mean should never throw in the first place)
+fails as visibly as any other action failure rather than crashing the app.
 
 The Cancel button only matters while `IsBusy` is actually up - during a Rebase/Merge conflict's own
 AI-resolution turn (below), `IsBusy` is deliberately dropped so the user can watch/interact with the

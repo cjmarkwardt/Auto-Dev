@@ -219,16 +219,25 @@ public sealed partial class HeaderViewModel : ViewModelBase
 
         _cloneCts = new CancellationTokenSource();
         IsCloning = true;
-        bool cloned;
+        var result = new GitCloneResult(false, null);
         var wasCanceled = false;
         try
         {
-            cloned = await _gitService.CloneAsync(parentDir, url.Trim(), name, _cloneCts.Token);
+            result = await _gitService.CloneAsync(parentDir, url.Trim(), name, _cloneCts.Token);
         }
         catch (OperationCanceledException)
         {
-            cloned = false;
             wasCanceled = true;
+        }
+        catch (Exception ex)
+        {
+            // Anything else (most notably a Win32Exception if `git` itself can't be launched at all) would
+            // otherwise be an unhandled exception here - this command runs as async void under the hood (see
+            // [RelayCommand]), so nothing above it could ever catch that and it would crash the whole app
+            // instead of just this one clone. AuthGateViewModel's own startup check on IGitService.IsInstalled
+            // is the real fix for the "git isn't installed" case specifically; this is the belt-and-suspenders
+            // backstop for every other way launching git could still fail.
+            result = new GitCloneResult(false, ex.Message);
         }
         finally
         {
@@ -237,12 +246,13 @@ public sealed partial class HeaderViewModel : ViewModelBase
             _cloneCts = null;
         }
 
-        if (!cloned)
+        if (!result.Succeeded)
         {
             TryDeletePartialClone(destination);
             if (!wasCanceled)
             {
-                await _dialogService.ShowConfirmDialogAsync("Clone Repository", "Failed to clone the repository. Check the URL and your network connection.", confirmLabel: "OK", isDestructive: false);
+                var detail = result.ErrorMessage is { Length: > 0 } message ? $"\n\n{message}" : "";
+                await _dialogService.ShowConfirmDialogAsync("Clone Repository", $"Failed to clone the repository.{detail}", confirmLabel: "OK", isDestructive: false);
             }
 
             return;

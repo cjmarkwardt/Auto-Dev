@@ -32,6 +32,9 @@ public sealed record GitCommit(string Hash, string Subject, DateTimeOffset Date)
 /// <summary>One tag as needed for building the History tab's timeline - Name is the tag's actual git ref name (used to check it out or delete it); DisplayName is what's shown (an annotated tag's own message if it has one - AutoDev's own tags never set one, see CreateAnnotatedTagAsync, but a tag pushed from elsewhere might - otherwise the same as Name, see IGitService.GetTagsByCommitAsync).</summary>
 public sealed record GitTag(string Name, string DisplayName);
 
+/// <summary>Result of IGitService.CloneAsync - unlike every other action here, cloning happens before any workspace (and so any live git-output log - see GitCommandLogSink) exists, so this is the only way its caller can show *why* it failed rather than just that it did.</summary>
+public sealed record GitCloneResult(bool Succeeded, string? ErrorMessage);
+
 /// <summary>
 /// Thin, safe git wrapper backing the version/branch/tag workflow (see IWorkspaceVersioningService, which
 /// owns all the actual business logic - this interface just runs plain git commands and parses their output,
@@ -40,6 +43,9 @@ public sealed record GitTag(string Name, string DisplayName);
 /// </summary>
 public interface IGitService
 {
+    /// <summary>Whether the `git` executable is on PATH at all - checked once at startup (see AuthGateViewModel), since every other member here would otherwise throw the moment it tried to launch a `git` process that doesn't exist.</summary>
+    bool IsInstalled { get; }
+
     Task<bool> IsRepoAsync(string workspacePath, CancellationToken cancellationToken = default);
 
     /// <summary>Whether HEAD currently resolves to a real commit - false for a freshly `git init`'d repo, or one cloned from an empty remote, whose branch still exists only as an "unborn" ref name with nothing committed to it yet. Checks the exit code of `git rev-parse --verify --quiet HEAD` rather than RevParseAsync's output, since plain `rev-parse HEAD` prints the literal text "HEAD" back to stdout (not empty) when it can't resolve it.</summary>
@@ -47,8 +53,8 @@ public interface IGitService
 
     Task InitAsync(string workspacePath, CancellationToken cancellationToken = default);
 
-    /// <summary>Clones `url` into a new `destinationName` subfolder of `parentDirectory` (there's no existing workspace to run "in" yet, unlike every other method here). False on failure (bad URL, auth, network).</summary>
-    Task<bool> CloneAsync(string parentDirectory, string url, string destinationName, CancellationToken cancellationToken = default);
+    /// <summary>Clones `url` into a new `destinationName` subfolder of `parentDirectory` (there's no existing workspace to run "in" yet, unlike every other method here). ErrorMessage is git's own stderr on failure (bad URL, auth/permissions, network - see RunAsync's credential.helper/GIT_SSH_COMMAND overrides, which guarantee a missing-credentials failure like this comes back quickly with a real message instead of hanging on a prompt that will never come).</summary>
+    Task<GitCloneResult> CloneAsync(string parentDirectory, string url, string destinationName, CancellationToken cancellationToken = default);
 
     /// <summary>Stages every change in the working tree and commits it.</summary>
     Task CommitAsync(string workspacePath, string message, CancellationToken cancellationToken = default);

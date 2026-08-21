@@ -1,22 +1,28 @@
 using System.Collections.ObjectModel;
 using AutoDev.AiCli;
+using AutoDev.Core.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AutoDev.ViewModels;
 
 /// <summary>
-/// Blocks the app until an AI provider is ready to use. Checks every provider's own IAiAuthService up front:
-/// if one is already installed and signed in, that provider is assumed (preferring the persisted choice - see
-/// IAiProviderSelectionService - if it's among the signed-in ones) and the gate never shows at all. Otherwise
-/// it shows either "neither is installed" (NeitherInstalled) or a login row per installed-but-signed-out
-/// provider (LoginRows) - one, or both, depending what's actually on this machine.
+/// Blocks the app until it's actually usable: `git` on PATH is a hard, no-sign-in-required prerequisite
+/// checked first (GitMissing) - every AI provider gate below is pointless if AutoDev can't run a single git
+/// command without crashing (see IGitService.IsInstalled). Past that, it checks every provider's own
+/// IAiAuthService: if one is already installed and signed in, that provider is assumed (preferring the
+/// persisted choice - see IAiProviderSelectionService - if it's among the signed-in ones) and the rest of the
+/// gate never shows at all. Otherwise it shows either "neither is installed" (NeitherInstalled) or a login row
+/// per installed-but-signed-out provider (LoginRows) - one, or both, depending what's actually on this machine.
 /// </summary>
-public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authServices, IAiProviderSelectionService providerSelection) : ViewModelBase
+public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authServices, IAiProviderSelectionService providerSelection, IGitService gitService) : ViewModelBase
 {
     private readonly IAiAuthService[] _authServices = [.. authServices];
 
     [ObservableProperty]
     private bool _isChecking = true;
+
+    [ObservableProperty]
+    private bool _gitMissing;
 
     [ObservableProperty]
     private bool _neitherInstalled;
@@ -28,6 +34,13 @@ public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authSe
     public async Task CheckInitialStatusAsync()
     {
         IsChecking = true;
+
+        GitMissing = !gitService.IsInstalled;
+        if (GitMissing)
+        {
+            IsChecking = false;
+            return;
+        }
 
         var statusByProvider = new Dictionary<AiProvider, (bool Installed, bool LoggedIn)>();
         foreach (var authService in _authServices)

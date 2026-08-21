@@ -196,6 +196,18 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
             GitOutputLog.Add("Cancelled - reverting…");
             await versioningService.RevertToSnapshotAsync(snapshot);
         }
+        catch (Exception ex)
+        {
+            // A normal git failure (bad credentials, no permission, a rejected push, ...) already comes back
+            // as an ordinary false/GitOperationOutcome.Failed result, not an exception - see RunAsync's
+            // credential.helper/GIT_SSH_COMMAND overrides, which exist specifically so none of that ever
+            // hangs or throws instead. This is the backstop for anything that still somehow does (git itself
+            // vanishing mid-session, a truly unexpected process failure, ...), so it fails as visibly as a
+            // normal action failure rather than crashing the whole app.
+            GitOutputLog.Add($"Error: {ex.Message}");
+            await versioningService.RevertToSnapshotAsync(snapshot);
+            await dialogService.ShowMessageDialogAsync("Git", $"The git action failed unexpectedly.\n\n{ex.Message}");
+        }
         finally
         {
             GitCommandLogSink.Current = null;

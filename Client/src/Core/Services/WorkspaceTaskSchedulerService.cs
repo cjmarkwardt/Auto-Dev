@@ -73,7 +73,12 @@ public sealed class WorkspaceTaskSchedulerService(
             try
             {
                 var document = TaskDocumentParser.Parse(source);
-                var engine = new TaskEngine(document, Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? workspacePath);
+
+                // The workspace root, not the .task file's own containing folder (TaskEngine.Load's default,
+                // used by Task-Runner's standalone Runner app but not called here) - a task nested under a
+                // subfolder (e.g. scripts/build.task) should still see {Location} as the workspace root it
+                // was run from, matching every other workspace-relative action AutoDev takes.
+                var engine = new TaskEngine(document, workspacePath);
                 _activeEngines[task.Path] = engine;
                 TaskScriptsAvailable?.Invoke(task);
 
