@@ -98,7 +98,7 @@
          and its execution engine (TaskDocumentParser/TaskEngine/ScriptRunner) all live in this library now
          rather than duplicated in this project; see WorkspaceTaskSchedulerService and TaskSyntaxColorizer for
          where it's actually used. -->
-    <PackageReference Include="Markwardt.TaskRunner" Version="1.0.0" />
+    <PackageReference Include="Markwardt.TaskRunner" Version="1.1.0" />
   </ItemGroup>
 
   <!-- SkiaSharp/HarfBuzzSharp ship their native libraries' own .pdb symbol files as content assets - those

@@ -189,8 +189,20 @@
                     </TextBlock.IsVisible>
                 </TextBlock>
                 <TextBlock Text="AI work in progress…" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
-                           Foreground="White"
-                           IsVisible="{Binding SelectedTab.Version.IsAiWorking}" />
+                           Foreground="White">
+                    <TextBlock.IsVisible>
+                        <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
+                            <Binding Path="SelectedTab.Version.IsAiWorking" />
+                            <Binding Path="!SelectedTab.Version.IsAiPaused" />
+                        </MultiBinding>
+                    </TextBlock.IsVisible>
+                </TextBlock>
+                <!-- Same accent-colored "locked" look as "AI work in progress…" (see Classes.working above,
+                     bound to IsAiWorking alone - deliberately not reset while paused) with different text,
+                     for a paused Generate turn (GenerateTabViewModel.PauseAsync) - see
+                     VersionSectionViewModel.IsAiPaused. -->
+                <TextBlock Text="AI is paused" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
+                           Foreground="White" IsVisible="{Binding SelectedTab.Version.IsAiPaused}" />
             </Grid>
         </Border>
 

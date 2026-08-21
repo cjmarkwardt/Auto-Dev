@@ -5,9 +5,7 @@ scripted work (build, publish, run tests, ...) - `.task` files, shown in the fil
 distinctly and offered `Run`/`Stop`/`View` instead of (well, alongside) the normal file context
 menu. See `Example.task` (repo root) for a real sample - right-click it in the Files sidebar and
 choose Run to try it (Stop cancels it mid-run; View reopens its live/last output). Everything it
-does is confined to a `build/` folder next to it, so running it is harmless and repeatable. The
-task language has no comment syntax (see below), so unlike most example files this one has no
-inline prose of its own explaining what each line does - that explanation lives here instead.
+does is confined to a `build/` folder next to it, so running it is harmless and repeatable.
 
 The task language itself - its parser and its execution engine - is **not** AutoDev's own code: it
 comes from the [Markwardt.TaskRunner](https://github.com/cjmarkwardt/Task-Runner) NuGet package
@@ -22,6 +20,7 @@ A hand-written, indentation-sensitive, Python-like syntax (no `end` keyword), fu
 Markwardt.TaskRunner:
 
 ```
+# Top-level variables, substituted wherever {Name} appears below.
 var BuildDir = build
 
 script Build
@@ -29,9 +28,11 @@ script Build
     switch {BuildDir}
     run echo "Building in $(pwd)"
     wait 1
+    trace off
     run
         echo "Step 1"
         echo "Step 2"
+    trace on
     . Build finished.
 
 script Package
@@ -52,9 +53,12 @@ script Package
   `after <script>` (pause until another script in the same file finishes, success or not),
   `switch <path>` (that script's own working directory), `move`/`copy`/`rename source newName`,
   `file`/`append <path> [content]`, `folder <path>`, `delete`/`clean <path>`, `read <path>` (writes
-  a file's content to the output). None of `file`/`folder`/`move`/`copy` take `overwrite`/
-  `conditional` modifiers any more - they always replace/no-op as appropriate. There's no comment
-  syntax; blank lines are ignored.
+  a file's content to the output), `trace on`/`trace off` (toggles whether instruction
+  announcements and `run`'s own command output reach the script's output log for the rest of the
+  script - output an instruction writes explicitly, such as `.` and `read`, is unaffected). None of
+  `file`/`folder`/`move`/`copy` take `overwrite`/`conditional` modifiers any more - they always
+  replace/no-op as appropriate. A line whose first non-whitespace character is `#` is a comment and
+  is ignored entirely, same as a blank line.
 - There is no longer any way to pin a script's live output panel to a specific position (the old
   `output <col> <row>` instruction) - the Output tab always auto-arranges every script's panel into
   a square-ish grid (see `ScriptBlockGridLayout`).
@@ -134,9 +138,10 @@ The Edit tab colors `.task` files with `TaskSyntaxColorizer`, an AvaloniaEdit
 `OnEditorTextChanged`) rather than the older static XSHD-grammar approach: it re-parses the
 document's indentation structure via `Markwardt.TaskRunner.IndentationParser` on every change and
 colors each line only according to the structural role that parse actually assigns it (a
-`var`/`script` keyword, an instruction label, a script/variable name, a `{Name}` insertion) - never
-a plain regex/keyword-text match, so an instruction word appearing inside a `run`'s shell body or a
-`file`'s content never gets miscolored as if it were a real instruction. Ported from
+`var`/`script` keyword, an instruction label, a script/variable name, a `{Name}` insertion, a `#`
+comment line) - never a plain regex/keyword-text match, so an instruction word appearing inside a
+`run`'s shell body or a `file`'s content never gets miscolored as if it were a real instruction.
+Ported from
 Markwardt.TaskRunner's own `Runner` reference app (not part of the published library itself, since
 it's an Avalonia-specific tool, but written entirely against the library's own public parsing
 types) rather than duplicated from scratch.

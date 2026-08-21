@@ -85,31 +85,65 @@ persisted to disk and to the CLI's own on-disk transcript.
 ### Turn lifecycle
 
 Sending while idle starts a brand-new `GenerateRequestViewModel` (`Working` status, added to
-`Requests`, capped at the last 5 per session), lazily starts the subprocess if this is the
+`Requests`, capped at the last 10 per session), lazily starts the subprocess if this is the
 session's first turn (`EnsureClientStarted`, a no-op if one's already running), and sends the
 message.
 
-As `AssistantMessageEvent`s stream in, text accumulates into a buffer (not into the request's
-`Output` directly - the visible status area shows only Working/Cancelled/Completed while a turn is
-in flight, never intermediate text) and the latest `tool_use` block updates
-`GenerateRequestViewModel.CurrentAction` with a friendly one-liner (`DescribeToolUse`: "Reading
-Foo.cs", "Running: npm test", "Searching for \"...\"", etc., falling back to `"Using {ToolName}"`
-for anything unrecognized).
+As `AssistantMessageEvent`s stream in, text accumulates into a buffer AND live-replaces the
+request's own `Output` with whichever text block arrived most recently
+(`CaptureActiveRequestOutput`) - the output section shows Claude's latest words as they arrive,
+each new segment replacing the last, rather than staying empty until the turn fully finishes. The
+latest `tool_use` block separately updates `GenerateRequestViewModel.CurrentAction` with a friendly
+one-liner (`DescribeToolUse`: "Reading Foo.cs", "Running: npm test", "Searching for \"...\"", etc.,
+falling back to `"Using {ToolName}"` for anything unrecognized) for the status box above it.
 
 On `ResultEvent`: `Output` is set from the event's own clean final text (preferred over the
 streamed buffer, which mixes in intermediate narration like "let me check that" ahead of the real
-reply), `Status → Completed`, a ding plays, and `NormalTurnCompleted` fires.
+reply), `Status → Completed` (or `Cancelled` if the user had clicked Cancel - see below), a ding
+plays, and `NormalTurnCompleted` fires.
 
-Cancelling (`CancelAsync`) kills the subprocess outright rather than waiting for it to wind down,
-marks the request `Cancelled` with whatever partial output had streamed, and a fresh subprocess
-starts on the next Send.
+Three buttons cover stopping a turn, each doing something different:
+
+- **Stop** (`StopAsync`) kills the subprocess outright rather than waiting for it to wind down,
+  marks the request `Cancelled` with whatever partial output had streamed, and a fresh subprocess
+  starts on the next Send. This is the old `CancelAsync` behavior, renamed - see Cancel below for
+  what took its name over.
+- **Cancel** (`CancelAsync`) doesn't kill anything - it sends Claude an ordinary interjection ("Stop
+  what you're currently doing and revert any changes you've made so far during this turn.") and
+  returns immediately, the same as any other message sent mid-turn (see Interjections below). The
+  turn keeps running - still shown Working, whatever tool Claude reaches for next to actually
+  revert things - until its own `ResultEvent` eventually arrives, at which point `Handle()` sees
+  `_cancelRequested` and finalizes the request `Cancelled` instead of `Completed`. Lets Claude use
+  its own tools to clean up properly instead of being cut off mid-edit.
+- **Pause** (`PauseAsync`) kills the subprocess exactly like Stop, but captures the live session id
+  first (`_client.SessionId`, persisted via `PersistSessionIdAsync` - the same mechanism
+  `RestartClientForSettingsChange` uses for a model/effort change) and marks the request `Paused`
+  instead of `Cancelled`/`Completed`. `NormalTurnCompleted` is deliberately **not** raised - the
+  workspace stays exactly as locked as it was while genuinely working (see
+  `VersionSectionViewModel.IsAiWorking`/`IsAiPaused`, driven by the new `TurnPaused`/`TurnResumed`
+  events instead). Persisted immediately, so a Paused request survives an app restart -
+  `SwitchSessionAsync`'s loader restores it as the active request again (rather than coercing it to
+  `Cancelled` the way a stale `Working` status is) and re-raises `NormalTurnStarted`/`TurnPaused` to
+  re-lock the workspace.
+- **Resume** (`ResumeAsync`) flips the same request back to `Working`, starts a fresh subprocess
+  resuming that captured session id, and sends "Continue from where you left off." - still the same
+  request/turn no matter how many times it's paused and resumed, never a new `GenerateRequestViewModel`.
+
+Closing the app or workspace mid-turn is treated exactly like an explicit Pause rather than losing
+the turn to a silent Cancel, however it happens: `DisposeAsync` marks a still-`Working` active
+request `Paused` and persists immediately (a normal clean close reaches this); an unclean
+crash/kill never gets the chance, so the request is left sitting on disk exactly as `SendAsync`
+first persisted it - `Working` - and `SwitchSessionAsync`'s loader coerces that stale `Working`
+status to `Paused` on the next load instead (rather than `Cancelled`, which only ever applies to a
+genuinely finished/stopped turn). Either way, reopening the workspace shows the same "AI is paused"
+locked state Resume can pick back up, never a `Working` request nothing is actually working on.
 
 ### Recovering from a stream that ends without a `ResultEvent`
 
 `ResultEvent` is the only thing that normally finishes a turn, so anything that stops the CLI's
 stdout being read further - the process exiting/crashing, or a single stream-json line failing to
 parse - used to leave a request stuck showing `Working` forever (`GenerateRequestViewModel.IsWorking`
-reads the request's own `Status`, not `IsSending`), with a manual Cancel the only way out. Two
+reads the request's own `Status`, not `IsSending`), with a manual Stop the only way out. Two
 things guard against that now:
 
 - `ClaudeSessionClient`'s per-line parse catches *any* exception, not just `JsonException` - the
@@ -118,7 +152,7 @@ things guard against that now:
   shape could otherwise escape a narrower catch and kill the read loop for the rest of the
   process's life - not just that one line.
 - `ReadLoopAsync`'s tail always runs once the stream ends, success or failure alike:
-  `FinalizeAbandonedTurn()` finalizes whatever turn was still in flight exactly like `CancelAsync`
+  `FinalizeAbandonedTurn()` finalizes whatever turn was still in flight exactly like `StopAsync`
   would (flushes the streamed-text buffer into `Output`, marks the request `Cancelled`, resolves a
   pending `RunAutomatedTurnAsync` call with `false`) - a safe no-op if a `ResultEvent` already
   finished things normally. It's guarded by a reference-equality check against the current

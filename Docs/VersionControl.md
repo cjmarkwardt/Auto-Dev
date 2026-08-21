@@ -106,7 +106,7 @@ checked-out branch directly, rather than some other row in the History tab:
 | Commit | Prompts for a message, commits pending changes, pushes | always |
 | Reset | Confirms, then discards pending changes (`git reset --hard` + `clean -fd`) | always |
 | Branch | Prompts for a name, creates a branch at the current target (`HEAD`), checks it out | always |
-| Tag | Prompts for a full name/id, creates an annotated tag at the current target | always |
+| Tag | Prompts for a name, creates an annotated tag (blank message) at the current target | always |
 | Remote | Prompts for and configures the `origin` URL | always |
 | Squash | Prompts for a base branch and message, squashes since diverging from it | targeting a branch |
 | Rebase | Prompts for an onto-branch and (always-applied) squash message, rebases the current branch | targeting a branch |

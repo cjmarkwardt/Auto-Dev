@@ -19,8 +19,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 {
     private static readonly TimeSpan DraftAutoSaveDebounce = TimeSpan.FromMilliseconds(500);
 
-    /// <summary>Only the last 5 requests are ever kept, per session - see Requests/SendAsync's eviction and IWorkspaceMetadataStore.SaveGenerateRequestsAsync.</summary>
-    private const int MaxRequests = 5;
+    /// <summary>Only the last 10 requests are ever kept, per session - see Requests/SendAsync's eviction and IWorkspaceMetadataStore.SaveGenerateRequestsAsync.</summary>
+    private const int MaxRequests = 10;
 
     /// <summary>
     /// How long a request can go with no event at all from the CLI subprocess (not even an intermediate tool
@@ -83,14 +83,22 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     private int _pendingTurnCount;
 
     /// <summary>
-    /// Accumulates the active request's assistant text as it streams in, WITHOUT touching
-    /// _activeRequest.Output live - the middle status area is meant to show only Working/Cancelled/Completed
-    /// while a request is in flight, never intermediate text (see GenerateTabView.axaml). Only flushed into
-    /// _activeRequest.Output once the turn actually finishes (ResultEvent) or is cancelled, so the final
-    /// output only ever appears once there's something final to show. A normal ResultEvent completion
-    /// prefers the CLI's own clean Result text over this whole buffer (see the ResultEvent case in Handle) -
-    /// this is only the fallback for that (should-never-happen) case. A cancel/timeout finish instead uses
-    /// _lastActiveRequestSegment, not this - see its own doc comment for why.
+    /// True once the user has clicked Cancel on the active request and its "please stop and revert" message
+    /// has been sent, but its own ResultEvent hasn't arrived yet - see CancelAsync. Checked (and reset) only
+    /// in Handle()'s ResultEvent case, to finalize the turn as Cancelled instead of Completed once Claude
+    /// actually finishes responding to that request; also reset at the start of every new real turn
+    /// (SendAsync) and in FinalizeActiveRequestAsync, so it can never leak into a later, unrelated turn.
+    /// </summary>
+    private bool _cancelRequested;
+
+    /// <summary>
+    /// Accumulates the active request's assistant text as it streams in - see CaptureActiveRequestOutput,
+    /// which also live-updates _activeRequest.Output with each new segment (replacing, not appending) so the
+    /// output section shows Claude's latest words as they arrive rather than staying empty until the turn
+    /// fully finishes. A normal ResultEvent completion still prefers the CLI's own clean Result text over
+    /// this whole buffer (see the ResultEvent case in Handle) - this is only the fallback for that
+    /// (should-never-happen) case. A cancel/timeout finish instead uses _lastActiveRequestSegment, not this -
+    /// see its own doc comment for why.
     /// </summary>
     private readonly StringBuilder _activeRequestOutputBuffer = new();
 
@@ -294,8 +302,11 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     [ObservableProperty]
     private bool _hasRunningTasks;
 
-    /// <summary>A request whose own ResultEvent already arrived while HasRunningTasks was still true - held back from Completed/the ding until OnHasRunningTasksChanged sees it clear. See the ResultEvent handler in Handle().</summary>
+    /// <summary>A request whose own ResultEvent already arrived while HasRunningTasks was still true - held back from its own final status/the ding until OnHasRunningTasksChanged sees it clear. See the ResultEvent handler in Handle().</summary>
     private GenerateRequestViewModel? _pendingTaskCompletionRequest;
+
+    /// <summary>The status _pendingTaskCompletionRequest should actually finalize as (Completed, or Cancelled if the user had asked Claude to stop and revert - see CancelAsync) - captured alongside it rather than re-read from _cancelRequested later, since that field could otherwise already belong to a different, newer turn by the time a background task finally finishes.</summary>
+    private GenerateRequestStatus _pendingTaskCompletionStatus = GenerateRequestStatus.Completed;
 
     partial void OnHasRunningTasksChanged(bool value)
     {
@@ -304,7 +315,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         if (!value && _pendingTaskCompletionRequest is { } request)
         {
             _pendingTaskCompletionRequest = null;
-            request.Status = GenerateRequestStatus.Completed;
+            request.Status = _pendingTaskCompletionStatus;
             _ = PersistCurrentRequestsAsync();
             _soundService.PlayDing();
         }
@@ -341,6 +352,9 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     {
         SendCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+        StopCommand.NotifyCanExecuteChanged();
+        PauseCommand.NotifyCanExecuteChanged();
+        ResumeCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
@@ -406,6 +420,12 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     /// <summary>Raised when a genuine user-submitted turn finishes (bool = succeeded) - distinct from an internal automated turn's own completion, which callers await directly via RunAutomatedTurnAsync's return value instead. Whatever the turn changed is left as ordinary pending changes - nothing here commits automatically.</summary>
     public event Action<bool>? NormalTurnCompleted;
+
+    /// <summary>Raised when the active request is paused (PauseAsync, or restored Paused from disk on SwitchSessionAsync's own load) - NormalTurnCompleted is deliberately NOT raised alongside this, so the workspace stays locked exactly as if the turn were still actively working. See VersionSectionViewModel.IsAiPaused.</summary>
+    public event Action? TurnPaused;
+
+    /// <summary>Raised when a paused request resumes (ResumeAsync) - the mirror image of TurnPaused.</summary>
+    public event Action? TurnResumed;
 
     /// <summary>
     /// Raised around a hidden turn (RunAutomatedTurnAsync's visible: false path) - lets a caller lock the
@@ -497,18 +517,43 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             if (request.Status == GenerateRequestStatus.Working)
             {
                 // No live process can still be "working" on a request freshly loaded from disk - only
-                // reachable if the app was killed/crashed mid-turn. DisposeAsync/SwitchSessionAsync's own
-                // write-back on a clean exit already marks it Cancelled; this is the load-time safety net
-                // for the one path that can't write back (an unclean process death).
-                request.Status = GenerateRequestStatus.Cancelled;
+                // reachable if the app was killed/crashed mid-turn (a clean close already writes this back
+                // as Paused itself - see DisposeAsync - so a Working status can only still be sitting on
+                // disk here after an unclean process death that skipped that write-back entirely). Treated
+                // exactly like an explicit Pause - restored below - rather than losing the turn to a silent
+                // Cancel.
+                request.Status = GenerateRequestStatus.Paused;
             }
 
-            Requests.Add(GenerateRequestViewModel.FromModel(request));
+            var requestVm = GenerateRequestViewModel.FromModel(request);
+            Requests.Add(requestVm);
+
+            if (requestVm.Status == GenerateRequestStatus.Paused)
+            {
+                _activeRequest = requestVm;
+            }
         }
 
         if (Requests.Count > 0)
         {
             DisplayedIndex = Requests.Count - 1;
+        }
+
+        if (_activeRequest is not null)
+        {
+            // Re-locks the workspace exactly as if the turn were still actively working (see TurnPaused's own
+            // doc comment) - VersionSectionViewModel's subscription to these is already in place by now
+            // (WorkspaceTabFactory constructs it before WorkspaceTabViewModel.InitializeAsync ever reaches
+            // this call).
+            NormalTurnStarted?.Invoke();
+            TurnPaused?.Invoke();
+
+            // Resume/Stop's own CanExecute needs an explicit nudge here - nothing else notifies it for a
+            // request restored straight into Paused like this (contrast PauseAsync, which flips IsSending and
+            // gets this for free via OnIsSendingChanged). Relying on whatever value the View happens to read
+            // the first time it binds these commands would be a timing race against this same load.
+            ResumeCommand.NotifyCanExecuteChanged();
+            StopCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -630,6 +675,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             _activeRequestOutputBuffer.Clear();
             _lastActiveRequestSegment = "";
             _pendingTurnCount = 1;
+            _cancelRequested = false;
             DisplayedIndex = Requests.Count - 1;
             _ = PersistCurrentRequestsAsync();
 
@@ -654,25 +700,138 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     }
 
     /// <summary>
-    /// Only meaningful for a genuine user-submitted turn (_activeRequest not null) - an automated/hidden
-    /// turn (conflict-resolution etc.) has no request card to cancel and isn't user-facing "current work"
-    /// in the sense this button means. DisplayedRequest.IsWorking (which GenerateTabView.axaml's Cancel
-    /// button visibility mirrors) is already false during an automated turn for the same reason, so the
-    /// button naturally hides itself rather than showing disabled.
+    /// Only meaningful for a genuine user-submitted turn that's actually running right now (_activeRequest
+    /// not null, IsSending) - an automated/hidden turn (conflict-resolution etc.) has no request card to
+    /// cancel and isn't user-facing "current work" in the sense this button means, and there's nothing left
+    /// to ask a paused turn to stop. DisplayedRequest.IsWorking (which GenerateTabView.axaml's Cancel button
+    /// visibility mirrors) is already false during an automated turn for the same reason, so the button
+    /// naturally hides itself rather than showing disabled. !_cancelRequested guards against sending the same
+    /// "stop and revert" instruction twice while the first one is still being carried out.
     /// </summary>
-    private bool CanCancel() => IsSending && _activeRequest is not null;
-
-    /// <summary>Forcibly stops the active request's turn by killing the underlying Claude CLI subprocess outright (see ClaudeSessionClient.DisposeAsync's Kill fallback), rather than waiting for it to wind down on its own - the request is marked Cancelled with whatever partial output had streamed in so far, and a fresh subprocess starts on the next Send.</summary>
-    [RelayCommand(CanExecute = nameof(CanCancel))]
-    private Task CancelAsync() => KillActiveTurnAsync(GenerateRequestStatus.Cancelled, success: false);
+    private bool CanCancel() => IsSending && _activeRequest is not null && !_cancelRequested;
 
     /// <summary>
-    /// The actual work behind both a user-initiated Cancel and the stall watchdog's own forced stop (see
+    /// Asks Claude to stop what it's doing and revert whatever it's changed so far this turn, rather than
+    /// forcibly killing it (see StopAsync for that) - sent as an ordinary interjection alongside whatever
+    /// Claude is already doing, exactly like a plain user message sent mid-turn (see SendAsync's own
+    /// isInterjection path), so it can actually use its own tools (git, file edits) to clean up properly
+    /// instead of being cut off mid-edit. Runs "in the background": this method returns immediately once the
+    /// message is sent, the same as any interjection - the turn keeps working (still shows Working/whatever
+    /// tool it's using next) until its own ResultEvent arrives, at which point Handle() sees _cancelRequested
+    /// and finalizes the request as Cancelled instead of Completed.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanCancel))]
+    private async Task CancelAsync()
+    {
+        if (_activeRequest is null || _client is null)
+        {
+            return;
+        }
+
+        const string instruction = "Stop what you're currently doing and revert any changes you've made so far during this turn.";
+
+        _cancelRequested = true;
+        CancelCommand.NotifyCanExecuteChanged();
+        _activeRequest.Input = $"{_activeRequest.Input}\n{instruction}";
+        _pendingTurnCount++;
+        _ = PersistCurrentRequestsAsync();
+        DisplayedIndex = Requests.Count - 1;
+
+        _lastEventReceivedAt = DateTimeOffset.UtcNow;
+        await _client.SendUserMessageAsync(instruction);
+    }
+
+    /// <summary>Same gating as CanCancel, minus !_cancelRequested (stopping outright is always fine, even mid-cancel) - also true while the active request is Paused, since Stop is exactly as meaningful there (nothing to kill, but the paused turn still needs to be abandoned and the workspace unlocked).</summary>
+    private bool CanStop() => _activeRequest is not null && (IsSending || _activeRequest.IsPaused);
+
+    /// <summary>Forcibly stops the active request's turn by killing the underlying Claude CLI subprocess outright (see ClaudeSessionClient.DisposeAsync's Kill fallback) if one is even running, rather than waiting for it to wind down on its own - the request is marked Cancelled with whatever partial output had streamed in so far, and a fresh subprocess starts on the next Send. This is what Cancel itself used to do before it became the "ask nicely" action above.</summary>
+    [RelayCommand(CanExecute = nameof(CanStop))]
+    private Task StopAsync() => KillActiveTurnAsync(GenerateRequestStatus.Cancelled, success: false);
+
+    /// <summary>Same gating as CanCancel (needs a genuinely running turn to pause).</summary>
+    private bool CanPause() => IsSending && _activeRequest is not null;
+
+    /// <summary>
+    /// Immediately stops the AI's work (kills the subprocess, same as Stop) but keeps it resumable: captures
+    /// the live session id first (same mechanism RestartClientForSettingsChange uses for a model/effort
+    /// change) so Resume can pick the exact same conversation back up, and marks the request Paused rather
+    /// than Cancelled/Completed - persisted to disk immediately, so the pause survives an app restart (see
+    /// SwitchSessionAsync's loader, which restores a Paused request as still-active on load).
+    /// Deliberately does NOT raise NormalTurnCompleted - the workspace stays exactly as locked as it was
+    /// while the turn was genuinely working, via TurnPaused instead (see VersionSectionViewModel.IsAiPaused).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanPause))]
+    private async Task PauseAsync()
+    {
+        if (_activeRequest is null)
+        {
+            return;
+        }
+
+        if (_client is not null)
+        {
+            _resumeSessionId = _client.SessionId;
+            await PersistSessionIdAsync();
+        }
+
+        var client = _client;
+        _client = null;
+        if (client is not null)
+        {
+            await client.DisposeAsync();
+        }
+
+        // Status flips to Paused BEFORE IsSending drops, not after - IsSending's own change notification
+        // immediately re-evaluates CanResume() (see OnIsSendingChanged), which reads _activeRequest.Status;
+        // flipping it the other way around left ResumeCommand's CanExecute cached false (read while Status
+        // was still Working) even though IsPaused-bound bindings elsewhere (e.g. the button's own IsVisible)
+        // already updated fine, since those re-evaluate live off the property instead of a point-in-time notify.
+        _cancelRequested = false;
+        _activeRequest.Status = GenerateRequestStatus.Paused;
+        IsSending = false;
+        await PersistCurrentRequestsAsync();
+
+        TurnPaused?.Invoke();
+    }
+
+    private bool CanResume() => _activeRequest is { Status: GenerateRequestStatus.Paused };
+
+    /// <summary>
+    /// Re-enters the working state and tells Claude to continue from where it left off, resuming the exact
+    /// same session id PauseAsync captured - still the same request/turn (see GenerateRequestStatus.Paused's
+    /// own doc comment), not a new one, no matter how many times it's been paused and resumed. "In the
+    /// background" the same way a fresh Send is: this returns as soon as the message is sent, not once
+    /// Claude actually replies.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanResume))]
+    private async Task ResumeAsync()
+    {
+        if (_activeRequest is null)
+        {
+            return;
+        }
+
+        _activeRequest.Status = GenerateRequestStatus.Working;
+        _activeRequest.CurrentActionStartedAt = DateTimeOffset.UtcNow;
+        _pendingTurnCount = 1;
+        await PersistCurrentRequestsAsync();
+
+        IsSending = true;
+        TurnResumed?.Invoke();
+        EnsureClientStarted();
+
+        _lastEventReceivedAt = DateTimeOffset.UtcNow;
+        await _client!.SendUserMessageAsync("Continue from where you left off.");
+    }
+
+    /// <summary>
+    /// The actual work behind both a user-initiated Stop and the stall watchdog's own forced stop (see
     /// StallWatchdogElapsedAsync) - finalizes+persists the active request as `status`, kills the subprocess
-    /// outright, and unlocks the app-wide "AI is working" state. A safe no-op if there's no active request.
-    /// `success` only affects what NormalTurnCompleted's subscribers are told happened - it's passed straight
-    /// through rather than derived from `status`, since the watchdog's Completed treats the turn as a genuine
-    /// success even though nothing ever confirmed that from the CLI side.
+    /// if one is running (a no-op if the request was Paused, which already has none), and unlocks the
+    /// app-wide "AI is working"/"AI is paused" state via NormalTurnCompleted. A safe no-op if there's no
+    /// active request. `success` only affects what NormalTurnCompleted's subscribers are told happened - it's
+    /// passed straight through rather than derived from `status`, since the watchdog's Completed treats the
+    /// turn as a genuine success even though nothing ever confirmed that from the CLI side.
     /// </summary>
     private async Task KillActiveTurnAsync(GenerateRequestStatus status, bool success)
     {
@@ -739,11 +898,12 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     /// <summary>
     /// Resolves a request still waiting on OnHasRunningTasksChanged (see the ResultEvent handler in Handle())
-    /// as Completed right away and persists - called before leaving a session (switch/dispose) so that wait
-    /// can never span a session boundary: HasRunningTasks clearing later would otherwise finalize a request
-    /// that's no longer part of the current session into the NEW session's file (or never get to it at all,
-    /// if the workspace tab itself is gone by then). The task itself may well still be running - this only
-    /// resolves the display/ding, exactly like leaving mid-turn already does for a genuinely active request.
+    /// as its own already-decided final status (see _pendingTaskCompletionStatus) right away and persists -
+    /// called before leaving a session (switch/dispose) so that wait can never span a session boundary:
+    /// HasRunningTasks clearing later would otherwise finalize a request that's no longer part of the current
+    /// session into the NEW session's file (or never get to it at all, if the workspace tab itself is gone by
+    /// then). The task itself may well still be running - this only resolves the display/ding, exactly like
+    /// leaving mid-turn already does for a genuinely active request.
     /// </summary>
     private async Task FlushPendingTaskCompletionAsync()
     {
@@ -753,7 +913,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         }
 
         _pendingTaskCompletionRequest = null;
-        request.Status = GenerateRequestStatus.Completed;
+        request.Status = _pendingTaskCompletionStatus;
         await PersistCurrentRequestsAsync();
     }
 
@@ -761,13 +921,14 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// Flushes only the active request's LAST streamed text segment (see _lastActiveRequestSegment - not
     /// the full _activeRequestOutputBuffer history of everything said this turn), marks it `status`, and
     /// persists immediately - the one shared tail every path that can end a turn without its own real
-    /// ResultEvent ever arriving (a user Cancel, a session switch, app disposal, and the stall watchdog -
+    /// ResultEvent ever arriving (a user Stop, a session switch, app disposal, and the stall watchdog -
     /// see StallWatchdogElapsedAsync) funnels through, so none of them can silently drop the request the way
     /// SwitchSessionAsync used to. `status` is Cancelled for all of those except the stall watchdog, which
     /// treats its forced stop as a Completed turn instead (see CompleteStalledTurnAsync) - the assistant may
     /// well have actually finished; the watchdog firing only means AutoDev stopped hearing about it, not
     /// that the work itself failed. Deliberately doesn't touch _client - each caller disposes it (or not) on
-    /// its own terms afterward. A safe no-op if there's nothing active to finalize.
+    /// its own terms afterward. Not used by PauseAsync - a paused request stays _activeRequest, not finalized
+    /// away. A safe no-op if there's nothing active to finalize.
     /// </summary>
     private async Task FinalizeActiveRequestAsync(GenerateRequestStatus status)
     {
@@ -779,6 +940,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         var request = _activeRequest;
         _activeRequest = null;
         _pendingTurnCount = 0;
+        _cancelRequested = false;
 
         if (_lastActiveRequestSegment.Length > 0)
         {
@@ -968,6 +1130,17 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                     break;
                 }
 
+                if (_activeRequest is null)
+                {
+                    // Not a genuine user-submitted request's own reply at all - e.g. a stray message sent
+                    // (via the shared live session) while no request was actually active, such as during a
+                    // visible automated turn's own exchange. Nothing to finalize, and deliberately no
+                    // NormalTurnCompleted/ding either - both must only ever fire for a real tracked request,
+                    // never for background/incidental CLI activity.
+                    IsSending = false;
+                    break;
+                }
+
                 // Only truly "done" once every message sent for this request (the initial send, plus any
                 // interjections) has had its own ResultEvent accounted for - see _pendingTurnCount's doc
                 // comment. An interjection still outstanding means Claude is about to keep working on this
@@ -981,35 +1154,39 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
                 IsSending = false;
 
-                if (_activeRequest is not null)
-                {
-                    // Prefer the CLI's own final-answer text over the accumulated streaming buffer, which
-                    // mixes in intermediate narration (e.g. "let me check that" before a tool call) alongside
-                    // the real final reply - Result is exactly the clean final text; the buffer stays as a
-                    // fallback only for the (should-never-happen) case a completed turn's Result is null.
-                    var request = _activeRequest;
-                    _activeRequest = null;
-                    request.Output = result.Result ?? _activeRequestOutputBuffer.ToString();
+                // Prefer the CLI's own final-answer text over the accumulated streaming buffer, which mixes
+                // in intermediate narration (e.g. "let me check that" before a tool call) alongside the real
+                // final reply - Result is exactly the clean final text; the buffer stays as a fallback only
+                // for the (should-never-happen) case a completed turn's Result is null.
+                var request = _activeRequest;
+                _activeRequest = null;
+                request.Output = result.Result ?? _activeRequestOutputBuffer.ToString();
 
-                    if (HasRunningTasks)
-                    {
-                        // Claude's own turn ended, but it left (or already had) at least one AutoDev-tracked
-                        // .task run still going - e.g. a dev server or watch build it started in the
-                        // background and considers "done" from its own side. Marking this SPECIFIC request
-                        // Completed/playing the ding now would tell the user everything's finished while a
-                        // process it started is still visibly running - see OnHasRunningTasksChanged, which
-                        // finishes this off once that also clears. Deliberately doesn't delay IsSending/
-                        // NormalTurnCompleted above (already fired): that governs the app-wide "AI is working"
-                        // lock, and gating it on a background task with no bounded runtime would just
-                        // reintroduce the "stuck in Working" bug for a different reason - only this one
-                        // request's own displayed status/ding waits.
-                        _pendingTaskCompletionRequest = request;
-                    }
-                    else
-                    {
-                        request.Status = GenerateRequestStatus.Completed;
-                        _ = PersistCurrentRequestsAsync();
-                    }
+                // Cancelled (not Completed) if the user had asked Claude to stop and revert (CancelAsync) and
+                // this is that request's own reply finally landing - captured now, not read again later,
+                // since _cancelRequested could belong to a different turn by the time a deferred
+                // (HasRunningTasks) completion below actually resolves.
+                var finalStatus = _cancelRequested ? GenerateRequestStatus.Cancelled : GenerateRequestStatus.Completed;
+                _cancelRequested = false;
+
+                if (HasRunningTasks)
+                {
+                    // Claude's own turn ended, but it left (or already had) at least one AutoDev-tracked
+                    // .task run still going - e.g. a dev server or watch build it started in the background
+                    // and considers "done" from its own side. Marking this SPECIFIC request Completed/
+                    // playing the ding now would tell the user everything's finished while a process it
+                    // started is still visibly running - see OnHasRunningTasksChanged, which finishes this
+                    // off once that also clears. Deliberately doesn't delay IsSending/NormalTurnCompleted
+                    // above (already fired): that governs the app-wide "AI is working" lock, and gating it on
+                    // a background task with no bounded runtime would just reintroduce the "stuck in Working"
+                    // bug for a different reason - only this one request's own displayed status/ding waits.
+                    _pendingTaskCompletionRequest = request;
+                    _pendingTaskCompletionStatus = finalStatus;
+                }
+                else
+                {
+                    request.Status = finalStatus;
+                    _ = PersistCurrentRequestsAsync();
                 }
 
                 NormalTurnCompleted?.Invoke(!result.IsError);
@@ -1054,6 +1231,15 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
             // Overwritten (not appended) - see _lastActiveRequestSegment's own doc comment.
             _lastActiveRequestSegment = block.Text;
+
+            // Live-updates the output section with Claude's latest words as they arrive, replacing whatever
+            // was shown before - rather than leaving it empty the whole turn and only ever showing something
+            // once it's fully done (and even then, often just the CLI's own short wrap-up summary rather than
+            // whatever richer content Claude had already actually said).
+            if (_activeRequest is not null)
+            {
+                _activeRequest.Output = block.Text;
+            }
         }
     }
 
@@ -1150,10 +1336,17 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         await FlushPendingDraftSaveAsync();
         await FlushPendingTaskCompletionAsync();
 
-        // A normal app-close mid-turn (this Dispose call, not a crash) is the one clean-exit path that can
-        // still write the true state back before going away - SwitchSessionAsync's load-time coercion is
-        // only the safety net for an unclean process death, which can't reach here at all.
-        await FinalizeActiveRequestAsync(GenerateRequestStatus.Cancelled);
+        // A normal app/workspace close mid-turn (this Dispose call, not a crash) is the one clean-exit path
+        // that can still write the true state back before going away - SwitchSessionAsync's load-time
+        // coercion is only the safety net for an unclean process death, which can't reach here at all.
+        // Treated exactly like an explicit Pause rather than a Cancel, so Resume can pick the turn back up
+        // next launch no matter how the app came to close while it was still working. A request already
+        // Paused is left alone - it's already correctly persisted from the moment PauseAsync ran.
+        if (_activeRequest is { Status: GenerateRequestStatus.Working } workingRequest)
+        {
+            workingRequest.Status = GenerateRequestStatus.Paused;
+            await PersistCurrentRequestsAsync();
+        }
 
         if (_client is not null)
         {

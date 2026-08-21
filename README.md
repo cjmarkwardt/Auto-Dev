@@ -59,12 +59,19 @@ Each workspace tab has its own sidebar, split into two sections:
 - Press **F2** (or click the Generate tab) to jump to the chat panel: type a request and press
   Enter to send it (Shift+Enter for a newline), or paste/drag in images and files to attach them.
 - While a request is in flight, the status bar along the bottom of the window turns blue ("AI work
-  in progress…") and the sidebar/Edit tab go read-only until it finishes; a Cancel button stops it
-  early.
+  in progress…") and the sidebar/Edit tab go read-only until it finishes. Three buttons cover
+  stopping it: **Cancel** asks the AI to stop and revert what it's changed this turn (in the
+  background - the turn keeps running until it actually finishes doing that); **Stop** kills it
+  immediately with no cleanup; **Pause** also stops it immediately, but keeps it resumable - the
+  status bar switches to "AI is paused" (same blue highlight, workspace still locked) and Pause
+  itself is replaced by **Resume**, which continues the exact same turn from where it left off,
+  even across restarting AutoDev entirely. Closing the app or workspace while a request is still in
+  flight is treated the same way - reopening it shows "AI is paused" rather than losing the turn.
 - The model and effort/reasoning-level dropdowns at the bottom of the tab apply starting with the
   next message sent - both lists depend on whichever AI provider is currently selected.
 - Earlier requests in the same conversation stay in a short scrollback (◀/▶ at the top of the
-  tab), each showing its own prompt, live status, and final reply.
+  tab), each showing its own prompt, live status, and latest output (replaced as newer output
+  arrives, not just the final reply once everything's done).
 
 ### Other tabs
 

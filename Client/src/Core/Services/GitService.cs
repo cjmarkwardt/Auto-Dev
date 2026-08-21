@@ -177,8 +177,8 @@ public sealed class GitService : IGitService
     public async Task ForceUpdateBranchRefAsync(string workspacePath, string branchName, string targetRef, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["branch", "-f", branchName, targetRef], cancellationToken);
 
-    public async Task CreateAnnotatedTagAsync(string workspacePath, string id, string fullName, string atRef, CancellationToken cancellationToken = default) =>
-        await RunAsync(workspacePath, ["tag", "-a", id, "-m", fullName, atRef], cancellationToken);
+    public async Task CreateAnnotatedTagAsync(string workspacePath, string name, string atRef, CancellationToken cancellationToken = default) =>
+        await RunAsync(workspacePath, ["tag", "-a", name, "-m", "", atRef], cancellationToken);
 
     public async Task<GitOperationOutcome> RebaseOntoAsync(string workspacePath, string ontoRef, CancellationToken cancellationToken = default)
     {
@@ -356,8 +356,9 @@ public sealed class GitService : IGitService
 
             // %(contents:subject) for a lightweight tag (objecttype "commit") is actually the pointed-at
             // commit's own subject line, not anything belonging to the tag - only an annotated tag
-            // (objecttype "tag") has a real message of its own to show here (see CreateAnnotatedTagAsync's
-            // "full name"); anything else falls back to the tag's own short ref name.
+            // (objecttype "tag") could have a real message of its own to show here, and even then only if it's
+            // not one of AutoDev's own (CreateAnnotatedTagAsync always leaves the message blank); anything
+            // else falls back to the tag's own short ref name.
             var isAnnotated = parts[3] == "tag";
             var displayName = isAnnotated && parts[4].Length > 0 ? parts[4] : name;
 

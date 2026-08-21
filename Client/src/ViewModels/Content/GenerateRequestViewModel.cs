@@ -32,11 +32,17 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
 
     public bool IsCompleted => Status == GenerateRequestStatus.Completed;
 
+    public bool IsPaused => Status == GenerateRequestStatus.Paused;
+
+    /// <summary>Drives the Generate tab's Stop button visibility (GenerateTabView.axaml) - a single simple property/binding rather than a MultiBinding OR of IsWorking/IsPaused, since a MultiBinding's own per-item FallbackValue doesn't reliably apply when DisplayedRequest itself is null (the button showed, greyed out, with no request at all otherwise).</summary>
+    public bool IsWorkingOrPaused => IsWorking || IsPaused;
+
     public string StatusLabel => Status switch
     {
         GenerateRequestStatus.Working => "Working",
         GenerateRequestStatus.Cancelled => "Cancelled",
         GenerateRequestStatus.Completed => "Completed",
+        GenerateRequestStatus.Paused => "Paused",
         _ => "",
     };
 
@@ -72,6 +78,8 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(IsWorking));
         OnPropertyChanged(nameof(IsCompleted));
+        OnPropertyChanged(nameof(IsPaused));
+        OnPropertyChanged(nameof(IsWorkingOrPaused));
         OnPropertyChanged(nameof(StatusLabel));
         OnPropertyChanged(nameof(DisplayStatus));
         OnPropertyChanged(nameof(ElapsedDisplay));

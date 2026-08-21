@@ -41,6 +41,8 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         generate.NormalTurnCompleted += OnGenerateNormalTurnCompleted;
         generate.HiddenTurnStarted += OnGenerateHiddenTurnStarted;
         generate.HiddenTurnFinished += OnGenerateHiddenTurnFinished;
+        generate.TurnPaused += OnGenerateTurnPaused;
+        generate.TurnResumed += OnGenerateTurnResumed;
 
         periodicSyncTimer = new System.Timers.Timer(PeriodicSyncInterval) { AutoReset = true };
         periodicSyncTimer.Elapsed += (_, _) =>
@@ -67,6 +69,10 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     /// <summary>True from the moment a user submits a Generate message until the turn finishes - see OnGenerateNormalTurnStarted/Completed. Drives IsInteractionBlocked, which locks the sidebar sections and (via WorkspaceTabViewModel/WorkspaceContentViewModel) the Edit tab and History tab's controls.</summary>
     [ObservableProperty]
     private bool _isAiWorking;
+
+    /// <summary>True while the active Generate turn is paused (GenerateTabViewModel.TurnPaused/TurnResumed) - IsAiWorking stays true the whole time too (see OnGenerateNormalTurnStarted/Completed, deliberately not fired around a pause), so the workspace stays exactly as locked as it was while genuinely working; this only distinguishes the bottom status bar's own "AI is paused" text from "AI work in progress…" (see MainShellView.axaml).</summary>
+    [ObservableProperty]
+    private bool _isAiPaused;
 
     /// <summary>The current busy action's own live git command log (command lines plus their output) - see RunBusyAsync/GitCommandLogSink. Shown in the busy overlay; cleared at the start of every new action.</summary>
     public ObservableCollection<string> GitOutputLog { get; } = [];
@@ -107,8 +113,16 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 
     private void OnGenerateNormalTurnStarted() => IsAiWorking = true;
 
-    /// <summary>Unlocks the sidebar/Edit/History controls once a genuine user-submitted Generate turn finishes - whatever it changed is left as pending, uncommitted changes; the user commits explicitly via the History tab's Commit action, same as any other edit.</summary>
-    private void OnGenerateNormalTurnCompleted(bool success) => IsAiWorking = false;
+    /// <summary>Unlocks the sidebar/Edit/History controls once a genuine user-submitted Generate turn finishes - whatever it changed is left as pending, uncommitted changes; the user commits explicitly via the History tab's Commit action, same as any other edit. Also always clears IsAiPaused - every path that actually ends the turn (a normal completion, or Stop while paused) needs the "paused" text/state gone too, not just the lock itself.</summary>
+    private void OnGenerateNormalTurnCompleted(bool success)
+    {
+        IsAiWorking = false;
+        IsAiPaused = false;
+    }
+
+    private void OnGenerateTurnPaused() => IsAiPaused = true;
+
+    private void OnGenerateTurnResumed() => IsAiPaused = false;
 
     /// <summary>Locks the workspace down for a hidden turn exactly like a visible one - see OnGenerateHiddenTurnFinished.</summary>
     private void OnGenerateHiddenTurnStarted()
@@ -315,22 +329,23 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         });
     }
 
-    /// <summary>Creates an annotated tag at the current target.</summary>
+    /// <summary>Creates an annotated tag (always - never a plain lightweight one, and always with a blank message) at the current target.</summary>
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task TagAsync()
     {
-        var result = await dialogService.ShowCreateTagDialogAsync();
-        if (result is null)
+        var name = await dialogService.ShowInputDialogAsync("Tag", "Tag name");
+        if (string.IsNullOrWhiteSpace(name))
         {
             return;
         }
 
+        var trimmedName = name.Trim();
         await RunBusyAsync(async ct =>
         {
-            var outcome = await versioningService.CreateTagAsync(result.Id, result.FullName, "HEAD", ct);
+            var outcome = await versioningService.CreateTagAsync(trimmedName, "HEAD", ct);
             if (outcome == TagCreationOutcome.IdAlreadyExists)
             {
-                await dialogService.ShowMessageDialogAsync("Tag", $"A tag named \"{result.Id}\" already exists.");
+                await dialogService.ShowMessageDialogAsync("Tag", $"A tag named \"{trimmedName}\" already exists.");
             }
         });
     }

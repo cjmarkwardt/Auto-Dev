@@ -29,7 +29,7 @@ public enum GitFileStatus
 /// <summary>One commit as needed for building the History tab's timeline - Hash, single-line subject (%s), and commit date.</summary>
 public sealed record GitCommit(string Hash, string Subject, DateTimeOffset Date);
 
-/// <summary>One tag as needed for building the History tab's timeline - Name is the tag's actual git ref name (used to check it out or delete it); DisplayName is what's shown (an annotated tag's own message if it has one, otherwise the same as Name - see IGitService.GetTagsByCommitAsync).</summary>
+/// <summary>One tag as needed for building the History tab's timeline - Name is the tag's actual git ref name (used to check it out or delete it); DisplayName is what's shown (an annotated tag's own message if it has one - AutoDev's own tags never set one, see CreateAnnotatedTagAsync, but a tag pushed from elsewhere might - otherwise the same as Name, see IGitService.GetTagsByCommitAsync).</summary>
 public sealed record GitTag(string Name, string DisplayName);
 
 /// <summary>
@@ -134,8 +134,8 @@ public interface IGitService
     /// <summary>Every tag in the repo, grouped by the commit it ultimately points at (an annotated tag is dereferenced to the commit it tags, not left as its own tag object) - used to show tag badges on the History tab's timeline without one subprocess call per commit.</summary>
     Task<IReadOnlyDictionary<string, IReadOnlyList<GitTag>>> GetTagsByCommitAsync(string workspacePath, CancellationToken cancellationToken = default);
 
-    /// <summary>Creates an annotated tag (`git tag -a`) at `atRef` - `id` is the actual git ref name (short, unique, ref-safe), `fullName` becomes the tag's own annotation message and is what GetTagsByCommitAsync shows in the History tab's timeline instead of `id`.</summary>
-    Task CreateAnnotatedTagAsync(string workspacePath, string id, string fullName, string atRef, CancellationToken cancellationToken = default);
+    /// <summary>Creates an annotated tag (`git tag -a`, always - never a plain lightweight one) named `name` at `atRef`, with a deliberately blank annotation message.</summary>
+    Task CreateAnnotatedTagAsync(string workspacePath, string name, string atRef, CancellationToken cancellationToken = default);
 
     /// <summary>Every file `commitHash` changed relative to its first parent (`--root` makes this also work for a parentless root commit, diffing against the empty tree) - populates the History tab's per-commit expanded changes tree.</summary>
     Task<IReadOnlyList<GitChange>> GetCommitChangesAsync(string workspacePath, string commitHash, CancellationToken cancellationToken = default);

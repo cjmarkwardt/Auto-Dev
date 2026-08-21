@@ -26,6 +26,7 @@ internal sealed class TaskSyntaxColorizer : DocumentColorizingTransformer
     private static readonly SolidColorBrush BlueBrush = new(Color.FromRgb(86, 156, 214));
     private static readonly SolidColorBrush OrangeBrush = new(Color.FromRgb(255, 165, 0));
     private static readonly SolidColorBrush GreenBrush = new(Color.FromRgb(96, 200, 96));
+    private static readonly SolidColorBrush CommentBrush = new(Color.FromRgb(106, 153, 85));
 
     private readonly Dictionary<int, LineKind> lineKinds = [];
 
@@ -66,6 +67,12 @@ internal sealed class TaskSyntaxColorizer : DocumentColorizingTransformer
         }
 
         string text = CurrentContext.Document.GetText(line.Offset, line.Length);
+        if (IsCommentLine(text))
+        {
+            ApplyColor(line, LeadingWhitespaceLength(text), text.Length, CommentBrush);
+            return;
+        }
+
         switch (lineKinds.GetValueOrDefault(line.LineNumber, LineKind.Argument))
         {
             case LineKind.Variable:
@@ -275,4 +282,10 @@ internal sealed class TaskSyntaxColorizer : DocumentColorizingTransformer
 
     private static bool MatchesAt(string text, int start, string keyword) =>
         start + keyword.Length <= text.Length && text.AsSpan(start, keyword.Length).SequenceEqual(keyword);
+
+    private static bool IsCommentLine(string text)
+    {
+        int indent = LeadingWhitespaceLength(text);
+        return indent < text.Length && text[indent] == '#';
+    }
 }

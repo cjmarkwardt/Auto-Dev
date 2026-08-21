@@ -157,15 +157,15 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         return BranchCreationOutcome.Created;
     }
 
-    public async Task<TagCreationOutcome> CreateTagAsync(string id, string fullName, string atRef, CancellationToken cancellationToken = default)
+    public async Task<TagCreationOutcome> CreateTagAsync(string name, string atRef, CancellationToken cancellationToken = default)
     {
-        if (await git.TagExistsAsync(workspacePath, id, cancellationToken))
+        if (await git.TagExistsAsync(workspacePath, name, cancellationToken))
         {
             return TagCreationOutcome.IdAlreadyExists;
         }
 
-        await git.CreateAnnotatedTagAsync(workspacePath, id, fullName, atRef, cancellationToken);
-        await git.PushAsync(workspacePath, id, force: false, setUpstream: false, cancellationToken: cancellationToken);
+        await git.CreateAnnotatedTagAsync(workspacePath, name, atRef, cancellationToken);
+        await git.PushAsync(workspacePath, name, force: false, setUpstream: false, cancellationToken: cancellationToken);
         return TagCreationOutcome.Created;
     }
 

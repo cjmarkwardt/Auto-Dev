@@ -1,3 +1,5 @@
+# Sample .task file - see Docs/TaskAutomation.md for the full language reference. Safe to run
+# repeatedly: everything below is confined to the build/ folder next to this file.
 var BuildDir = build
 var Greeting = Hello from the example task
 
@@ -24,10 +26,13 @@ script Build
     switch {BuildDir}
     run echo "Building in $(pwd)"
     wait 1
+    # trace off silences the announcement/output of the run block below; trace on restores it.
+    trace off
     run
         echo "Step 1"
         echo "Step 2"
         echo "Step 3"
+    trace on
     . Build finished.
 
 script Package

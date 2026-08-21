@@ -43,13 +43,6 @@ public sealed class AvaloniaDialogService : IDialogService
         return await window.ShowDialog<bool>(OwnerWindow);
     }
 
-    public async Task<CreateTagDialogResult?> ShowCreateTagDialogAsync()
-    {
-        var vm = new CreateTagDialogViewModel();
-        var window = new CreateTagDialogWindow { DataContext = vm };
-        return await window.ShowDialog<CreateTagDialogResult?>(OwnerWindow);
-    }
-
     public async Task<SquashDialogResult?> ShowSquashDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider)
     {
         var vm = new SquashDialogViewModel(branches, defaultMessageProvider);

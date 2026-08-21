@@ -56,8 +56,8 @@ public interface IWorkspaceVersioningService
     /// <summary>Creates a new branch named `name` starting at `fromRef` (a branch/tag/commit ref) and checks it out.</summary>
     Task<BranchCreationOutcome> CreateBranchAsync(string name, string fromRef, CancellationToken cancellationToken = default);
 
-    /// <summary>Creates an annotated tag at `atRef` and pushes it - `id` is the actual git ref name, `fullName` becomes the tag's own message and is what the History tab's timeline shows instead of `id` (see IGitService.CreateAnnotatedTagAsync/GetTagsByCommitAsync).</summary>
-    Task<TagCreationOutcome> CreateTagAsync(string id, string fullName, string atRef, CancellationToken cancellationToken = default);
+    /// <summary>Creates an annotated tag named `name` at `atRef` (always annotated, with a deliberately blank message - see IGitService.CreateAnnotatedTagAsync) and pushes it.</summary>
+    Task<TagCreationOutcome> CreateTagAsync(string name, string atRef, CancellationToken cancellationToken = default);
 
     /// <summary>`git branch -D` - callers confirm with the user first.</summary>
     Task DeleteBranchAsync(string name, CancellationToken cancellationToken = default);

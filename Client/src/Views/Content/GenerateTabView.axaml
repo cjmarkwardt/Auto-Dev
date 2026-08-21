@@ -186,13 +186,26 @@
                     <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableEfforts}" SelectedItem="{Binding SelectedEffort}"
                               IsEnabled="{Binding !IsSending}" FontSize="11" Padding="8,4"
                               ToolTip.Tip="Effort" />
-                    <!-- Only shown while the displayed request is actively Working - see GenerateTabViewModel.CanCancel.
-                         FallbackValue is required: with no request at all, DisplayedRequest is null and the
-                         binding path breaks, which for a bool property otherwise leaves IsVisible at its own
-                         unset default (true) rather than false - showing Cancel with nothing to cancel. -->
-                    <Button Grid.Column="3" Content="Cancel" Command="{Binding CancelCommand}"
-                            IsVisible="{Binding DisplayedRequest.IsWorking, FallbackValue=False}" FontSize="11" Padding="10,4"
-                            ToolTip.Tip="Forcibly stop the current request" />
+                    <!-- Cancel/Pause only shown while the displayed request is actively Working; Resume only
+                         while it's Paused; Stop shown for either - see GenerateTabViewModel.CanCancel/CanPause/
+                         CanResume/CanStop. FallbackValue is required on every one of these: with no request at
+                         all, DisplayedRequest is null and the binding path breaks, which for a bool property
+                         otherwise leaves IsVisible at its own unset default (true) rather than false - showing
+                         a button with nothing for it to act on. -->
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                        <Button Content="Cancel" Command="{Binding CancelCommand}"
+                                IsVisible="{Binding DisplayedRequest.IsWorking, FallbackValue=False}" FontSize="11" Padding="10,4"
+                                ToolTip.Tip="Ask the AI to stop and revert this turn's changes, in the background" />
+                        <Button Content="Pause" Command="{Binding PauseCommand}"
+                                IsVisible="{Binding DisplayedRequest.IsWorking, FallbackValue=False}" FontSize="11" Padding="10,4"
+                                ToolTip.Tip="Immediately stop - resumable later, including after restarting AutoDev" />
+                        <Button Content="Resume" Command="{Binding ResumeCommand}"
+                                IsVisible="{Binding DisplayedRequest.IsPaused, FallbackValue=False}" FontSize="11" Padding="10,4"
+                                ToolTip.Tip="Continue this turn from where it left off" />
+                        <Button Content="Stop" Command="{Binding StopCommand}"
+                                IsVisible="{Binding DisplayedRequest.IsWorkingOrPaused, FallbackValue=False}" FontSize="11" Padding="10,4"
+                                ToolTip.Tip="Immediately stop" />
+                    </StackPanel>
                 </Grid>
             </Border>
         </Grid>
