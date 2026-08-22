@@ -123,11 +123,19 @@ The `F1` overlay, with two modes:
   on a background thread with a 200ms debounce per keystroke.
 
 Neither mode shells out to `ripgrep` or `git grep` - both are implemented directly in C# over a
-file list built once per `Open()` (`LoadFilesAsync`) and filtered the same way the file tree itself
-would hide something: `FileIgnoreMatcher.LoadForWorkspace` (shared with
-`FilesSectionViewModel.ReloadFileIgnore`) if a `.fileignore` exists at the workspace root - taking
-over from `.gitignore` entirely, same replacement semantics as the tree's own dimming (see "The file
-tree" above) - or plain `IGitService.GetIgnoredPathsAsync` (`.gitignore` only) otherwise.
+file list built once per `Open()` (`LoadFilesAsync`), filtered to match whatever the Files section's
+own tree would show at that exact moment - `FileSearchViewModel` takes a `FilesSectionViewModel`
+reference just for this:
+
+- **`Files.ShowIgnoredFiles` on** - no filtering at all; search finds literally everything the tree
+  itself shows then (dimmed rows included), respecting neither `.fileignore` nor `.gitignore`.
+- **Off** (the default) - `FileIgnoreMatcher.LoadForWorkspace` (shared with
+  `FilesSectionViewModel.ReloadFileIgnore`) if a `.fileignore` exists at the workspace root, taking
+  over from `.gitignore` entirely, same replacement semantics as the tree's own dimming (see "The
+  file tree" above) - or plain `IGitService.GetIgnoredPathsAsync` (`.gitignore` only) otherwise.
+
+Re-evaluated fresh on every `Open()` (an F1 press), not reactively while the popup stays open - the
+same moment the candidate file list itself gets rebuilt from scratch anyway.
 
 `FileChosen(path)` opens the file via the file tree's normal selection path (`Files.SelectPath`).
 `ContentResultChosen(path, line)` goes straight to `WorkspaceContentViewModel.OpenFileAsync(path,

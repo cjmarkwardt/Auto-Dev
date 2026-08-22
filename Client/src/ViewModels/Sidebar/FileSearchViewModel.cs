@@ -10,7 +10,7 @@ public enum FileSearchMode
     Content,
 }
 
-/// <summary>F1 quick-open/content-search overlay: FileName mode fuzzy-searches every file in the workspace by name; Content mode searches file contents instead - see ToggleMode. Both exclude anything .fileignore would hide from the Files section's own tree if one exists, or plain .gitignore otherwise - see LoadFilesAsync.</summary>
+/// <summary>F1 quick-open/content-search overlay: FileName mode fuzzy-searches every file in the workspace by name; Content mode searches file contents instead - see ToggleMode. Ignore-filtering matches the Files section's own tree exactly, including its "Show Ignored Files" toggle - see LoadFilesAsync.</summary>
 public sealed partial class FileSearchViewModel : ViewModelBase
 {
     private const int MaxResults = 50;
@@ -19,6 +19,7 @@ public sealed partial class FileSearchViewModel : ViewModelBase
 
     private readonly string _workspacePath;
     private readonly IGitService _gitService;
+    private readonly FilesSectionViewModel _files;
     private List<string> _allFiles = [];
 
     /// <summary>Bumped on every Open() and checked after the ignore-filter's await - guards against a slower-finishing call from an earlier Open() (e.g. F1 pressed, closed, pressed again quickly) overwriting a newer one's results.</summary>
@@ -26,10 +27,11 @@ public sealed partial class FileSearchViewModel : ViewModelBase
 
     private CancellationTokenSource? _contentSearchCts;
 
-    public FileSearchViewModel(string workspacePath, IGitService gitService)
+    public FileSearchViewModel(string workspacePath, IGitService gitService, FilesSectionViewModel files)
     {
         _workspacePath = workspacePath;
         _gitService = gitService;
+        _files = files;
     }
 
     [ObservableProperty]
@@ -91,15 +93,24 @@ public sealed partial class FileSearchViewModel : ViewModelBase
     {
         var candidates = EnumerateFiles(_workspacePath);
 
-        // .fileignore, when present, takes over from .gitignore entirely for what this app itself considers
-        // visible - same as the Files section's own tree (see FilesSectionViewModel.ReloadFileIgnore) - so a
-        // file .gitignore excludes but .fileignore doesn't is discoverable here again, and one .fileignore
-        // hides that .gitignore wouldn't have is excluded from search too, not just dimmed in the tree, since
-        // the whole point of .fileignore is controlling what this app surfaces at all.
-        var fileIgnoreMatcher = FileIgnoreMatcher.LoadForWorkspace(_workspacePath);
         List<string> filtered;
-        if (fileIgnoreMatcher is not null)
+        if (_files.ShowIgnoredFiles)
         {
+            // Matches the Files section's own tree exactly - with its "Show Ignored Files" toggle on,
+            // everything shows there (dimmed but present, see FileTreeNodeViewModel.IsIgnored), so search
+            // finds everything too, respecting neither .fileignore nor .gitignore. Read fresh here (not
+            // reactively while the popup stays open) since a fresh Open() is exactly when this should be
+            // re-evaluated - the same moment the file list itself gets rebuilt from scratch.
+            filtered = candidates;
+        }
+        else if (FileIgnoreMatcher.LoadForWorkspace(_workspacePath) is { } fileIgnoreMatcher)
+        {
+            // .fileignore, when present, takes over from .gitignore entirely for what this app itself
+            // considers visible - same as the Files section's own tree (see
+            // FilesSectionViewModel.ReloadFileIgnore) - so a file .gitignore excludes but .fileignore doesn't
+            // is discoverable here again, and one .fileignore hides that .gitignore wouldn't have is excluded
+            // from search too, not just dimmed in the tree, since the whole point of .fileignore is
+            // controlling what this app surfaces at all.
             filtered = [.. candidates.Where(f => !fileIgnoreMatcher.IsMatch(Path.GetRelativePath(_workspacePath, f), isDirectory: false))];
         }
         else

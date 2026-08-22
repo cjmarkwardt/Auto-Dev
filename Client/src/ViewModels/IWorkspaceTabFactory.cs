@@ -58,7 +58,7 @@ public sealed class WorkspaceTabFactory(
         var output = new OutputTabViewModel(workspace.FullPath, metadataStore, scheduler, dispatcher);
         var command = new CommandTabViewModel(workspace.FullPath, commandExecutor, dispatcher);
         var content = new WorkspaceContentViewModel(edit, generate, history, output, command);
-        var fileSearch = new FileSearchViewModel(workspace.FullPath, gitService);
+        var fileSearch = new FileSearchViewModel(workspace.FullPath, gitService, files);
 
         return new WorkspaceTabViewModel(workspace, version, files, content, fileSearch);
     }
