@@ -62,7 +62,9 @@ at the workspace root:
   every node resolves this through (supplied once at construction, so a folder expanded long after
   the workspace opened still resolves against whatever ruleset is current then, not whatever was
   current when the app started); edits to either file (`OnWatcherChanged`) re-parse and re-push it
-  across the whole already-loaded tree via `FileTreeNodeViewModel.RefreshFileIgnoreState`.
+  across the whole already-loaded tree via `FileTreeNodeViewModel.RefreshFileIgnoreState`. The same
+  ruleset also governs F1 quick-open (`FileIgnoreMatcher.LoadForWorkspace` - see "Search" below) - a
+  file `.fileignore` hides is excluded from both search modes entirely, not just dimmed in the tree.
 
 Git status (`Status`, driving the added/modified color and the `.gitignore`-only fallback above) is
 resolved asynchronously right after construction via `IFileTreeService.GetStatusAsync`
@@ -88,6 +90,20 @@ that coalesces bursts of `Changed`/`Created`/`Deleted`/`Renamed` events into one
 callback, so e.g. a `git checkout` touching hundreds of files triggers one tree refresh, not
 hundreds.
 
+### Selection follows every file open
+
+Whatever file ends up open in the Edit tab, the tree selects (and expands ancestor folders down to)
+that same file - not just for a direct tree click, but for every way a file can be opened: either F1
+quick-open mode, a markdown link, Edit's own Alt+Left/Alt+Right history navigation, and any future
+caller. Rather than have each of those individually call `FilesSectionViewModel.SelectPath`, there's
+one shared choke point every one of them already passes through regardless of how it got there:
+`EditTabViewModel.CurrentFilePath` changing. `WorkspaceTabViewModel` subscribes to that and calls
+`Files.HighlightPath(path)` - the same tree lookup/expand as `SelectPath`, but never re-raises
+`FileSelected` (which would otherwise re-open the file it's merely following, redundantly at best
+and racing a still-in-flight seek-to-line open at worst - see `FileSearchViewModel`'s own content
+search). `CurrentFilePath` stays `null` while Edit is showing a read-only diff instead of a plain
+file (`LoadDiffAsync`), so nothing in the tree gets selected for those.
+
 ## Large and binary files in the tree
 
 The Edit tab (see [Editor](Editor.md)) refuses to auto-load a file that's either over 100 KB or
@@ -107,11 +123,15 @@ The `F1` overlay, with two modes:
   on a background thread with a 200ms debounce per keystroke.
 
 Neither mode shells out to `ripgrep` or `git grep` - both are implemented directly in C# over a
-file list that's first filtered through `IGitService.GetIgnoredPathsAsync` - plain `.gitignore`
-only; unlike the file tree's own dimming (see "The file tree" above), search results are never
-affected by a `.fileignore`, which is purely a Files-sidebar display concern.
+file list built once per `Open()` (`LoadFilesAsync`) and filtered the same way the file tree itself
+would hide something: `FileIgnoreMatcher.LoadForWorkspace` (shared with
+`FilesSectionViewModel.ReloadFileIgnore`) if a `.fileignore` exists at the workspace root - taking
+over from `.gitignore` entirely, same replacement semantics as the tree's own dimming (see "The file
+tree" above) - or plain `IGitService.GetIgnoredPathsAsync` (`.gitignore` only) otherwise.
 
-`FileChosen(path)` opens the file via the file tree's normal selection path;
+`FileChosen(path)` opens the file via the file tree's normal selection path (`Files.SelectPath`).
 `ContentResultChosen(path, line)` goes straight to `WorkspaceContentViewModel.OpenFileAsync(path,
-line)`, bypassing the file tree, so the seek-to-line request can't race a tree-driven open of the
-same file.
+line)` instead - `SelectPath` would also open the file itself (with no seek line), racing the
+line-seeking open - but still ends up selected in the tree too, via
+`WorkspaceTabViewModel`'s subscription to `EditTabViewModel.CurrentFilePath` (see "The file tree"
+above) rather than through `SelectPath` directly.

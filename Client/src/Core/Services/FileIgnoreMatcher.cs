@@ -18,9 +18,73 @@ namespace AutoDev.Core.Services;
 /// </summary>
 public sealed class FileIgnoreMatcher
 {
+    private const string FileIgnoreFileName = ".fileignore";
+    private const string GitIgnoreFileName = ".gitignore";
+
+    /// <summary>A line in .fileignore consisting of exactly this (surrounding whitespace ignored) is replaced with .gitignore's own lines - see LoadForWorkspace/FilesSectionViewModel.ReloadFileIgnore, which uses the identical directive.</summary>
+    private const string GitIgnoreDirective = "$gitignore";
+
     private readonly IReadOnlyList<Rule> rules;
 
     private FileIgnoreMatcher(IReadOnlyList<Rule> rules) => this.rules = rules;
+
+    /// <summary>
+    /// Reads `workspacePath`'s own .fileignore (if any) into a ready-to-query matcher, expanding a bare
+    /// "$gitignore" line into .gitignore's own lines at that point - shared logic behind both
+    /// FilesSectionViewModel's file tree (ReloadFileIgnore) and FileSearchViewModel's F1 quick-open (both
+    /// file-name and content search), so a workspace-relative path either app-visible file listing skips
+    /// stays in sync with the other. Null if no .fileignore exists at the workspace root at all, or it
+    /// couldn't be read - callers fall back to whatever they'd otherwise use (typically plain .gitignore
+    /// filtering) in that case. An empty or unreadable-but-present .fileignore is intentionally not
+    /// distinguished from "absent" here (unlike FilesSectionViewModel's own incremental reload, which keeps
+    /// a previous ruleset in place across a transient read failure instead of dropping it) - this is always a
+    /// fresh, one-shot read with no prior state to preserve.
+    /// </summary>
+    public static FileIgnoreMatcher? LoadForWorkspace(string workspacePath)
+    {
+        var fileIgnorePath = Path.Combine(workspacePath, FileIgnoreFileName);
+        if (!File.Exists(fileIgnorePath))
+        {
+            return null;
+        }
+
+        IReadOnlyList<string> lines;
+        try
+        {
+            lines = File.ReadAllLines(fileIgnorePath);
+        }
+        catch
+        {
+            return null;
+        }
+
+        List<string> expanded = [];
+        foreach (var line in lines)
+        {
+            if (line.Trim() != GitIgnoreDirective)
+            {
+                expanded.Add(line);
+                continue;
+            }
+
+            var gitIgnorePath = Path.Combine(workspacePath, GitIgnoreFileName);
+            if (!File.Exists(gitIgnorePath))
+            {
+                continue;
+            }
+
+            try
+            {
+                expanded.AddRange(File.ReadAllLines(gitIgnorePath));
+            }
+            catch
+            {
+                // best-effort - a transient read failure just skips the merge this time
+            }
+        }
+
+        return Parse(expanded);
+    }
 
     /// <summary>Parses `lines` (a raw .fileignore file's own lines, already with any `$gitignore` line expanded by the caller - see FilesSectionViewModel) into a ready-to-query matcher.</summary>
     public static FileIgnoreMatcher Parse(IEnumerable<string> lines)

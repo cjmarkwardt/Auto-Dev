@@ -30,9 +30,25 @@ public sealed partial class WorkspaceTabViewModel : ViewModelBase, IAsyncDisposa
         Files.SetCommandContextRequested += path => Content.Command.SetWorkingDirectory(path);
         FileSearch.FileChosen += path => Files.SelectPath(path); // also opens it in the Edit tab, via Files.FileSelected above
         // Deliberately bypasses Files.SelectPath (which would also raise FileSelected -> Content.OpenFileAsync(path)
-        // without the line, racing/clobbering the seek) - a content-search open just opens+seeks directly, no
-        // tree-row highlight.
+        // without the line, racing/clobbering the seek) - a content-search open just opens+seeks directly. The
+        // Content.Edit.CurrentFilePath subscription below still selects it in Files once the open actually lands.
         FileSearch.ContentResultChosen += (path, line) => _ = Content.OpenFileAsync(path, line);
+
+        // The one place every kind of file open funnels through regardless of how it got there - a tree
+        // click, either F1 quick-open mode, a markdown link, Edit's own Alt+Left/Alt+Right history navigation,
+        // ... - so this alone is what makes "whenever a file is opened it becomes selected in Files" true in
+        // general, without every individual open path above needing its own explicit selection call (most of
+        // which either can't cheaply know the workspace-relative tree node, or would otherwise race the open
+        // itself - see FilesSectionViewModel.HighlightPath's own doc comment for why this never re-opens the
+        // file it's merely following). Skipped for null (Edit showing a diff or nothing at all - see
+        // EditTabViewModel.LoadDiffAsync, which leaves CurrentFilePath untouched at null).
+        Content.Edit.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(EditTabViewModel.CurrentFilePath) && Content.Edit.CurrentFilePath is { } openedPath)
+            {
+                Files.HighlightPath(openedPath);
+            }
+        };
         Version.FlushPendingEditBeforeMutation = () => Content.Edit.FlushPendingSaveAsync();
         Files.FlushPendingEditBeforeRun = () => Content.Edit.FlushPendingSaveAsync();
         void ApplyEditableState()

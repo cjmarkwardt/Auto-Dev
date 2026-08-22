@@ -62,8 +62,9 @@ Each workspace tab has its own sidebar, split into two sections:
   pending changes against the current target. Ignored/dimmed entries normally follow `.gitignore`;
   adding a `.fileignore` file at the workspace root (same pattern syntax - `#comments`, `!negation`,
   a trailing `/` for directories only, `*`/`?`/`**` wildcards) takes over from it entirely for this
-  purpose, so you can hide things from the tree without touching what git itself tracks. A line
-  reading just `$gitignore` pulls in `.gitignore`'s own patterns too. Only one `.task` file runs at
+  purpose, so you can hide things from the tree - and from F1 quick-open's own search, both filename
+  and content - without touching what git itself tracks. A line reading just `$gitignore` pulls in
+  `.gitignore`'s own patterns too. Only one `.task` file runs at
   a time per workspace - starting one while another is already running (or while a version action or
   the AI is working) is disabled - and a run in turn locks manual editing, tree mutations, every
   version action, and the AI, until it finishes; see [Task Automation](Docs/TaskAutomation.md).

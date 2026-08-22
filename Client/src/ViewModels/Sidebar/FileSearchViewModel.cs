@@ -10,7 +10,7 @@ public enum FileSearchMode
     Content,
 }
 
-/// <summary>F1 quick-open/content-search overlay: FileName mode fuzzy-searches every file in the workspace (excluding anything .gitignore would exclude) by name; Content mode searches file contents instead - see ToggleMode.</summary>
+/// <summary>F1 quick-open/content-search overlay: FileName mode fuzzy-searches every file in the workspace by name; Content mode searches file contents instead - see ToggleMode. Both exclude anything .fileignore would hide from the Files section's own tree if one exists, or plain .gitignore otherwise - see LoadFilesAsync.</summary>
 public sealed partial class FileSearchViewModel : ViewModelBase
 {
     private const int MaxResults = 50;
@@ -90,13 +90,30 @@ public sealed partial class FileSearchViewModel : ViewModelBase
     private async Task LoadFilesAsync(int token)
     {
         var candidates = EnumerateFiles(_workspacePath);
-        var ignored = await _gitService.GetIgnoredPathsAsync(_workspacePath, candidates);
+
+        // .fileignore, when present, takes over from .gitignore entirely for what this app itself considers
+        // visible - same as the Files section's own tree (see FilesSectionViewModel.ReloadFileIgnore) - so a
+        // file .gitignore excludes but .fileignore doesn't is discoverable here again, and one .fileignore
+        // hides that .gitignore wouldn't have is excluded from search too, not just dimmed in the tree, since
+        // the whole point of .fileignore is controlling what this app surfaces at all.
+        var fileIgnoreMatcher = FileIgnoreMatcher.LoadForWorkspace(_workspacePath);
+        List<string> filtered;
+        if (fileIgnoreMatcher is not null)
+        {
+            filtered = [.. candidates.Where(f => !fileIgnoreMatcher.IsMatch(Path.GetRelativePath(_workspacePath, f), isDirectory: false))];
+        }
+        else
+        {
+            var ignored = await _gitService.GetIgnoredPathsAsync(_workspacePath, candidates);
+            filtered = ignored.Count == 0 ? candidates : [.. candidates.Where(f => !ignored.Contains(f))];
+        }
+
         if (token != _openToken)
         {
             return; // superseded by a newer Open() call
         }
 
-        _allFiles = ignored.Count == 0 ? candidates : [.. candidates.Where(f => !ignored.Contains(f))];
+        _allFiles = filtered;
         UpdateResults();
     }
 

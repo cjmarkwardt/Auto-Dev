@@ -239,6 +239,9 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private FileTreeNodeViewModel? _selectedNode;
 
+    /// <summary>Set around a HighlightPath call's own SelectedNode assignment - see OnSelectedNodeChanged, which checks this to avoid re-raising FileSelected (and so re-opening the file) for a selection change that's purely following an open that already happened some other way.</summary>
+    private bool _suppressFileSelected;
+
     public event Action<string>? FileSelected;
 
     /// <summary>
@@ -261,7 +264,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     partial void OnSelectedNodeChanged(FileTreeNodeViewModel? value)
     {
-        if (value is { IsDirectory: false })
+        if (value is { IsDirectory: false } && !_suppressFileSelected)
         {
             FileSelected?.Invoke(value.FullPath);
         }
@@ -389,8 +392,45 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     private string RelativePathOf(FileTreeNodeViewModel node) => Path.GetRelativePath(_rootPath, node.FullPath).Replace('\\', '/');
 
-    /// <summary>Expands ancestor folders as needed and selects the node for an absolute path - used by F2 quick-open.</summary>
+    /// <summary>Expands ancestor folders as needed and selects the node for an absolute path - used by F2 quick-open (filename mode, where this is also what opens the file, via FileSelected below). A no-op if fullPath doesn't resolve to a loaded node under this workspace (e.g. it's outside the tree entirely, or under a folder never expanded).</summary>
     public void SelectPath(string fullPath)
+    {
+        if (FindNode(fullPath) is { } node)
+        {
+            SelectedNode = node;
+        }
+    }
+
+    /// <summary>
+    /// Same lookup/expand/select as SelectPath, but never re-raises FileSelected - for a caller that's
+    /// opening the file itself (already read from disk, possibly seeking to a specific line) and just wants
+    /// the tree to visually follow along, since SelectPath's own open (no seek line, and a second concurrent
+    /// LoadFileAsync call) would otherwise race/clobber whatever the caller's own open is doing. This is what
+    /// actually makes "whenever a file is opened it becomes selected in Files" true in general - see
+    /// WorkspaceTabViewModel's subscription to EditTabViewModel.CurrentFilePath, the one place every kind of
+    /// file open (a tree click, F1 quick-open in either mode, a markdown link, Edit's own Alt+Left/Alt+Right
+    /// history navigation, ...) already funnels through regardless of how it got there.
+    /// </summary>
+    public void HighlightPath(string fullPath)
+    {
+        if (FindNode(fullPath) is not { } node)
+        {
+            return;
+        }
+
+        _suppressFileSelected = true;
+        try
+        {
+            SelectedNode = node;
+        }
+        finally
+        {
+            _suppressFileSelected = false;
+        }
+    }
+
+    /// <summary>Expands ancestor folders as needed and returns the leaf (file, never a folder) node for an absolute path - shared lookup behind SelectPath/HighlightPath. Null if any path segment doesn't resolve under this workspace's currently-loaded tree (outside the workspace entirely, or nested under a folder never expanded).</summary>
+    private FileTreeNodeViewModel? FindNode(string fullPath)
     {
         var relative = Path.GetRelativePath(_rootPath, fullPath);
         var segments = relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
@@ -402,7 +442,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             node = currentLevel.FirstOrDefault(n => n.Name == segment);
             if (node is null)
             {
-                return;
+                return null;
             }
 
             if (node.IsDirectory)
@@ -412,10 +452,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             }
         }
 
-        if (node is { IsDirectory: false })
-        {
-            SelectedNode = node;
-        }
+        return node is { IsDirectory: false } ? node : null;
     }
 
     /// <summary>The FILES heading's own "New File"/"New Folder" always target the workspace root, regardless of whatever's currently selected in the tree - the per-node context menu (NewFileInFolderAsync/NewFolderInFolderAsync below) is the way to create inside a specific folder instead.</summary>
