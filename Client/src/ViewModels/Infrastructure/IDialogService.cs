@@ -19,4 +19,6 @@ public interface IDialogService
     Task<MergeDialogResult?> ShowMergeDialogAsync(IReadOnlyList<string> branches, Func<string, Task<string>> defaultMessageProvider);
     /// <summary>A single-button ("OK") informational popup - used for a failed git action's error message instead of a persistent inline label. See MessageDialogViewModel.</summary>
     Task ShowMessageDialogAsync(string title, string message);
+    /// <summary>Prompts for the git user.name/user.email to configure globally when neither is set yet - null if cancelled. See GitIdentityDialogViewModel.</summary>
+    Task<GitIdentityDialogResult?> ShowGitIdentityDialogAsync();
 }

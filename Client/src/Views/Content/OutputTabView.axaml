@@ -102,6 +102,7 @@
                                                 <TextBlock Text="Waiting…" FontStyle="Italic" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
                                             </StackPanel>
                                             <TextBlock Text="✓ Succeeded" IsVisible="{Binding ShowSucceeded}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
+                                            <TextBlock Text="⊘ Stopped" IsVisible="{Binding ShowStopped}" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
                                             <TextBlock Text="✗ Failed" IsVisible="{Binding ShowFailed}" FontSize="11" Foreground="Crimson" />
                                         </StackPanel>
                                     </Border>

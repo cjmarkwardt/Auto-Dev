@@ -70,4 +70,11 @@ public sealed class AvaloniaDialogService : IDialogService
         var window = new MessageDialogWindow { DataContext = vm };
         await window.ShowDialog(OwnerWindow);
     }
+
+    public async Task<GitIdentityDialogResult?> ShowGitIdentityDialogAsync()
+    {
+        var vm = new GitIdentityDialogViewModel();
+        var window = new GitIdentityDialogWindow { DataContext = vm };
+        return await window.ShowDialog<GitIdentityDialogResult?>(OwnerWindow);
+    }
 }

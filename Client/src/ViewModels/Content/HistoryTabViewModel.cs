@@ -53,6 +53,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
 
     private void NotifyMutatingCommandsCanExecuteChanged()
     {
+        FetchCommand.NotifyCanExecuteChanged();
         CheckoutCommand.NotifyCanExecuteChanged();
         MergeIntoCurrentCommand.NotifyCanExecuteChanged();
         RebaseCurrentOntoCommand.NotifyCanExecuteChanged();
@@ -100,6 +101,34 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     /// </summary>
     private int _branchesLoadToken;
     private int _timelineLoadToken;
+
+    /// <summary>
+    /// Called automatically every time the History tab becomes the active one (see
+    /// WorkspaceContentViewModel.OnSelectedTabIndexChanged) - fetches with prune (_version.RefreshAsync,
+    /// the same fetch-prune-and-resync-non-current-branches the periodic background sync already runs, so
+    /// this is really just "run that right now instead of waiting up to 60s") then, if that turned up new
+    /// commits on the current branch's remote counterpart, transparently pulls them in - stashing pending
+    /// changes first (and popping them back after) if there are any, rather than only pulling while the
+    /// working tree happens to be clean (see VersionSectionViewModel.PullWithStashIfNeededAsync, a no-op when
+    /// there's nothing new to pull). Runs with no busy overlay for the fetch/pull itself - it's an automatic
+    /// refresh triggered by switching tabs, not a user-initiated mutation, exactly like the periodic sync it's
+    /// piggybacking on; a stash-pop conflict is the one case that visibly locks the workspace and switches to
+    /// Generate, same as any other conflict resolution. RefreshAsync's own TargetChanged (fired
+    /// unconditionally) is what actually reloads BranchRows/TimelineEntries below, via this class's
+    /// constructor subscription - no separate LoadBranchesAsync call needed here.
+    /// </summary>
+    public async Task RefreshFromRemoteAsync()
+    {
+        await _version.RefreshAsync();
+        await _version.PullWithStashIfNeededAsync();
+        await _version.RefreshAsync();
+    }
+
+    private bool CanFetch() => !IsInteractionBlocked;
+
+    /// <summary>The History tab's own manual "Fetch" button - fetch with prune, same as the automatic per-tab-open refresh above, but never also pulls even with a clean working tree; a deliberate click means "check what's new," not "also apply it." Goes through the normal busy overlay like every other action here - RunBusyAsync's own trailing RefreshAsync fetches again regardless (a cheap, harmless no-op re-fetch when nothing changed), traded for this action's own intent staying explicit here rather than relying on that as a side effect.</summary>
+    [RelayCommand(CanExecute = nameof(CanFetch))]
+    private Task FetchAsync() => _version.RunBusyAsync(ct => _versioningService.SyncWithRemoteAsync(ct));
 
     /// <summary>Called each time the History tab is activated, and whenever the targeted branch changes elsewhere in the app, so it reflects the latest branch list.</summary>
     public async Task LoadBranchesAsync()
@@ -272,7 +301,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
         });
     }
 
-    /// <summary>Merges sourceBranch into whatever's currently checked out - offered on every non-current branch row.</summary>
+    /// <summary>Merges sourceBranch into whatever's currently checked out - offered on every non-current branch row. On success, sourceBranch (now fully absorbed into current) is deleted both locally and on the remote - unlike VersionSectionViewModel.MergeAsync's own fast-forward Merge, this never moves HEAD off the branch the user was already on, so sourceBranch is always safe to delete immediately.</summary>
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task MergeIntoCurrentAsync(string sourceBranch)
     {
@@ -282,16 +311,25 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
             outcome = await _version.ResolveConflictsAsync(outcome, ct2 => _versioningService.ContinueMergeAsync(ct2), ct);
             if (outcome == GitOperationOutcome.Succeeded)
             {
-                await _versioningService.PushCurrentBranchAsync(force: true, ct);
+                if (!await _versioningService.PushCurrentBranchAsync(force: true, ct))
+                {
+                    _version.MarkFailed("Merge succeeded locally, but pushing it to the remote failed.");
+                    return;
+                }
+
+                if (!await _versioningService.DeleteBranchEverywhereAsync(sourceBranch, ct))
+                {
+                    _version.MarkFailed($"Merged, but deleting '{sourceBranch}' on the remote failed.");
+                }
             }
             else if (outcome == GitOperationOutcome.Conflicts)
             {
                 await _versioningService.AbortMergeAsync(ct);
-                await _dialogService.ShowMessageDialogAsync("Merge", "Could not automatically resolve the merge conflicts - aborted.");
+                _version.MarkFailed("Could not automatically resolve the merge conflicts - aborted.");
             }
             else
             {
-                await _dialogService.ShowMessageDialogAsync("Merge", "Merge failed.");
+                _version.MarkFailed("Merge failed.");
             }
         });
     }
@@ -306,16 +344,19 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
             outcome = await _version.ResolveConflictsAsync(outcome, ct2 => _versioningService.ContinueRebaseAsync(ct2), ct);
             if (outcome == GitOperationOutcome.Succeeded)
             {
-                await _versioningService.PushCurrentBranchAsync(force: true, ct);
+                if (!await _versioningService.PushCurrentBranchAsync(force: true, ct))
+                {
+                    _version.MarkFailed("Rebase succeeded locally, but pushing it to the remote failed.");
+                }
             }
             else if (outcome == GitOperationOutcome.Conflicts)
             {
                 await _versioningService.AbortRebaseAsync(ct);
-                await _dialogService.ShowMessageDialogAsync("Rebase", "Could not automatically resolve the rebase conflicts - aborted.");
+                _version.MarkFailed("Could not automatically resolve the rebase conflicts - aborted.");
             }
             else
             {
-                await _dialogService.ShowMessageDialogAsync("Rebase", "Rebase failed.");
+                _version.MarkFailed("Rebase failed.");
             }
         });
     }

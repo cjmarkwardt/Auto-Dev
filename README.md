@@ -46,14 +46,27 @@ Each workspace tab has its own sidebar, split into two sections:
   HEAD's own commit message/hash; pending changes show as an asterisk in the corner plus a
   highlighted background. Click it for Commit, Reset, Branch, Tag, Remote, and (while targeting a
   branch) Squash/Rebase/Merge - a busy action shows its own live git output log with a Cancel
-  button that reverts it, and a failed one shows an OK popup rather than a persistent label.
-  Checkout, Merge Into Current, Rebase Current Onto This, and Delete for any *other* branch/commit/
-  tag live on the History tab's own right-click menus instead - see
-  [Version Control](Docs/VersionControl.md).
+  button that reverts it; a failed one keeps that log on screen (Cancel replaced by Confirm) instead
+  of auto-closing, so it's never dismissed unread - only a successful action closes on its own. The
+  very first action in a workspace also prompts for a git name/email if neither is configured yet
+  (`git config --global`), rather than failing outright. Merging deletes the now-merged branch both
+  locally and on the remote automatically. If a branch you're on gets deleted on the remote by
+  someone else (or by this same cleanup, from another clone) and that reaches you via a fetch, you're
+  detached at the commit it was on (pending changes untouched) and the stale local branch is deleted
+  too, rather than left pointing nowhere. Checkout, Merge Into Current, Rebase
+  Current Onto This, and Delete for any *other* branch/commit/tag live on the History tab's own
+  right-click menus instead - see [Version Control](Docs/VersionControl.md).
 - **Files** (bottom) - the workspace's file tree. Right-click an entry for New File/New Folder,
   Open (in the OS file manager), Copy Path, Rename, Duplicate, or Delete - a `.task` file also
   gets Run/Stop/View. A toggle switches the tree into "Changes Mode", showing only files with
-  pending changes against the current target.
+  pending changes against the current target. Ignored/dimmed entries normally follow `.gitignore`;
+  adding a `.fileignore` file at the workspace root (same pattern syntax - `#comments`, `!negation`,
+  a trailing `/` for directories only, `*`/`?`/`**` wildcards) takes over from it entirely for this
+  purpose, so you can hide things from the tree without touching what git itself tracks. A line
+  reading just `$gitignore` pulls in `.gitignore`'s own patterns too. Only one `.task` file runs at
+  a time per workspace - starting one while another is already running (or while a version action or
+  the AI is working) is disabled - and a run in turn locks manual editing, tree mutations, every
+  version action, and the AI, until it finishes; see [Task Automation](Docs/TaskAutomation.md).
 
 ### Working with the AI (Generate tab)
 
@@ -68,6 +81,9 @@ Each workspace tab has its own sidebar, split into two sections:
   itself is replaced by **Resume**, which continues the exact same turn from where it left off,
   even across restarting AutoDev entirely. Closing the app or workspace while a request is still in
   flight is treated the same way - reopening it shows "AI is paused" rather than losing the turn.
+  A merge-conflict-resolution turn (Merge/Rebase, or a stash-pop conflict from opening History -
+  see below) shows its own panel here instead of a normal request, with only **Pause**/**Resume**
+  offered - Cancel/Stop never are, so it can never be forcibly interrupted mid-resolution.
 - The model and effort/reasoning-level dropdowns at the bottom of the tab apply starting with the
   next message sent - both lists depend on whichever AI provider is currently selected.
 - Earlier requests in the same conversation stay in a short scrollback (◀/▶ at the top of the
@@ -80,12 +96,24 @@ Each workspace tab has its own sidebar, split into two sections:
   highlighting, a markdown preview/edit toggle, image preview, and a hex view for large/binary
   files. Ctrl+F opens find-in-file; Alt+Left/Alt+Right step back/forward through recently opened
   files.
-- **History** (**F3**) - a flat branch list plus the selected branch's own commit/tag timeline;
+- **History** (**F3**) - a flat branch list (the checked-out branch shown in bold) plus the selected
+  branch's own commit/tag timeline, where the current commit - and any tag pointing at it - is
+  always marked with a blue dot, even while HEAD is detached at a tag or commit instead of a branch;
   left-click a commit/tag entry to see what it changed, or right-click a branch/commit/tag for
-  Checkout, Merge Into Current, Rebase Current Onto This, or Delete.
+  Checkout, Merge Into Current, Rebase Current Onto This, or Delete. Opening the tab (including the
+  very first time, when it opens with the workspace) always fetches with prune, and transparently
+  pulls the current branch the moment its remote moves ahead - even with pending changes in the way,
+  which are stashed first and popped back on top once the pull lands (untracked files included). If
+  that pop conflicts with what was just pulled in, AutoDev switches to the Generate tab and starts
+  an AI turn to resolve it, reconciling the stashed changes against the newly-pulled commits the
+  same way a Merge/Rebase conflict is resolved (see below) - that turn can only ever be paused and
+  resumed, never stopped or cancelled, to avoid ever forcibly leaving the repository mid-conflict.
+  The fetch (with prune) button above the timeline does the fetch part on demand without switching
+  away and back, and never also pulls.
 - **Output** (**F4**) - results from `.task` scripts you've run - see
   [Task Automation](Docs/TaskAutomation.md).
-- **Command** (**F5**) - run an ad hoc shell command against the workspace and see its output.
+- **Command** (**F5**) - run an ad hoc shell command against the workspace and see its output; the
+  input box keeps focus after each run, so you can keep typing the next one without reclicking it.
 
 ### Quick file search
 

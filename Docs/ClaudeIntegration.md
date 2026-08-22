@@ -138,6 +138,26 @@ status to `Paused` on the next load instead (rather than `Cancelled`, which only
 genuinely finished/stopped turn). Either way, reopening the workspace shows the same "AI is paused"
 locked state Resume can pick back up, never a `Working` request nothing is actually working on.
 
+### Pause/Resume for a merge-conflict-resolution turn
+
+A visible automated turn (`RunAutomatedTurnAsync(visible: true)`, `VisibleAutomatedTurnActive` -
+see [Version Control](VersionControl.md#ai-assisted-conflict-resolution) for what drives one) reuses
+the exact same `PauseAsync`/`ResumeAsync` machinery as a genuine request, just with no request card
+to update: `CanPause`/`CanResume` recognize `VisibleAutomatedTurnActive` alongside `_activeRequest`,
+and `PauseAsync` kills the subprocess/captures the session id identically either way. The turn's own
+`RunAutomatedTurnAsync` caller is suspended on a `TaskCompletionSource` the whole time (the same one
+`ResolveConflictsAsync`'s `await generate.RunAutomatedTurnAsync(...)` is awaiting) - Pause never
+resolves it, only `IsSending` drops, so the caller just stays suspended until Resume eventually
+leads to a real `ResultEvent`. **Stop and Cancel are never offered at all** for this kind of turn
+(`CanStop`/`CanCancel` both explicitly exclude `VisibleAutomatedTurnActive`) - forcibly killing a
+conflict-resolution turn mid-flight would leave the repository sitting in a half-resolved,
+conflicted state with no clean way back, which is exactly what Pause/Resume exists to avoid instead.
+Unlike a genuine request's Pause, this one is session-only: nothing about it is written to
+`generate-requests.json`, so it doesn't survive restarting AutoDev the way a real paused request
+does - a stalled automated turn is instead the stall watchdog's job to recover (`StallWatchdogElapsedAsync`
+now also covers this case via `KillAutomatedTurnAsync`, resolving the pending `TaskCompletionSource`
+with `false` so `ResolveConflictsAsync`'s own retry loop picks it back up with a fresh turn).
+
 ### Recovering from a stream that ends without a `ResultEvent`
 
 `ResultEvent` is the only thing that normally finishes a turn, so anything that stops the CLI's
@@ -216,4 +236,6 @@ Permission mode is **not** user-selectable - it's hardcoded to `bypassPermission
 an in-progress AI turn locks the Version section and Edit tab: a Claude turn's tool calls (file
 edits, `git` commands via Bash) and a plain git action or a `.task` script both mutate the same
 working tree, so only one of "the user", "a version action", "a task run", or "Claude" is ever
-allowed to be actively changing it at a time.
+allowed to be actively changing it at a time. It cuts both ways: `FilesSectionViewModel.CanRunTask`
+also refuses to start a `.task` file while `IsInteractionBlocked` (a version action or a Claude turn
+already in flight) is true, so a task can't start mid-turn either.

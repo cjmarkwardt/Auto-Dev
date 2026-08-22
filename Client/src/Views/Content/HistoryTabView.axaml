@@ -73,9 +73,15 @@
                                               CommandParameter="{Binding Branch.Name}" />
                                 </ContextMenu>
                             </Border.ContextMenu>
-                            <TextBlock Text="{Binding Branch.Name}" FontSize="13" TextTrimming="CharacterEllipsis"
-                                       Classes.currentBranch="{Binding Branch.IsCurrent}"
-                                       Classes.selectedBranch="{Binding IsSelected}" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{Binding Branch.Name}" FontSize="13" TextTrimming="CharacterEllipsis"
+                                           Classes.currentBranch="{Binding Branch.IsCurrent}"
+                                           Classes.selectedBranch="{Binding IsSelected}" />
+                                <Border Background="{DynamicResource AccentBrush}" CornerRadius="3" Padding="5,1"
+                                        VerticalAlignment="Center" IsVisible="{Binding Branch.IsCurrent}">
+                                    <TextBlock Text="Current" FontSize="10" Foreground="White" />
+                                </Border>
+                            </StackPanel>
                         </Border>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -98,6 +104,15 @@
                             Content="▲" ToolTip.Tip="Newer entries" />
                     <TextBlock Grid.Column="1" Text="{Binding TimelinePageLabel}" HorizontalAlignment="Center"
                                FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                    <!-- Fetch with prune - the same refresh the tab already runs automatically every time it
+                         becomes active (see HistoryTabViewModel.RefreshFromRemoteAsync/FetchCommand), offered
+                         here too for "check right now" without switching away and back. Reuses
+                         CloneIconGeometry (pulling from a remote, same idea as cloning one) rather than a
+                         dedicated icon of its own. -->
+                    <Button Grid.Column="2" Classes="iconButton" Command="{Binding FetchCommand}"
+                            ToolTip.Tip="Fetch (with prune)">
+                        <Path Classes="lineIcon" Data="{StaticResource CloneIconGeometry}" Width="13" Height="13" />
+                    </Button>
                 </Grid>
                 <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="20,6,20,10">
                     <Button Grid.Column="0" Classes="iconButton" Command="{Binding NextTimelinePageCommand}"

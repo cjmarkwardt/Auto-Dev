@@ -26,12 +26,15 @@ public sealed partial class OutputTaskEntry(string id, string name) : ViewModelB
 /// <summary>
 /// One script's own output panel within a task's run - Status maps directly onto Markwardt.TaskRunner's own
 /// ScriptStatus (Running/Waiting/Completed/Failed), the same status a live Markwardt.TaskRunner.ScriptRunner
-/// itself reports, so there's no separate app-level status vocabulary to keep in sync with the library's.
-/// Built one of two ways: live (see the ScriptRunner constructor overload), mirroring that script's own
-/// Status/LogText as they change for as long as the run continues; or historical (the plain constructor plus
-/// ApplyFinal), from an already-finished run's persisted ScriptRunRecord. IsVisible is this panel's own
-/// "hide this panel" toggle - a task's scripts run concurrently and can finish at different times (or never,
-/// for a long-lived one like a dev server).
+/// itself reports, so there's no separate app-level status vocabulary to keep in sync with the library's,
+/// except for distinguishing an explicit Stop from a genuine failure (ShowStopped/ShowFailed) - the library
+/// itself has no such concept (a cancelled script just ends up Failed, same as any other failure), so this is
+/// purely AutoDev's own policy layered on top, mirroring TaskRunRecord.WasStopped. Built one of two ways:
+/// live (see the ScriptRunner constructor overload), mirroring that script's own Status/LogText as they
+/// change for as long as the run continues; or historical (the plain constructor plus ApplyFinal), from an
+/// already-finished run's persisted ScriptRunRecord. IsVisible is this panel's own "hide this panel" toggle -
+/// a task's scripts run concurrently and can finish at different times (or never, for a long-lived one like a
+/// dev server).
 /// </summary>
 public sealed partial class ScriptPanelViewModel : ViewModelBase, IDisposable
 {
@@ -80,29 +83,48 @@ public sealed partial class ScriptPanelViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string _outputText = "";
 
+    /// <summary>
+    /// True only once ApplyFinal has settled this panel against a run that ended via an explicit user Stop -
+    /// distinguishes ShowStopped from ShowFailed below for a script that was still in flight (Failed, per
+    /// Markwardt.TaskRunner's own vocabulary - see ScriptStatus) when the stop happened, mirroring
+    /// OutputTabViewModel.ShowStopped/ShowFailed's identical task-level distinction. Never true for a script
+    /// that reached Completed before the stop, which keeps showing ShowSucceeded regardless - see ApplyFinal.
+    /// </summary>
+    private bool _wasStopped;
+
     public bool ShowRunning => Status == ScriptStatus.Running;
     public bool ShowWaiting => Status == ScriptStatus.Waiting;
     public bool ShowSucceeded => Status == ScriptStatus.Completed;
-    public bool ShowFailed => Status == ScriptStatus.Failed;
+    public bool ShowStopped => Status == ScriptStatus.Failed && _wasStopped;
+    public bool ShowFailed => Status == ScriptStatus.Failed && !_wasStopped;
 
     partial void OnStatusChanged(ScriptStatus value)
     {
         OnPropertyChanged(nameof(ShowRunning));
         OnPropertyChanged(nameof(ShowWaiting));
         OnPropertyChanged(nameof(ShowSucceeded));
+        OnPropertyChanged(nameof(ShowStopped));
         OnPropertyChanged(nameof(ShowFailed));
     }
 
     /// <summary>
-    /// Force-applies a final, authoritative Status/OutputText - used both to seed a panel built straight from
-    /// a historical ScriptRunRecord, and to reconcile a live panel against its own run's final TaskRunRecord
-    /// once the run completes (belt-and-suspenders against Dispatcher post-ordering between this panel's own
-    /// live subscription and OutputTabViewModel.OnAnyRunCompleted - see that method).
+    /// Force-applies a final, authoritative Status/OutputText/wasStopped - used both to seed a panel built
+    /// straight from a historical ScriptRunRecord (see TaskRunRecord.WasStopped), and to reconcile a live
+    /// panel against its own run's final TaskRunRecord once the run completes (belt-and-suspenders against
+    /// Dispatcher post-ordering between this panel's own live subscription and
+    /// OutputTabViewModel.OnAnyRunCompleted - see that method). Explicitly re-raises ShowStopped/ShowFailed
+    /// itself rather than relying solely on OnStatusChanged - Status may already equal `status` (e.g. this
+    /// script's own live ScriptRunner already posted Failed moments before the run's final record confirms
+    /// wasStopped), in which case the Status setter's own equality check would otherwise skip notifying and
+    /// this script would keep showing "Failed" instead of settling on "Stopped".
     /// </summary>
-    public void ApplyFinal(ScriptStatus status, string outputText)
+    public void ApplyFinal(ScriptStatus status, string outputText, bool wasStopped)
     {
+        _wasStopped = wasStopped;
         Status = status;
         OutputText = outputText;
+        OnPropertyChanged(nameof(ShowStopped));
+        OnPropertyChanged(nameof(ShowFailed));
     }
 
     /// <summary>Unsubscribes from the live ScriptRunner's PropertyChanged, if this panel was built from one - a no-op for a historical panel. Called once this panel is no longer shown (see OutputTabViewModel.ClearScriptBlocks), so a still-running task's continued progress doesn't keep posting into an orphaned view model after the viewer switches away from it.</summary>
@@ -330,7 +352,7 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
         foreach (var script in record.Scripts)
         {
             var panel = new ScriptPanelViewModel(script.Name);
-            panel.ApplyFinal(script.Status, script.Log);
+            panel.ApplyFinal(script.Status, script.Log, record.WasStopped);
             AddScriptBlockPanel(panel);
         }
     }
@@ -425,7 +447,7 @@ public sealed partial class OutputTabViewModel : ViewModelBase, IDisposable
                 AddScriptBlockPanel(panel);
             }
 
-            panel.ApplyFinal(script.Status, script.Log);
+            panel.ApplyFinal(script.Status, script.Log, record.WasStopped);
         }
     });
 

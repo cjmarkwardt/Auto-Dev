@@ -30,9 +30,11 @@
                  re-scans the tree, just shows/hides rows already loaded. Active (accent-colored) state means
                  "currently showing" ignored files, same convention as EditTabView's markdown-edit toggle.
                  Disabled while Changes Mode is on - it has no effect on that tree (Changes Mode already only
-                 ever shows real, non-ignored changes). -->
+                 ever shows real, non-ignored changes). What counts as "ignored" here is .gitignore, unless a
+                 .fileignore exists at the workspace root - see FileTreeNodeViewModel.IsIgnored/
+                 FilesSectionViewModel's own .fileignore handling - in which case it entirely takes over. -->
             <ToggleButton Classes="iconButton" IsChecked="{Binding ShowIgnoredFiles}" IsEnabled="{Binding !IsChangesMode}"
-                          ToolTip.Tip="Show/Hide Gitignored Files">
+                          ToolTip.Tip="Show/Hide Ignored Files">
                 <Path Classes="lineIcon" Data="{StaticResource EyeIconGeometry}" Width="13" Height="13" />
             </ToggleButton>
             <!-- Swaps the whole tree below for a read-only view of just the workspace's own current
@@ -81,8 +83,9 @@
                 <Style Selector="TextBlock.modified">
                     <Setter Property="Foreground" Value="{DynamicResource GitModifiedBrush}" />
                 </Style>
-                <!-- Gitignore-excluded files/folders (see FileTreeNodeViewModel.IsIgnored) - dimmed the same
-                     muted gray used elsewhere for de-emphasized text, not a distinct color of its own. -->
+                <!-- Ignored files/folders, per .gitignore or .fileignore (see FileTreeNodeViewModel.IsIgnored) -
+                     dimmed the same muted gray used elsewhere for de-emphasized text, not a distinct color of
+                     its own. -->
                 <Style Selector="TextBlock.ignored">
                     <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
                 </Style>

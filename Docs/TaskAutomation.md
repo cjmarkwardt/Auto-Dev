@@ -91,17 +91,24 @@ One `WorkspaceTaskSchedulerService` per workspace (via `ITaskSchedulerServiceFac
 per-tab isolation described in [Architecture](Architecture.md#dependency-injection)). It's purely a
 manual-trigger tracker/broadcaster - no polling loop:
 
-- `_activeRuns` (a `ConcurrentDictionary` used as a set) prevents double-starting the *same*
-  `.task` file (`RunNowAsync`'s `TryAdd` guard); different `.task` files run fully concurrently,
-  each with its own linked `CancellationTokenSource` so `StopRun(taskId)` only cancels that one
-  run's `TaskEngine`.
+- Only one `.task` file total ever runs at a time per workspace - `RunNowAsync` guards on a single
+  `Interlocked`-driven flag (`_runInProgress`), not a per-path one, so starting a second `.task`
+  file while any run (including this same file) is already in flight is a no-op; `_activeRuns` (a
+  `ConcurrentDictionary` used as a set) still tracks it by path underneath, purely so
+  `IsRunning(taskId)`/`GetLiveScripts(taskId)` can answer "is *this* task running" for whichever one
+  is currently the sole active run, each with its own linked `CancellationTokenSource` so
+  `StopRun(taskId)` only cancels that run's `TaskEngine`.
 - Three events surface everything: `TaskRunStarted(TaskRef)` (fires immediately, before the file is
   even read), `TaskScriptsAvailable(TaskRef)` (fires once the file has parsed and
   `GetLiveScripts(taskId)` - the run's live `ScriptRunner`s - is ready), and
   `TaskRunCompleted(TaskRunRecord)`.
 - A `TaskRunRecord` stopped by the user is marked `WasStopped` - purely AutoDev's own policy (the
   library itself has no such concept; a cancelled script is just `Failed` like any other) - tracked
-  by recording that `StopRun` was actually called for that run before persisting its record.
+  by recording that `StopRun` was actually called for that run before persisting its record. The
+  Output tab applies this per script too, not just at the whole-task level: any script still
+  `Failed` (i.e. hadn't reached `Completed`) when a `WasStopped` run ends shows "Stopped" instead of
+  "Failed" (`ScriptPanelViewModel.ShowStopped`/`ShowFailed`, both fed by `ApplyFinal`'s own
+  `wasStopped` parameter) - a script that had already completed keeps showing as succeeded either way.
 - Completed runs persist via `IWorkspaceMetadataStore.AppendTaskRunAsync`, under
   `.autodev/local/task-runs/<sanitized task path>/<runId>.json`, as a `TaskRunRecord` - one
   `ScriptRunRecord` (`Name`/`Status`/`Log`) per script the document declared, or a `ParseError`
@@ -113,7 +120,12 @@ recreates node instances) and computes `HasRunningTasks`, which is forwarded all
 `GenerateTabViewModel.HasRunningTasks` - **a Claude turn can't start while any `.task` file is
 running in the same workspace**, and vice versa (see
 [Claude Integration](ClaudeIntegration.md#guards-against-racing-the-working-tree)), so scripted
-automation and AI-driven edits never contend for the same working tree at once.
+automation and AI-driven edits never contend for the same working tree at once. `HasRunningTasks`
+also reaches `WorkspaceContentViewModel` (forcing the Edit tab read-only, for *every* open file, not
+just the one running) and `VersionSectionViewModel.IsInteractionBlocked` (disabling Commit/Merge/etc.
+and every History tab action) - manual editing, task running, and AI working are mutually exclusive
+states over one workspace's working tree, and only one of the three (with, for tasks, only one
+`.task` file) is ever active at once.
 
 ## Output tab vs. Command tab
 

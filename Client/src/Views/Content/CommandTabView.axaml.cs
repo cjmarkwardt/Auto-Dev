@@ -36,6 +36,15 @@ public partial class CommandTabView : UserControl
                 {
                     Dispatcher.UIThread.Post(() => _scroller?.ScrollToEnd(), DispatcherPriority.Background);
                 }
+
+                // The input box is IsEnabled="{Binding !IsRunning}" (see CommandTabView.axaml) - Avalonia
+                // drops keyboard focus the instant a focused control is disabled, and re-enabling it
+                // afterward doesn't get that focus back on its own, so a submitted command would otherwise
+                // leave the box sitting there enabled but unfocused until the user clicks back into it.
+                else if (args.PropertyName == nameof(CommandTabViewModel.IsRunning) && !vm.IsRunning)
+                {
+                    Dispatcher.UIThread.Post(() => _inputBox?.Focus(), DispatcherPriority.Background);
+                }
             };
         }
     }

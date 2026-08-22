@@ -85,30 +85,46 @@
         <!-- Blocks all input while a git action is in flight (Version section actions, History switches) - also
              shows that action's own live git command log (Version.GitOutputLog, cleared at the start of every
              action - see VersionSectionViewModel.RunBusyAsync) and a Cancel button that reverts whatever the
-             action had done so far back to its pre-action snapshot (see RevertToSnapshotAsync). -->
+             action had done so far back to its pre-action snapshot (see RevertToSnapshotAsync). Once the action
+             itself has failed (Version.IsBusyFailed - see MarkFailed), the overlay stops auto-closing and Cancel
+             is replaced by Confirm instead, so the log is never yanked away before the user actually reads it -
+             only a genuinely successful action closes this on its own. -->
         <Panel IsVisible="{Binding Version.IsBusy}" Background="#88000000">
             <Border Background="{DynamicResource EditorBackgroundBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
                     BorderThickness="1" CornerRadius="6" Padding="24,20" Width="480"
                     HorizontalAlignment="Center" VerticalAlignment="Center">
                 <StackPanel Spacing="12">
-                    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
-                        <ProgressBar IsIndeterminate="True" Width="160" Height="4" VerticalAlignment="Center" />
-                        <TextBlock Text="Working…" FontSize="13" VerticalAlignment="Center" />
-                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                            <ProgressBar IsIndeterminate="True" Width="160" Height="4" VerticalAlignment="Center"
+                                         IsVisible="{Binding !Version.IsBusyFailed}" />
+                            <TextBlock Text="Working…" FontSize="13" VerticalAlignment="Center"
+                                       IsVisible="{Binding !Version.IsBusyFailed}" />
+                            <TextBlock Text="Failed" FontSize="13" FontWeight="Bold" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource DangerBrush}" IsVisible="{Binding Version.IsBusyFailed}" />
+                        </StackPanel>
+                        <!-- Explicit copy button, not just relying on the log's own Ctrl+C - copies whatever's
+                             currently selected within it, or the whole log if nothing is (see
+                             OnCopyGitLogClick), so the log is always reachable via a click regardless of
+                             whether the text itself currently holds keyboard focus. -->
+                        <Button Grid.Column="1" Classes="iconButton" Click="OnCopyGitLogClick"
+                                ToolTip.Tip="Copy log (or just the current selection)">
+                            <Path Classes="lineIcon" Data="{StaticResource CopyIconGeometry}" Width="13" Height="13" />
+                        </Button>
+                    </Grid>
 
                     <ScrollViewer Name="GitLogScroll" MaxHeight="240" HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding Version.GitOutputLog}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="x:String">
-                                    <TextBlock Text="{Binding}" FontFamily="monospace" FontSize="10.5" TextWrapping="Wrap"
-                                               Foreground="{DynamicResource TextMutedBrush}" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                        <!-- One SelectableTextBlock over the whole joined log (Version.GitOutputLogText), not an
+                             ItemsControl of one plain (unselectable) TextBlock per line - lets the whole log be
+                             selected/copied as a single continuous block. -->
+                        <SelectableTextBlock Name="GitLogText" Text="{Binding Version.GitOutputLogText}" FontFamily="monospace" FontSize="10.5"
+                                             TextWrapping="Wrap" Foreground="{DynamicResource TextMutedBrush}" />
                     </ScrollViewer>
 
                     <Button Content="Cancel" Classes="danger" HorizontalAlignment="Center"
-                            Command="{Binding Version.CancelBusyCommand}" />
+                            Command="{Binding Version.CancelBusyCommand}" IsVisible="{Binding !Version.IsBusyFailed}" />
+                    <Button Content="Confirm" Classes="accent" HorizontalAlignment="Center"
+                            Command="{Binding Version.ConfirmBusyCommand}" IsVisible="{Binding Version.IsBusyFailed}" />
                 </StackPanel>
             </Border>
         </Panel>

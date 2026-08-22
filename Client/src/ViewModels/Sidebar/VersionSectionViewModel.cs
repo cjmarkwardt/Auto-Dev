@@ -31,6 +31,9 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 
     private CancellationTokenSource? busyCts;
 
+    /// <summary>Set only once the current busy action has failed (see MarkFailed) - RunBusyAsync awaits this instead of closing the overlay immediately; ConfirmBusyCommand completes it once the user has actually seen GitOutputLog and dismisses it themselves.</summary>
+    private TaskCompletionSource? busyConfirmTcs;
+
     public VersionSectionViewModel(IWorkspaceVersioningService versioningService, IDialogService dialogService, GenerateTabViewModel generate, IUiDispatcher dispatcher)
     {
         this.versioningService = versioningService;
@@ -52,6 +55,11 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
                 dispatcher.Post(() => _ = RefreshAsync());
             }
         };
+
+        // GitOutputLogText exists purely so the busy overlay can bind one SelectableTextBlock to the whole
+        // log as a single selectable/copyable block, rather than one plain (unselectable) TextBlock per line
+        // via an ItemsControl - see WorkspaceTabView.axaml.
+        GitOutputLog.CollectionChanged += (_, _) => OnPropertyChanged(nameof(GitOutputLogText));
     }
 
     /// <summary>Whatever IsAiWorking was the moment a hidden turn started (see OnGenerateHiddenTurnStarted/Finished) - null while no hidden turn is in flight. Restoring to this, rather than blindly clearing IsAiWorking, keeps the workspace locked afterward when the hidden turn was nested inside an already-locked flow.</summary>
@@ -66,9 +74,17 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isBusy;
 
+    /// <summary>True once the current busy action has failed (see MarkFailed) - the overlay swaps its Cancel button for Confirm and stops auto-closing once the action itself finishes, so the user always gets a chance to actually read GitOutputLog before it disappears. Reset at the start of every RunBusyAsync call.</summary>
+    [ObservableProperty]
+    private bool _isBusyFailed;
+
     /// <summary>True from the moment a user submits a Generate message until the turn finishes - see OnGenerateNormalTurnStarted/Completed. Drives IsInteractionBlocked, which locks the sidebar sections and (via WorkspaceTabViewModel/WorkspaceContentViewModel) the Edit tab and History tab's controls.</summary>
     [ObservableProperty]
     private bool _isAiWorking;
+
+    /// <summary>Set by WorkspaceTabViewModel from FilesSectionViewModel.HasRunningTasks - true while any .task file in this workspace is running. Folded into IsInteractionBlocked so a running task locks Commit/Merge/etc. here and every History tab action exactly like a busy version action or an in-flight AI turn already does: manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree.</summary>
+    [ObservableProperty]
+    private bool _hasRunningTasks;
 
     /// <summary>True while the active Generate turn is paused (GenerateTabViewModel.TurnPaused/TurnResumed) - IsAiWorking stays true the whole time too (see OnGenerateNormalTurnStarted/Completed, deliberately not fired around a pause), so the workspace stays exactly as locked as it was while genuinely working; this only distinguishes the bottom status bar's own "AI is paused" text from "AI work in progress…" (see MainShellView.axaml).</summary>
     [ObservableProperty]
@@ -77,8 +93,11 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     /// <summary>The current busy action's own live git command log (command lines plus their output) - see RunBusyAsync/GitCommandLogSink. Shown in the busy overlay; cleared at the start of every new action.</summary>
     public ObservableCollection<string> GitOutputLog { get; } = [];
 
-    /// <summary>Blocks every git action triggered from the History tab or this section's own Commit/Reset - true during either a git-only action (IsBusy) or the whole Generate-turn-plus-commit workflow (IsAiWorking).</summary>
-    public bool IsInteractionBlocked => IsBusy || IsAiWorking;
+    /// <summary>GitOutputLog joined into one string, newest content last - what the busy overlay's own SelectableTextBlock actually binds to (see WorkspaceTabView.axaml), so the whole log selects/copies as one continuous block instead of needing to be dragged across one unselectable TextBlock per line.</summary>
+    public string GitOutputLogText => string.Join('\n', GitOutputLog);
+
+    /// <summary>Blocks every git action triggered from the History tab or this section's own Commit/Reset - true during a git-only action (IsBusy), the whole Generate-turn-plus-commit workflow (IsAiWorking), or a running .task file (HasRunningTasks).</summary>
+    public bool IsInteractionBlocked => IsBusy || IsAiWorking || HasRunningTasks;
 
     /// <summary>Shared CanExecute for every command below.</summary>
     private bool CanMutate() => !IsInteractionBlocked;
@@ -102,7 +121,19 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         CancelBusyCommand.NotifyCanExecuteChanged();
     }
 
+    partial void OnIsBusyFailedChanged(bool value)
+    {
+        CancelBusyCommand.NotifyCanExecuteChanged();
+        ConfirmBusyCommand.NotifyCanExecuteChanged();
+    }
+
     partial void OnIsAiWorkingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsInteractionBlocked));
+        NotifyMutatingCommandsCanExecuteChanged();
+    }
+
+    partial void OnHasRunningTasksChanged(bool value)
     {
         OnPropertyChanged(nameof(IsInteractionBlocked));
         NotifyMutatingCommandsCanExecuteChanged();
@@ -110,6 +141,9 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 
     /// <summary>Raised whenever the targeted branch/tag/commit changes, at the end of every RefreshAsync.</summary>
     public event Action<GitTarget?>? TargetChanged;
+
+    /// <summary>Raised the instant ResolveConflictsAsync actually starts working a conflict (never for a call that turns out to be a no-op) - WorkspaceTabViewModel switches WorkspaceContentViewModel.SelectedTabIndex to Generate in response, so the user lands on the exchange automatically instead of needing to notice IsAiWorking flipped on and go find it themselves.</summary>
+    public event Action? SwitchToGenerateRequested;
 
     private void OnGenerateNormalTurnStarted() => IsAiWorking = true;
 
@@ -172,11 +206,31 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     /// pre-action snapshot first and, if cancelled (via CancelBusyCommand, below), reverts back to it - action
     /// gets its own CancellationToken to thread into whichever IWorkspaceVersioningService calls it makes, so a
     /// cancel can actually interrupt an in-flight git subprocess (see GitService.RunAsync) rather than just
-    /// racing to be first past a check.
+    /// racing to be first past a check. The overlay only auto-closes once action returns without ever calling
+    /// MarkFailed - if it did, the overlay stays up (Confirm replaces Cancel) until the user dismisses it
+    /// themselves, so the git log a failure happened alongside is never yanked away before they can read it.
+    /// Checks for a configured git identity (user.name/user.email) before any of that - prompting once and
+    /// configuring it globally, rather than letting the action itself fail with git's own "Please tell me who
+    /// you are" the moment it turns out to need one (a commit, an annotated tag, a squash/rebase, ...); every
+    /// call goes through this same check rather than only the specific actions that need it, since that list
+    /// isn't worth maintaining when the check itself is one cheap `git config --get` away from certain either
+    /// way.
     /// </summary>
     public async Task RunBusyAsync(Func<CancellationToken, Task> action)
     {
+        if (!await versioningService.HasUserIdentityConfiguredAsync())
+        {
+            var identity = await dialogService.ShowGitIdentityDialogAsync();
+            if (identity is null)
+            {
+                return;
+            }
+
+            await versioningService.SetGlobalUserIdentityAsync(identity.Name, identity.Email);
+        }
+
         IsBusy = true;
+        IsBusyFailed = false;
         GitOutputLog.Clear();
         var snapshot = await versioningService.CaptureSnapshotAsync();
         busyCts = new CancellationTokenSource();
@@ -200,57 +254,101 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         {
             // A normal git failure (bad credentials, no permission, a rejected push, ...) already comes back
             // as an ordinary false/GitOperationOutcome.Failed result, not an exception - see RunAsync's
-            // credential.helper/GIT_SSH_COMMAND overrides, which exist specifically so none of that ever
+            // GIT_TERMINAL_PROMPT/GIT_SSH_COMMAND overrides, which exist specifically so none of that ever
             // hangs or throws instead. This is the backstop for anything that still somehow does (git itself
             // vanishing mid-session, a truly unexpected process failure, ...), so it fails as visibly as a
             // normal action failure rather than crashing the whole app.
-            GitOutputLog.Add($"Error: {ex.Message}");
             await versioningService.RevertToSnapshotAsync(snapshot);
-            await dialogService.ShowMessageDialogAsync("Git", $"The git action failed unexpectedly.\n\n{ex.Message}");
+            MarkFailed($"Error: {ex.Message}");
         }
         finally
         {
             GitCommandLogSink.Current = null;
             busyCts.Dispose();
             busyCts = null;
-            IsBusy = false;
             CancelBusyCommand.NotifyCanExecuteChanged();
-            await RefreshAsync();
         }
+
+        if (IsBusyFailed)
+        {
+            busyConfirmTcs = new TaskCompletionSource();
+            ConfirmBusyCommand.NotifyCanExecuteChanged();
+            await busyConfirmTcs.Task;
+            busyConfirmTcs = null;
+        }
+
+        IsBusy = false;
+        await RefreshAsync();
     }
 
-    private bool CanCancelBusy() => busyCts is not null;
+    /// <summary>Marks the current RunBusyAsync call as failed - appends `message` to GitOutputLog (rather than a separate popup) and keeps the overlay up, Confirm in place of Cancel, until the user dismisses it themselves. Called by an action's own lambda (this section's own, or HistoryTabViewModel's - see RunBusyAsync) in place of the old ShowMessageDialogAsync so the failure reason and the log it happened alongside are always reviewed together, never a popup that could be dismissed (and the overlay behind it auto-closed) without actually reading the log.</summary>
+    public void MarkFailed(string message)
+    {
+        IsBusyFailed = true;
+        GitOutputLog.Add(message);
+    }
 
-    /// <summary>The busy overlay's own Cancel button - signals the running action's CancellationToken, which RunBusyAsync's catch block turns into a revert back to the pre-action snapshot.</summary>
+    private bool CanCancelBusy() => busyCts is not null && !IsBusyFailed;
+
+    /// <summary>The busy overlay's own Cancel button - signals the running action's CancellationToken, which RunBusyAsync's catch block turns into a revert back to the pre-action snapshot. Hidden (see CanCancelBusy/WorkspaceTabView.axaml) once the action has already finished and failed - ConfirmBusy takes over from there.</summary>
     [RelayCommand(CanExecute = nameof(CanCancelBusy))]
     private void CancelBusy() => busyCts?.Cancel();
 
+    private bool CanConfirmBusy() => IsBusyFailed;
+
+    /// <summary>The busy overlay's own Confirm button, shown only once the current action has failed (see MarkFailed) - lets RunBusyAsync finally close the overlay instead of it auto-closing the moment the action itself returns.</summary>
+    [RelayCommand(CanExecute = nameof(CanConfirmBusy))]
+    private void ConfirmBusy() => busyConfirmTcs?.TrySetResult();
+
     /// <summary>
-    /// Shared conflict-resolution loop for this section's own Rebase/Merge and HistoryTabViewModel's Merge
-    /// Into Current/Rebase Current Onto This - a no-op unless the initial attempt already came back Conflicts.
-    /// Locks the sidebar/Edit/History controls via IsAiWorking for the whole loop, exactly like a normal
-    /// Generate turn, since Claude is actively editing files here just the same - only IsBusy (the busy
-    /// overlay) drops out during the actual RunAutomatedTurnAsync call, so the user can still watch the
-    /// exchange happen in Generate (and cancel it from there - the overlay's own Cancel button isn't shown
-    /// while IsBusy is down). Restores IsAiWorking to whatever it was before (rather than unconditionally
-    /// clearing it) since this can run nested inside an already-locked flow. continueAction is
-    /// ContinueRebaseAsync or ContinueMergeAsync, whichever this conflict belongs to.
+    /// Shared conflict-resolution loop for this section's own Rebase/Merge, HistoryTabViewModel's Merge Into
+    /// Current/Rebase Current Onto This, and PullWithStashIfNeededAsync's own stash-pop conflicts - a no-op
+    /// unless the initial attempt already came back Conflicts. Locks the sidebar/Edit/History controls via
+    /// IsAiWorking for the whole loop, exactly like a normal Generate turn, since Claude is actively editing
+    /// files here just the same - only IsBusy (the busy overlay) drops out during the actual
+    /// RunAutomatedTurnAsync call, so the user can watch the exchange happen in Generate (switched to
+    /// automatically - see SwitchToGenerateRequested). Restores IsAiWorking to whatever it was before (rather
+    /// than unconditionally clearing it) since this can run nested inside an already-locked flow.
+    /// continueAction is ContinueRebaseAsync/ContinueMergeAsync for those two callers; for a stash-pop conflict
+    /// there's no git "continue" step (resolving and staging the files IS the fix), so that caller passes a
+    /// lambda that just re-confirms success. buildInstruction defaults to the generic rebase/merge wording;
+    /// PullWithStashIfNeededAsync passes its own, since "this produced merge conflicts" doesn't fit a stash
+    /// pop and the AI also needs to know it's reconciling stashed local changes against newly-pulled commits,
+    /// not two branches.
     /// </summary>
-    public async Task<GitOperationOutcome> ResolveConflictsAsync(GitOperationOutcome outcome, Func<CancellationToken, Task<GitOperationOutcome>> continueAction, CancellationToken cancellationToken)
+    public async Task<GitOperationOutcome> ResolveConflictsAsync(
+        GitOperationOutcome outcome,
+        Func<CancellationToken, Task<GitOperationOutcome>> continueAction,
+        CancellationToken cancellationToken,
+        Func<IReadOnlyList<string>, string>? buildInstruction = null)
     {
         if (outcome != GitOperationOutcome.Conflicts)
         {
             return outcome;
         }
 
+        buildInstruction ??= BuildConflictInstruction;
+
         var wasAlreadyLocked = IsAiWorking;
+
+        // Restored (not just unconditionally set true) once the whole loop ends, below - this section's own
+        // Rebase/Merge and HistoryTabViewModel's Merge Into Current/Rebase Current Onto This always call this
+        // from inside RunBusyAsync, where IsBusy is already true; restoring it back to true afterward keeps
+        // the overlay up for whatever git work they still have left (ContinueMergeAsync/push), until
+        // RunBusyAsync's own tail finally drops it. PullWithStashIfNeededAsync calls this with no such
+        // enclosing RunBusyAsync at all (IsBusy starts false) - restoring to false instead here is what
+        // actually lets its overlay-free flow stay overlay-free once conflict resolution finishes, rather
+        // than getting stuck showing "Working…" forever with nothing left to ever clear it.
+        var wasBusyBeforeLoop = IsBusy;
+
         IsAiWorking = true;
+        SwitchToGenerateRequested?.Invoke();
         try
         {
             for (var attempt = 0; outcome == GitOperationOutcome.Conflicts && attempt < MaxConflictResolutionAttempts; attempt++)
             {
                 var conflictedFiles = await versioningService.GetConflictedFilesAsync(cancellationToken);
-                var instruction = BuildConflictInstruction(conflictedFiles);
+                var instruction = buildInstruction(conflictedFiles);
 
                 // Let the user watch/interact with Generate while Claude resolves the conflict - only the
                 // surrounding git-only work (rebasing/merging, checking/continuing) blocks with the loading overlay.
@@ -275,6 +373,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         finally
         {
             IsAiWorking = wasAlreadyLocked;
+            IsBusy = wasBusyBeforeLoop;
         }
 
         return outcome;
@@ -285,6 +384,50 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         "Open each file, resolve the conflict by editing it to the correct final content and removing the " +
         "conflict markers (<<<<<<<, =======, >>>>>>>), then stage the resolved files with `git add`. Reply once " +
         "every conflict is resolved and staged.";
+
+    /// <summary>
+    /// After a fetch (see RefreshAsync/PeriodicSync, both of which run this via HistoryTabViewModel.
+    /// RefreshFromRemoteAsync), transparently pulls the current branch if the remote moved ahead of it - even
+    /// with pending changes in the way, unlike the plain PullCurrentBranchAsync path this replaces: pending
+    /// changes (tracked and untracked alike) are stashed first, then popped back on top once the pull lands.
+    /// A no-op (PullWithStashOutcome.NothingToDo) if there's nothing new to pull. If popping the stash
+    /// conflicts with what was just pulled in, resolves it exactly like a Rebase/Merge conflict (see
+    /// ResolveConflictsAsync) - switching to Generate automatically - with an instruction that explains the
+    /// situation is a stashed-changes-vs-newly-pulled-commits reconciliation, not two branches; the stash is
+    /// dropped only once actually resolved (a clean pop already drops its own). Left conflicted and un-dropped
+    /// if resolution still fails after every attempt, for the user to sort out by hand.
+    /// </summary>
+    public async Task PullWithStashIfNeededAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await versioningService.PullCurrentBranchWithStashAsync(cancellationToken);
+        if (result.Outcome != PullWithStashOutcome.Conflicts)
+        {
+            return;
+        }
+
+        var resolved = await ResolveConflictsAsync(
+            GitOperationOutcome.Conflicts,
+            _ => Task.FromResult(GitOperationOutcome.Succeeded),
+            cancellationToken,
+            conflictedFiles => BuildStashConflictInstruction(conflictedFiles, result.OriginalCommitHash));
+
+        if (resolved != GitOperationOutcome.Conflicts)
+        {
+            await versioningService.DropStashAsync(cancellationToken);
+        }
+    }
+
+    private static string BuildStashConflictInstruction(IReadOnlyList<string> conflictedFiles, string? originalCommitHash) =>
+        "New commits were just pulled into the current branch, and reapplying your stashed pending changes " +
+        "on top produced merge conflicts in: " + string.Join(", ", conflictedFiles) + ". " +
+        (originalCommitHash is not null
+            ? $"The current branch was at commit {originalCommitHash} before this pull - everything reachable " +
+              "from HEAD since then is a newly-pulled commit, not part of the stashed changes. "
+            : "") +
+        "Open each file, resolve the conflict by editing it to the correct final content - respecting both the " +
+        "intent of the stashed (previously pending, uncommitted) changes and everything the newly-pulled " +
+        "commits changed - and removing the conflict markers (<<<<<<<, =======, >>>>>>>), then stage the " +
+        "resolved files with `git add`. Reply once every conflict is resolved and staged.";
 
     /// <summary>Re-syncs with the remote, re-reads the current target/pending-changes state from git, and re-raises TargetChanged - also called after checking out a different commit/branch/tag from the History tab, and periodically by periodicSyncTimer.</summary>
     public async Task RefreshAsync()
@@ -336,7 +479,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
             var outcome = await versioningService.CreateBranchAsync(trimmedName, "HEAD", ct);
             if (outcome == BranchCreationOutcome.IdAlreadyExists)
             {
-                await dialogService.ShowMessageDialogAsync("Branch", $"A branch named \"{trimmedName}\" already exists.");
+                MarkFailed($"A branch named \"{trimmedName}\" already exists.");
             }
         });
     }
@@ -357,7 +500,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
             var outcome = await versioningService.CreateTagAsync(trimmedName, "HEAD", ct);
             if (outcome == TagCreationOutcome.IdAlreadyExists)
             {
-                await dialogService.ShowMessageDialogAsync("Tag", $"A tag named \"{trimmedName}\" already exists.");
+                MarkFailed($"A tag named \"{trimmedName}\" already exists.");
             }
         });
     }
@@ -393,7 +536,13 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        await RunBusyAsync(ct => versioningService.SquashAsync(result.BaseBranch, result.Message.Trim(), ct));
+        await RunBusyAsync(async ct =>
+        {
+            if (!await versioningService.SquashAsync(result.BaseBranch, result.Message.Trim(), ct))
+            {
+                MarkFailed("Squash succeeded locally, but pushing it to the remote failed.");
+            }
+        });
     }
 
     /// <summary>Rebases the current branch onto a chosen branch, always squashing its own commits first - only offered while targeting a branch, see VersionSectionView. Merge conflicts, if any, are handed to Claude via ResolveConflictsAsync.</summary>
@@ -419,21 +568,24 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
             outcome = await ResolveConflictsAsync(outcome, ct2 => versioningService.ContinueRebaseAsync(ct2), ct);
             if (outcome == GitOperationOutcome.Succeeded)
             {
-                await versioningService.PushCurrentBranchAsync(force: true, ct);
+                if (!await versioningService.PushCurrentBranchAsync(force: true, ct))
+                {
+                    MarkFailed("Rebase succeeded locally, but pushing it to the remote failed.");
+                }
             }
             else if (outcome == GitOperationOutcome.Conflicts)
             {
                 await versioningService.AbortRebaseAsync(ct);
-                await dialogService.ShowMessageDialogAsync("Rebase", "Could not automatically resolve the rebase conflicts - aborted.");
+                MarkFailed("Could not automatically resolve the rebase conflicts - aborted.");
             }
             else
             {
-                await dialogService.ShowMessageDialogAsync("Rebase", "Rebase failed.");
+                MarkFailed("Rebase failed.");
             }
         });
     }
 
-    /// <summary>Fast-forward merges the current branch onto a chosen target branch, squashing first if there's more than one commit to bring over - only offered while targeting a branch, see VersionSectionView. Never conflicts (a fast-forward can't) - fails outright if the current branch isn't actually based on the target's own head.</summary>
+    /// <summary>Fast-forward merges the current branch onto a chosen target branch, squashing first if there's more than one commit to bring over - only offered while targeting a branch, see VersionSectionView. Never conflicts (a fast-forward can't) - fails outright if the current branch isn't actually based on the target's own head. On success, the now-merged original branch is deleted both locally and on the remote (see IWorkspaceVersioningService.FastForwardMergeAsync, which leaves targetBranch - not the original branch - checked out afterward specifically so this can actually delete it).</summary>
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task MergeAsync()
     {
@@ -450,12 +602,19 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        var originalBranch = Target?.BranchName;
         await RunBusyAsync(async ct =>
         {
             var succeeded = await versioningService.FastForwardMergeAsync(result.TargetBranch, result.SquashMessage?.Trim(), ct);
             if (!succeeded)
             {
-                await dialogService.ShowMessageDialogAsync("Merge", $"'{Target?.BranchName}' isn't based on the head of '{result.TargetBranch}' - can't fast-forward.");
+                MarkFailed($"'{originalBranch}' isn't based on the head of '{result.TargetBranch}' - can't fast-forward.");
+                return;
+            }
+
+            if (originalBranch is not null && !await versioningService.DeleteBranchEverywhereAsync(originalBranch, ct))
+            {
+                MarkFailed($"Merged, but deleting '{originalBranch}' on the remote failed.");
             }
         });
     }

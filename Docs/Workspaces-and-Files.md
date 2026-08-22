@@ -43,10 +43,36 @@ sorts directories before files, both case-insensitively.
 
 `ViewModels/Sidebar/FileTreeNodeViewModel` wraps one entry. Directories start with a single
 placeholder child so the tree shows an expander arrow without eagerly scanning the whole subtree;
-`LoadChildren()`/`RefreshChildren()` replace it with real children only once expanded.
-`IsIgnored` (dims the row) is resolved asynchronously right after construction via
-`IGitService.IsIgnoredAsync`/`IsDirectoryIgnoredAsync`, and re-resolved across the whole
-already-loaded tree whenever `.gitignore` itself changes.
+`LoadChildren()`/`RefreshChildren()` replace it with real children only once expanded. `IsIgnored`
+(dims the row, and is what the "Show/Hide Ignored Files" toggle actually hides) is `FileIgnoreOverride
+?? Status == GitFileStatus.Ignored` - `Status` (see below) is always real git status, but
+`FileIgnoreOverride` overrides it entirely, independent of git, whenever a `.fileignore` file exists
+at the workspace root:
+
+- **No `.fileignore`** - `FileIgnoreOverride` stays `null` on every node, so `IsIgnored` falls back
+  to plain `.gitignore`-driven git status, exactly as before.
+- **`.fileignore` present** - it replaces `.gitignore` for this purpose entirely (a file `.gitignore`
+  excludes but `.fileignore` doesn't is no longer dimmed; `.gitignore` itself keeps controlling real
+  git status/staging regardless, since none of this touches git). `Core/Services/FileIgnoreMatcher`
+  parses it with the same syntax subset .gitignore itself uses (`#comments`, `!negation`, a trailing
+  `/` for directory-only, `*`/`?`/`**` wildcards, last-match-wins) - a bare line reading exactly
+  `$gitignore` is expanded into `.gitignore`'s own lines at that point in the file, letting one
+  `.fileignore` combine "everything `.gitignore` already excludes" with its own additional patterns
+  in whichever order the two should apply. `FilesSectionViewModel.ResolveFileIgnore` is the closure
+  every node resolves this through (supplied once at construction, so a folder expanded long after
+  the workspace opened still resolves against whatever ruleset is current then, not whatever was
+  current when the app started); edits to either file (`OnWatcherChanged`) re-parse and re-push it
+  across the whole already-loaded tree via `FileTreeNodeViewModel.RefreshFileIgnoreState`.
+
+Git status (`Status`, driving the added/modified color and the `.gitignore`-only fallback above) is
+resolved asynchronously right after construction via `IFileTreeService.GetStatusAsync`
+(`IGitService.GetStatusAsync` underneath), and re-resolved across the whole already-loaded tree
+(`FilesSectionViewModel.RefreshGitStatusAsync`) on any on-disk change at all
+(`OnWatcherChanged` - a file autosaved from this app's own Edit tab, one written externally, a git
+command run outside this app, ...), and separately by `WorkspaceTabViewModel` after any
+version-control action or target switch (commit, squash, merge, checkout, ...), none of which
+necessarily touch the working tree's own files, so the file watcher alone would never notice a
+status that's now stale from one of those.
 
 `FilesSectionViewModel` is the sidebar's own view model: `Refresh()` diffs new `GetChildren()`
 results against existing `FileTreeNodeViewModel`s by path (add/remove only what actually changed,
@@ -81,8 +107,9 @@ The `F1` overlay, with two modes:
   on a background thread with a 200ms debounce per keystroke.
 
 Neither mode shells out to `ripgrep` or `git grep` - both are implemented directly in C# over a
-file list that's first filtered through `IGitService.GetIgnoredPathsAsync` (the same git-ignore
-mechanism the file tree uses for dimming).
+file list that's first filtered through `IGitService.GetIgnoredPathsAsync` - plain `.gitignore`
+only; unlike the file tree's own dimming (see "The file tree" above), search results are never
+affected by a `.fileignore`, which is purely a Files-sidebar display concern.
 
 `FileChosen(path)` opens the file via the file tree's normal selection path;
 `ContentResultChosen(path, line)` goes straight to `WorkspaceContentViewModel.OpenFileAsync(path,

@@ -19,6 +19,12 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         return await git.HasCommitsAsync(workspacePath, cancellationToken);
     }
 
+    public async Task<bool> HasUserIdentityConfiguredAsync(CancellationToken cancellationToken = default) =>
+        await git.HasUserIdentityConfiguredAsync(workspacePath, cancellationToken);
+
+    public async Task SetGlobalUserIdentityAsync(string name, string email, CancellationToken cancellationToken = default) =>
+        await git.SetGlobalUserIdentityAsync(workspacePath, name, email, cancellationToken);
+
     public async Task InitializeRepoAsync(CancellationToken cancellationToken = default)
     {
         await git.InitAsync(workspacePath, cancellationToken);
@@ -87,19 +93,27 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
 
     public async Task SyncWithRemoteAsync(CancellationToken cancellationToken = default)
     {
+        var current = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
+
+        // Captured before the fetch/prune below, which is exactly what could remove it - the only way to
+        // tell "current never tracked a remote branch at all" (leave it alone) apart from "it did, and that
+        // remote branch is now gone" (see the current-specific handling at the bottom) is to know whether it
+        // was there beforehand.
+        var currentHadRemoteTrackingBranch = current is not null
+            && await git.GetRemoteTrackingCommitAsync(workspacePath, current, cancellationToken) is not null;
+
         if (!await git.FetchAsync(workspacePath, prune: true, cancellationToken))
         {
             return; // no remote, or unreachable - nothing to sync
         }
 
-        var current = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
         var candidates = await git.ListBranchesAsync(workspacePath, "", cancellationToken);
 
         foreach (var branch in candidates)
         {
             if (branch == current || !await git.BranchExistsAsync(workspacePath, branch, cancellationToken))
             {
-                continue; // never reset the checked-out branch; skip remote-only names with no local ref
+                continue; // the checked-out branch is handled separately below; skip remote-only names with no local ref
             }
 
             var remoteTip = await git.GetRemoteTrackingCommitAsync(workspacePath, branch, cancellationToken);
@@ -113,6 +127,21 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
             {
                 await git.ForceUpdateBranchRefAsync(workspacePath, branch, remoteTip, cancellationToken);
             }
+        }
+
+        if (current is not null && currentHadRemoteTrackingBranch
+            && await git.GetRemoteTrackingCommitAsync(workspacePath, current, cancellationToken) is null)
+        {
+            // The branch actually checked out just got pruned - its own remote counterpart is gone (e.g.
+            // deleted by someone else's own post-merge cleanup elsewhere - see
+            // VersionSectionViewModel.MergeAsync/HistoryTabViewModel.MergeIntoCurrentAsync, which do the same
+            // thing this app itself just did). Detach HEAD at exactly the commit it was already on - a no-op
+            // checkout content-wise (same commit, so it can never conflict), leaving any pending changes in
+            // the working tree completely untouched - before deleting the now-orphaned local branch, since
+            // git refuses to delete whichever branch is currently checked out.
+            var currentTip = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
+            await git.CheckoutAsync(workspacePath, currentTip, cancellationToken);
+            await git.DeleteBranchAsync(workspacePath, current, cancellationToken);
         }
     }
 
@@ -172,6 +201,13 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
     public async Task DeleteBranchAsync(string name, CancellationToken cancellationToken = default) =>
         await git.DeleteBranchAsync(workspacePath, name, cancellationToken);
 
+    public async Task<bool> DeleteBranchEverywhereAsync(string name, CancellationToken cancellationToken = default)
+    {
+        await git.DeleteBranchAsync(workspacePath, name, cancellationToken);
+        return await git.GetRemoteUrlAsync(workspacePath, cancellationToken) is null
+            || await git.DeleteRemoteBranchAsync(workspacePath, name, cancellationToken);
+    }
+
     public async Task DeleteTagAsync(string name, CancellationToken cancellationToken = default) =>
         await git.DeleteTagAsync(workspacePath, name, cancellationToken);
 
@@ -212,14 +248,70 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         }
     }
 
-    public async Task PushCurrentBranchAsync(bool force, CancellationToken cancellationToken = default)
+    public async Task<bool> PushCurrentBranchAsync(bool force, CancellationToken cancellationToken = default)
     {
         var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
-        if (branch is not null)
-        {
-            await git.PushAsync(workspacePath, branch, force: force, cancellationToken: cancellationToken);
-        }
+        return branch is null || await git.PushAsync(workspacePath, branch, force: force, cancellationToken: cancellationToken);
     }
+
+    public async Task<PullWithStashResult> PullCurrentBranchWithStashAsync(CancellationToken cancellationToken = default)
+    {
+        var branch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
+        if (branch is null)
+        {
+            return new PullWithStashResult(PullWithStashOutcome.NothingToDo, null);
+        }
+
+        // Saved before touching anything - not just the pull's own precondition check below, but also what a
+        // caller building an AI conflict-resolution instruction needs to describe "every commit pulled in
+        // since" (see HistoryTabViewModel/VersionSectionViewModel).
+        var originalCommitHash = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
+
+        var remoteTip = await git.GetRemoteTrackingCommitAsync(workspacePath, branch, cancellationToken);
+        if (remoteTip is null || remoteTip == originalCommitHash
+            || !await git.IsAncestorAsync(workspacePath, originalCommitHash, remoteTip, cancellationToken))
+        {
+            // No remote-tracking branch, already up to date, or the current branch has diverged from it (its
+            // own local commits aren't all on the remote yet either) - not a simple fast-forward, so nothing
+            // this flow silently auto-pulls; a real divergence needs an explicit Rebase/Merge from the user.
+            return new PullWithStashResult(PullWithStashOutcome.NothingToDo, originalCommitHash);
+        }
+
+        var hadPendingChanges = await git.HasUncommittedChangesAsync(workspacePath, cancellationToken);
+        if (hadPendingChanges && !await git.StashPushAsync(workspacePath, cancellationToken))
+        {
+            return new PullWithStashResult(PullWithStashOutcome.Failed, originalCommitHash);
+        }
+
+        if (!await git.FastForwardMergeAsync(workspacePath, $"origin/{branch}", cancellationToken))
+        {
+            if (hadPendingChanges)
+            {
+                // Best-effort restore of exactly what was pending before this call - the pull itself never
+                // touched the working tree (fast-forward failed outright), so the pop it's undone by should
+                // always be clean.
+                await git.StashPopAsync(workspacePath, cancellationToken);
+            }
+
+            return new PullWithStashResult(PullWithStashOutcome.Failed, originalCommitHash);
+        }
+
+        if (!hadPendingChanges)
+        {
+            return new PullWithStashResult(PullWithStashOutcome.Succeeded, originalCommitHash);
+        }
+
+        var popOutcome = await git.StashPopAsync(workspacePath, cancellationToken);
+        return popOutcome switch
+        {
+            GitOperationOutcome.Succeeded => new PullWithStashResult(PullWithStashOutcome.Succeeded, originalCommitHash),
+            GitOperationOutcome.Conflicts => new PullWithStashResult(PullWithStashOutcome.Conflicts, originalCommitHash),
+            _ => new PullWithStashResult(PullWithStashOutcome.Failed, originalCommitHash),
+        };
+    }
+
+    public async Task DropStashAsync(CancellationToken cancellationToken = default) =>
+        await git.StashDropAsync(workspacePath, cancellationToken);
 
     public async Task CheckoutRefAsync(string refName, CancellationToken cancellationToken = default) =>
         await git.CheckoutAsync(workspacePath, refName, cancellationToken);
@@ -258,10 +350,10 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         return commits.Count > 0 ? commits[0].Subject : "";
     }
 
-    public async Task SquashAsync(string baseBranch, string message, CancellationToken cancellationToken = default)
+    public async Task<bool> SquashAsync(string baseBranch, string message, CancellationToken cancellationToken = default)
     {
         await SquashSinceBaseAsync(baseBranch, message, cancellationToken);
-        await PushCurrentBranchAsync(force: true, cancellationToken);
+        return await PushCurrentBranchAsync(force: true, cancellationToken);
     }
 
     public async Task<GitOperationOutcome> RebaseWithSquashAsync(string ontoBranch, string squashMessage, CancellationToken cancellationToken = default)
@@ -324,10 +416,17 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         var fastForwarded = await git.FastForwardMergeAsync(workspacePath, currentTip, cancellationToken);
         if (fastForwarded)
         {
+            // Stays on targetBranch rather than returning to current (unlike a failed attempt, reverted
+            // below) - current's own work is now fully absorbed into targetBranch, and the caller deletes
+            // current next (see VersionSectionViewModel.MergeAsync), which isn't even possible while it's
+            // still the checked-out branch.
             await git.PushAsync(workspacePath, targetBranch, cancellationToken: cancellationToken);
         }
+        else
+        {
+            await git.CheckoutAsync(workspacePath, current, cancellationToken);
+        }
 
-        await git.CheckoutAsync(workspacePath, current, cancellationToken);
         return fastForwarded;
     }
 
@@ -371,13 +470,17 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         var pageCommits = workCommits.Skip(pageIndex * pageSize).Take(pageSize).ToList();
 
         var head = await git.RevParseAsync(workspacePath, "HEAD", cancellationToken);
-        var currentBranch = await git.GetCurrentBranchAsync(workspacePath, cancellationToken);
         var tagsByCommit = await git.GetTagsByCommitAsync(workspacePath, cancellationToken);
 
         var entries = new List<BranchTimelineEntry>();
         foreach (var commit in pageCommits)
         {
-            var isCurrentCommit = currentBranch == branchName && commit.Hash == head;
+            // Just the commit hash, regardless of whether HEAD is attached to a branch or detached at a tag/
+            // commit (previously also required the *viewed* branch to be the checked-out one, which meant a
+            // detached HEAD - browsing a tag or an arbitrary commit - never showed a current-commit indicator
+            // anywhere at all) - a commit matching HEAD's hash genuinely is the current commit no matter what
+            // ref got you there, or which branch's own timeline happens to be on screen.
+            var isCurrentCommit = commit.Hash == head;
 
             // Each tag gets its own node immediately above the commit it points at, rather than riding along
             // on the commit's own row - see BranchTimelineEntryKind.Tag. IsCurrentCommit carries over too, so

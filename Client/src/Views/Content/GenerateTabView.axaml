@@ -42,7 +42,7 @@
                             Content="▶" ToolTip.Tip="Next request" />
                 </Grid>
 
-                <ScrollViewer Name="Scroller" Grid.Row="1">
+                <ScrollViewer Name="Scroller" Grid.Row="1" IsVisible="{Binding !VisibleAutomatedTurnActive}">
                     <StackPanel Margin="14,10" Spacing="10" HorizontalAlignment="Stretch"
                                 IsVisible="{Binding DisplayedRequest, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
                         <!-- Request input. -->
@@ -79,6 +79,53 @@
                              height to the StackPanel and the outer Scroller does the actual scrolling. -->
                         <mdxaml:MarkdownScrollViewer Name="OutputMarkdown" Markdown="{Binding DisplayedRequest.RenderedOutput}"
                                                       IsVisible="{Binding DisplayedRequest.HasOutput}"
+                                                      SelectionEnabled="True">
+                            <mdxaml:MarkdownScrollViewer.Plugins>
+                                <mdxaml:MdAvPlugins>
+                                    <syntaxHigh:SyntaxHighlight />
+                                    <svc:SvgMarkdownPlugin />
+                                </mdxaml:MdAvPlugins>
+                            </mdxaml:MarkdownScrollViewer.Plugins>
+                        </mdxaml:MarkdownScrollViewer>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Shown instead of the normal request scroller above for the whole duration of a visible
+                     automated turn (conflict resolution during Rebase/Merge Into Current/Rebase Current Onto
+                     This, or the stash-pop conflict path in PullWithStashIfNeededAsync) - never a request card
+                     of its own (see GenerateTabViewModel.VisibleAutomatedTurnActive's own doc comment), so it
+                     gets this dedicated panel instead, with its own Pause/Resume buttons (bound to IsSending,
+                     always a validly-notified plain bool on this same DataContext, rather than a MultiBinding
+                     OR against VisibleAutomatedTurnActive - see GenerateRequestViewModel's own doc comment on
+                     why a MultiBinding was avoided for this exact kind of button-visibility case). Deliberately
+                     offers no Cancel/Stop at all - a merge-conflict-resolution turn can only ever be paused and
+                     resumed, never forcibly interrupted, which would otherwise leave the repository mid-conflict. -->
+                <ScrollViewer Grid.Row="1" IsVisible="{Binding VisibleAutomatedTurnActive}">
+                    <StackPanel Margin="14,10" Spacing="10" HorizontalAlignment="Stretch">
+                        <Border Background="{DynamicResource HeaderBackgroundBrush}" CornerRadius="4" Padding="14,20">
+                            <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                                    <TextBlock Text="●" FontSize="14" VerticalAlignment="Center"
+                                               Classes="requestStatus" Classes.working="{Binding IsSending}"
+                                               IsVisible="{Binding IsSending}" />
+                                    <TextBlock Text="{Binding ConflictResolutionStatusText}" FontSize="20" LineHeight="28"
+                                               TextWrapping="Wrap" TextAlignment="Center" MaxWidth="480"
+                                               HorizontalAlignment="Center"
+                                               Classes="requestStatus" Classes.working="{Binding IsSending}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <Button Content="Pause" Command="{Binding PauseCommand}"
+                                            IsVisible="{Binding IsSending}" FontSize="11" Padding="10,4"
+                                            ToolTip.Tip="Immediately stop - resumable later, including after restarting AutoDev" />
+                                    <Button Content="Resume" Command="{Binding ResumeCommand}"
+                                            IsVisible="{Binding !IsSending}" FontSize="11" Padding="10,4"
+                                            ToolTip.Tip="Continue resolving the conflict from where it left off" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <mdxaml:MarkdownScrollViewer Markdown="{Binding LastAssistantText}"
+                                                      IsVisible="{Binding LastAssistantText, Converter={x:Static conv:ObjectConverters.IsNotNull}}"
                                                       SelectionEnabled="True">
                             <mdxaml:MarkdownScrollViewer.Plugins>
                                 <mdxaml:MdAvPlugins>

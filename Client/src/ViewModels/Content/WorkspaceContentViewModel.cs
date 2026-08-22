@@ -26,6 +26,7 @@ public sealed partial class WorkspaceContentViewModel(
     private GitTarget? _lastTarget;
     private bool _isBusy;
     private bool _isAiWorking;
+    private bool _hasRunningTasks;
 
     /// <summary>History is the tab shown first when a workspace opens (fresh, cloned, or restored on launch) - a new WorkspaceContentViewModel is created exactly once per opened workspace tab, so this default alone covers every case. History's own data still populates correctly despite [ObservableProperty]'s change hooks never firing for an unchanged initial value (skipping the HistoryTabIndex case in OnSelectedTabIndexChanged below) - HistoryTabViewModel independently reloads on Version.TargetChanged, which always fires once during WorkspaceTabViewModel.InitializeAsync regardless of which tab is selected.</summary>
     [ObservableProperty]
@@ -46,7 +47,7 @@ public sealed partial class WorkspaceContentViewModel(
                 Generate.RequestFocus();
                 break;
             case HistoryTabIndex:
-                _ = History.LoadBranchesAsync();
+                _ = History.RefreshFromRemoteAsync();
                 break;
         }
     }
@@ -86,15 +87,22 @@ public sealed partial class WorkspaceContentViewModel(
         UpdateEditReadOnly();
     }
 
+    /// <summary>Edit is also forced read-only for as long as any .task file in this workspace is running - manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree. Mirrors ApplyInteractionBlockedState, kept as its own method/flag purely so ComputeReadOnlyReason can report which one actually applies. Called from WorkspaceTabViewModel whenever FilesSectionViewModel.HasRunningTasks changes.</summary>
+    public void ApplyHasRunningTasksState(bool hasRunningTasks)
+    {
+        _hasRunningTasks = hasRunningTasks;
+        UpdateEditReadOnly();
+    }
+
     private bool IsEditableTarget => _lastTarget?.Kind == GitTargetKind.Branch;
 
     private void UpdateEditReadOnly()
     {
-        Edit.IsReadOnly = _isBusy || _isAiWorking || !IsEditableTarget;
+        Edit.IsReadOnly = _isBusy || _isAiWorking || _hasRunningTasks || !IsEditableTarget;
         Edit.ReadOnlyReason = Edit.IsReadOnly ? ComputeReadOnlyReason() : "";
     }
 
-    /// <summary>The specific, currently-true reason editing is blocked - checked in the same priority order UpdateEditReadOnly itself uses (AI-working/busy overrides target kind, since it locks a branch target too).</summary>
+    /// <summary>The specific, currently-true reason editing is blocked - checked in the same priority order UpdateEditReadOnly itself uses (AI-working/busy/task-running override target kind, since any of them locks a branch target too).</summary>
     private string ComputeReadOnlyReason()
     {
         if (_isAiWorking)
@@ -105,6 +113,11 @@ public sealed partial class WorkspaceContentViewModel(
         if (_isBusy)
         {
             return "Read-only — a version action is in progress.";
+        }
+
+        if (_hasRunningTasks)
+        {
+            return "Read-only — a task is running.";
         }
 
         return _lastTarget?.Kind switch

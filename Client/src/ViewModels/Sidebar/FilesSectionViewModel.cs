@@ -10,6 +10,12 @@ namespace AutoDev.ViewModels.Sidebar;
 
 public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 {
+    private const string FileIgnoreFileName = ".fileignore";
+    private const string GitIgnoreFileName = ".gitignore";
+
+    /// <summary>A line in .fileignore consisting of exactly this (surrounding whitespace ignored) is replaced with .gitignore's own lines - see ReloadFileIgnore.</summary>
+    private const string GitIgnoreDirective = "$gitignore";
+
     private readonly string _rootPath;
     private readonly IFileTreeService _fileTreeService;
     private readonly IWorkspaceFileWatcher _watcher;
@@ -23,6 +29,9 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     /// <summary>Workspace-relative paths (see RelativePathOf) of every .task file currently running - maintained from the scheduler's events and re-applied to nodes after every Refresh() (which can recreate node instances). See ApplyRunningState.</summary>
     private readonly HashSet<string> _runningTaskPaths = [];
+
+    /// <summary>Null while no .fileignore exists at the workspace root, in which case every node's FileIgnoreOverride is also left null (falling back to its own git Status.Ignored) - see ReloadFileIgnore/ResolveFileIgnore.</summary>
+    private FileIgnoreMatcher? _fileIgnoreMatcher;
 
     /// <summary>
     /// True for the whole duration of a Generate turn, OR any plain (non-AI) version action
@@ -56,6 +65,20 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         RenameCommand.NotifyCanExecuteChanged();
         DeleteCommand.NotifyCanExecuteChanged();
         DuplicateCommand.NotifyCanExecuteChanged();
+        RunTaskCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Mirrors OnIsInteractionBlockedChanged - a running task blocks tree mutations exactly like a busy version action or AI turn does (manual editing, task running, and AI working are meant to be mutually exclusive), and blocks starting a second task on top of it (see CanRunTask).</summary>
+    partial void OnHasRunningTasksChanged(bool value)
+    {
+        NewFileCommand.NotifyCanExecuteChanged();
+        NewFolderCommand.NotifyCanExecuteChanged();
+        NewFileInFolderCommand.NotifyCanExecuteChanged();
+        NewFolderInFolderCommand.NotifyCanExecuteChanged();
+        RenameCommand.NotifyCanExecuteChanged();
+        DeleteCommand.NotifyCanExecuteChanged();
+        DuplicateCommand.NotifyCanExecuteChanged();
+        RunTaskCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Called by WorkspaceTabViewModel whenever the targeted version/release/feature (or direct mode) changes.</summary>
@@ -68,11 +91,11 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         NewFolderInFolderCommand.NotifyCanExecuteChanged();
     }
 
-    private bool CanMutate() => !IsInteractionBlocked && !IsChangesMode && _isEditableTarget;
+    private bool CanMutate() => !IsInteractionBlocked && !HasRunningTasks && !IsChangesMode && _isEditableTarget;
 
-    private bool CanMutateInFolder(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !IsChangesMode && _isEditableTarget;
+    private bool CanMutateInFolder(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningTasks && !IsChangesMode && _isEditableTarget;
 
-    private bool CanMutateNode(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !IsChangesMode;
+    private bool CanMutateNode(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningTasks && !IsChangesMode;
 
     public FilesSectionViewModel(
         string rootPath,
@@ -100,6 +123,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         _scheduler.TaskRunStarted += OnTaskRunStarted;
         _scheduler.TaskRunCompleted += OnTaskRunCompleted;
         _scheduler.Start();
+        ReloadFileIgnore();
         Refresh();
     }
 
@@ -262,7 +286,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         {
             if (!existingPaths.Contains(entry.FullPath))
             {
-                RootNodes.Insert(Math.Min(insertIndex, RootNodes.Count), new FileTreeNodeViewModel(entry, _fileTreeService));
+                RootNodes.Insert(Math.Min(insertIndex, RootNodes.Count), new FileTreeNodeViewModel(entry, _fileTreeService, ResolveFileIgnore));
             }
 
             insertIndex++;
@@ -275,6 +299,68 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
         ReapplyRunningStates();
     }
+
+    /// <summary>Supplied to every FileTreeNodeViewModel at construction (see FileTreeNodeViewModel._resolveFileIgnore) - a closure rather than a one-off computed value so it keeps reflecting whatever _fileIgnoreMatcher is *current* whenever it's actually called, including long after the node itself was built.</summary>
+    private bool? ResolveFileIgnore(FileTreeNodeViewModel node) =>
+        _fileIgnoreMatcher?.IsMatch(RelativePathOf(node), node.IsDirectory);
+
+    /// <summary>
+    /// Reads .fileignore from the workspace root (if present) into _fileIgnoreMatcher, expanding any line
+    /// that's exactly "$gitignore" into .gitignore's own lines first - called once at construction and again
+    /// whenever either file changes (see OnWatcherChanged/RefreshFileIgnore). Leaves _fileIgnoreMatcher null
+    /// (every node falls back to its own git Status.Ignored - see ResolveFileIgnore) when .fileignore doesn't
+    /// exist at all;
+    /// an empty or unreadable .fileignore still counts as present (ignores nothing, but takes over from
+    /// .gitignore entirely) except for a transient read failure, which leaves the previous ruleset in place
+    /// rather than guessing.
+    /// </summary>
+    private void ReloadFileIgnore()
+    {
+        var fileIgnorePath = Path.Combine(_rootPath, FileIgnoreFileName);
+        if (!File.Exists(fileIgnorePath))
+        {
+            _fileIgnoreMatcher = null;
+            return;
+        }
+
+        IReadOnlyList<string> lines;
+        try
+        {
+            lines = File.ReadAllLines(fileIgnorePath);
+        }
+        catch
+        {
+            return; // best-effort - a transient read failure leaves the previous ruleset (if any) in place
+        }
+
+        List<string> expanded = [];
+        foreach (var line in lines)
+        {
+            if (line.Trim() != GitIgnoreDirective)
+            {
+                expanded.Add(line);
+                continue;
+            }
+
+            var gitIgnorePath = Path.Combine(_rootPath, GitIgnoreFileName);
+            if (!File.Exists(gitIgnorePath))
+            {
+                continue;
+            }
+
+            try
+            {
+                expanded.AddRange(File.ReadAllLines(gitIgnorePath));
+            }
+            catch
+            {
+                // best-effort - a transient read failure just skips the merge this time
+            }
+        }
+
+        _fileIgnoreMatcher = FileIgnoreMatcher.Parse(expanded);
+    }
+
 
     /// <summary>Re-stamps IsTaskRunning on whatever node currently represents each still-running task path - Refresh() can recreate node instances (SyncChildren), so a running task's freshly-inserted node would otherwise default back to not-running.</summary>
     private void ReapplyRunningStates()
@@ -456,7 +542,12 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         Refresh();
     }
 
-    private bool CanRunTask(FileTreeNodeViewModel? node) => node is { IsTaskFile: true, IsTaskRunning: false };
+    /// <summary>
+    /// A task can only start while nothing else is already using the working tree: not this same task, not a
+    /// different one (only one task total runs at a time per workspace - see IWorkspaceTaskScheduler.RunNowAsync),
+    /// and not a busy version action or an in-flight AI turn (IsInteractionBlocked).
+    /// </summary>
+    private bool CanRunTask(FileTreeNodeViewModel? node) => node is { IsTaskFile: true, IsTaskRunning: false } && !HasRunningTasks && !IsInteractionBlocked;
 
     private bool CanStopTask(FileTreeNodeViewModel? node) => node is { IsTaskFile: true, IsTaskRunning: true };
 
@@ -546,17 +637,38 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     private void OnWatcherChanged(IReadOnlySet<string> changedPaths) => _dispatcher.Post(() =>
     {
+        // Reloaded before Refresh() (not after) so any brand new FileTreeNodeViewModel it constructs
+        // resolves its own FileIgnoreOverride against the up to date ruleset immediately, rather than
+        // whatever was current a moment ago.
+        var fileIgnoreChanged = changedPaths.Any(p => Path.GetFileName(p) is FileIgnoreFileName or GitIgnoreFileName);
+        if (fileIgnoreChanged)
+        {
+            ReloadFileIgnore();
+        }
+
         Refresh();
         WorkspaceFilesChanged?.Invoke();
 
-        // .gitignore is now a plain, freely-editable file (no longer generated) - any edit to it, from this
-        // app's Edit tab or externally, can change which paths are ignored anywhere in the tree, so every
-        // already-loaded node's dimming needs recomputing, not just newly-appeared ones (Refresh() above only
-        // resolves IsIgnored for brand new FileTreeNodeViewModel instances - see its own doc comment).
-        if (changedPaths.Any(p => Path.GetFileName(p) == ".gitignore"))
+        // .fileignore/.gitignore are both plain, freely-editable files (neither generated) - any edit to
+        // either, from this app's Edit tab or externally, can change which paths are ignored anywhere in the
+        // tree, so every already-loaded node's own FileIgnoreOverride needs recomputing, not just
+        // newly-appeared ones (Refresh() above only resolves it for brand new node instances - see
+        // FileTreeNodeViewModel's own constructor).
+        if (fileIgnoreChanged)
         {
-            _ = RefreshGitStatusAsync();
+            foreach (var node in RootNodes)
+            {
+                node.RefreshFileIgnoreState();
+            }
         }
+
+        // Any on-disk change at all - a file autosaved from this app's own Edit tab, one written
+        // externally, a git command run outside this app, ... - can change that path's own git status
+        // (Unmodified -> Modified/Added) and, since folders carry their own aggregate status too, any
+        // ancestor folder's along with it. Refresh() above only resolves Status for brand new node
+        // instances (see FileTreeNodeViewModel's own constructor) - every already-loaded node needs
+        // recomputing too, not just on a .gitignore edit (which used to be the only trigger here).
+        _ = RefreshGitStatusAsync();
 
         // Keeps the Changes Mode tree honest while it's actually showing - a change made elsewhere (another
         // tool, a git command run outside this app) should appear/disappear from it just like it would from
@@ -567,7 +679,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
     });
 
-    /// <summary>Re-resolves every already-loaded node's git status (added/modified/ignored/unmodified) - called on any .gitignore edit (see OnWatcherChanged), and by WorkspaceTabViewModel after any version-control action or target switch (commit, squash, merge, checkout, ...), none of which necessarily touch the working tree's own files, so the file watcher alone would otherwise never notice a status that's now stale.</summary>
+    /// <summary>Re-resolves every already-loaded node's git status (added/modified/ignored/unmodified) - called on any on-disk change at all (see OnWatcherChanged, including a file autosaved from this app's own Edit tab), and by WorkspaceTabViewModel after any version-control action or target switch (commit, squash, merge, checkout, ...), none of which necessarily touch the working tree's own files, so the file watcher alone would otherwise never notice a status that's now stale.</summary>
     public async Task RefreshGitStatusAsync() =>
         await Task.WhenAll(RootNodes.Select(n => n.RefreshGitStatusAsync()));
 

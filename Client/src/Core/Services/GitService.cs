@@ -14,6 +14,15 @@ public sealed class GitService : IGitService
         return result.ExitCode == 0 && result.StandardOutput.Trim() == "true";
     }
 
+    public async Task<bool> HasUserIdentityConfiguredAsync(string workspacePath, CancellationToken cancellationToken = default) =>
+        (await RunAsync(workspacePath, ["var", "GIT_AUTHOR_IDENT"], cancellationToken)).ExitCode == 0;
+
+    public async Task SetGlobalUserIdentityAsync(string workspacePath, string name, string email, CancellationToken cancellationToken = default)
+    {
+        await RunAsync(workspacePath, ["config", "--global", "user.name", name], cancellationToken);
+        await RunAsync(workspacePath, ["config", "--global", "user.email", email], cancellationToken);
+    }
+
     public async Task<bool> HasCommitsAsync(string workspacePath, CancellationToken cancellationToken = default) =>
         (await RunAsync(workspacePath, ["rev-parse", "--verify", "--quiet", "HEAD"], cancellationToken)).ExitCode == 0;
 
@@ -173,6 +182,17 @@ public sealed class GitService : IGitService
     public async Task DeleteBranchAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["branch", "-D", branchName], cancellationToken);
 
+    public async Task<bool> DeleteRemoteBranchAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default)
+    {
+        if (await GetRemoteUrlAsync(workspacePath, cancellationToken) is null)
+        {
+            return false;
+        }
+
+        var result = await RunAsync(workspacePath, ["push", "origin", "--delete", branchName], cancellationToken);
+        return result.ExitCode == 0;
+    }
+
     public async Task DeleteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["tag", "-d", tagName], cancellationToken);
 
@@ -318,6 +338,21 @@ public sealed class GitService : IGitService
         await RunAsync(workspacePath, ["reset", "--soft", sinceRef], cancellationToken);
         await RunAsync(workspacePath, ["commit", "-m", message], cancellationToken);
     }
+
+    public async Task<bool> StashPushAsync(string workspacePath, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(workspacePath, ["stash", "push", "-u"], cancellationToken);
+        return result.ExitCode == 0;
+    }
+
+    public async Task<GitOperationOutcome> StashPopAsync(string workspacePath, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(workspacePath, ["stash", "pop"], cancellationToken);
+        return await ClassifyOperationResultAsync(workspacePath, result, cancellationToken);
+    }
+
+    public async Task StashDropAsync(string workspacePath, CancellationToken cancellationToken = default) =>
+        await RunAsync(workspacePath, ["stash", "drop"], cancellationToken);
 
     public async Task<string> RevParseAsync(string workspacePath, string refName, CancellationToken cancellationToken = default)
     {
@@ -520,27 +555,30 @@ public sealed class GitService : IGitService
 
     /// <summary>
     /// Every git invocation goes through here with the same safety env vars/flags, all aimed at the same goal:
-    /// nothing this app runs may ever block waiting on interactive input that will never come, or pop up some
-    /// other program's own UI on top of it. GIT_EDITOR/GIT_SEQUENCE_EDITOR prevent any command from ever
-    /// blocking on an interactive editor (e.g. a rebase --continue that would otherwise want to open one).
-    /// GIT_TERMINAL_PROMPT=0 stops git's own username/password prompt from hanging on a terminal that isn't
-    /// there; "-c credential.helper=" additionally disables whatever *external* credential helper might be
-    /// configured (a GUI keychain/manager prompt, not a terminal one - GIT_TERMINAL_PROMPT has no effect on
-    /// those) for this invocation only, without touching the user's real git config. GIT_SSH_COMMAND's
-    /// BatchMode=yes is the SSH-transport equivalent of GIT_TERMINAL_PROMPT=0 (no password/passphrase prompt);
-    /// StrictHostKeyChecking=accept-new keeps that from also blocking a legitimate first-time clone from a
-    /// never-before-seen host on a host-key confirmation prompt, while still failing (rather than silently
-    /// trusting) if a known host's key ever changes. Together, a remote operation needing credentials this
-    /// app can't supply always fails fast with a real error instead of hanging or launching a login flow of
-    /// its own - see IGitService.CloneAsync/FetchAsync/PushAsync. Uses CliWrap's array-form arguments (never
-    /// a shell string) so free-form user text - commit messages, feature summaries - is passed through
-    /// literally and can never be shell-interpreted. Reports the command line and its output to
-    /// GitCommandLogSink.Current, if set, for the busy overlay's live log.
+    /// nothing this app runs may ever block waiting on interactive input that will never come. GIT_EDITOR/
+    /// GIT_SEQUENCE_EDITOR prevent any command from ever blocking on an interactive editor (e.g. a rebase
+    /// --continue that would otherwise want to open one). GIT_TERMINAL_PROMPT=0 stops git's own username/
+    /// password prompt from hanging on a terminal that isn't there - deliberately *not* paired with a
+    /// `-c credential.helper=` override to also disable the user's own configured credential helper: for the
+    /// common case (a cached token, a system keychain, a GUI login flow the user already went through in a
+    /// terminal) that helper answers non-interactively or via its own already-working UI, exactly as it would
+    /// running the same command in a terminal - stripping it away here left every one of those setups unable
+    /// to push/fetch/clone at all ("could not read Username ... terminal prompts disabled") despite working
+    /// fine outside AutoDev, since GIT_TERMINAL_PROMPT=0 alone then had nothing left to fall back to. Only a
+    /// helper that itself blocks on truly interactive terminal input would still hang here, same as it would
+    /// in any other non-interactive context (CI, a script, ...) - not something AutoDev's own env can prevent
+    /// or should try to paper over. GIT_SSH_COMMAND's BatchMode=yes is the SSH-transport equivalent of
+    /// GIT_TERMINAL_PROMPT=0 (no password/passphrase prompt); StrictHostKeyChecking=accept-new keeps that from
+    /// also blocking a legitimate first-time clone from a never-before-seen host on a host-key confirmation
+    /// prompt, while still failing (rather than silently trusting) if a known host's key ever changes. Uses
+    /// CliWrap's array-form arguments (never a shell string) so free-form user text - commit messages, feature
+    /// summaries - is passed through literally and can never be shell-interpreted. Reports the command line
+    /// and its output to GitCommandLogSink.Current, if set, for the busy overlay's live log.
     /// </summary>
     private static async Task<BufferedCommandResult> RunAsync(string workspacePath, IReadOnlyList<string> args, CancellationToken cancellationToken, PipeSource? standardInput = null)
     {
         var command = Cli.Wrap("git")
-            .WithArguments(["-c", "credential.helper=", .. args])
+            .WithArguments(args)
             .WithWorkingDirectory(workspacePath)
             .WithEnvironmentVariables(env => env
                 .Set("GIT_EDITOR", "true")

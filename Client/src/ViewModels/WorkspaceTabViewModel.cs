@@ -58,8 +58,22 @@ public sealed partial class WorkspaceTabViewModel : ViewModelBase, IAsyncDisposa
             if (e.PropertyName == nameof(FilesSectionViewModel.HasRunningTasks))
             {
                 Content.Generate.HasRunningTasks = Files.HasRunningTasks;
+
+                // Manual editing, task running, and AI working are meant to be mutually exclusive states over
+                // the same working tree - a running task locks Edit exactly like a busy version action or an
+                // in-flight AI turn already does (see the IsInteractionBlocked handler below).
+                Content.ApplyHasRunningTasksState(Files.HasRunningTasks);
+
+                // Also locks Commit/Merge/etc. and every History tab action (Version.IsInteractionBlocked folds
+                // this in), so a running task can't race a git action mutating the same working tree either.
+                Version.HasRunningTasks = Files.HasRunningTasks;
             }
         };
+
+        // A merge-conflict-resolution turn (Rebase, Merge Into Current/Rebase Current Onto This, or a
+        // stash-pop conflict from PullWithStashIfNeededAsync) is otherwise easy to miss entirely - IsAiWorking
+        // locks the workspace with no other visible cue that Generate is where it's actually happening.
+        Version.SwitchToGenerateRequested += () => Content.SelectedTabIndex = WorkspaceContentViewModel.GenerateTabIndex;
 
         Version.TargetChanged += _ => ApplyEditableState();
         Version.PropertyChanged += (_, e) =>
@@ -104,6 +118,14 @@ public sealed partial class WorkspaceTabViewModel : ViewModelBase, IAsyncDisposa
         try
         {
             await Version.EnsureRepoAsync();
+
+            // History is the tab shown by default (see WorkspaceContentViewModel.SelectedTabIndex) - its own
+            // per-tab-open auto-refresh (see HistoryTabViewModel.RefreshFromRemoteAsync) otherwise only fires
+            // from WorkspaceContentViewModel.OnSelectedTabIndexChanged, which never runs for this unchanged
+            // initial selection, so the very first view of a freshly opened workspace needs this explicit
+            // call to get the same "fetched, and pulled if the tree is clean" treatment as switching back to
+            // History later does.
+            await Content.History.RefreshFromRemoteAsync();
             await Content.Output.LoadAsync();
 
             // Selecting (rather than just opening) also highlights it in the Files tree, matching what

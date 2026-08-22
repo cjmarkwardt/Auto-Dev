@@ -7,11 +7,22 @@ namespace AutoDev.ViewModels.Sidebar;
 public sealed partial class FileTreeNodeViewModel : ViewModelBase
 {
     private readonly IFileTreeService? _fileTreeService;
+
+    /// <summary>Resolves this node's own FileIgnoreOverride on demand - a closure supplied by FilesSectionViewModel (see its ResolveFileIgnore) rather than a fixed value, since it needs to reflect whatever .fileignore ruleset is *current* at the moment it's called, not just whatever was active when this node happened to be constructed. Threaded through to every child (see SyncChildren) so a folder expanded long after construction still resolves correctly.</summary>
+    private readonly Func<FileTreeNodeViewModel, bool?>? _resolveFileIgnore;
+
     private bool _childrenLoaded;
 
-    public FileTreeNodeViewModel(FileSystemEntry entry, IFileTreeService fileTreeService)
+    /// <summary>This path's own verdict from the current .fileignore ruleset (see _resolveFileIgnore) - null while no .fileignore is active in the workspace, in which case IsIgnored falls back to the git Status below instead.</summary>
+    [ObservableProperty]
+    private bool? _fileIgnoreOverride;
+
+    partial void OnFileIgnoreOverrideChanged(bool? value) => OnPropertyChanged(nameof(IsIgnored));
+
+    public FileTreeNodeViewModel(FileSystemEntry entry, IFileTreeService fileTreeService, Func<FileTreeNodeViewModel, bool?> resolveFileIgnore)
     {
         _fileTreeService = fileTreeService;
+        _resolveFileIgnore = resolveFileIgnore;
         Name = entry.Name;
         FullPath = entry.FullPath;
         IsDirectory = entry.IsDirectory;
@@ -27,6 +38,7 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
             Children.Add(new FileTreeNodeViewModel());
         }
 
+        FileIgnoreOverride = resolveFileIgnore(this);
         _ = LoadStatusAsync();
     }
 
@@ -76,7 +88,9 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
 
     public bool IsAdded => Status == GitFileStatus.Added;
     public bool IsModified => Status == GitFileStatus.Modified;
-    public bool IsIgnored => Status == GitFileStatus.Ignored;
+
+    /// <summary>Drives the Files section's dimming/hide-toggle (see FilesSectionView.axaml) - FileIgnoreOverride (a workspace-wide .fileignore, when present) takes over from the plain git Status.Ignored this used to always mean, entirely replacing it rather than combining with it.</summary>
+    public bool IsIgnored => FileIgnoreOverride ?? Status == GitFileStatus.Ignored;
 
     partial void OnIsExpandedChanged(bool value)
     {
@@ -112,6 +126,21 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
         }
 
         await Task.WhenAll([LoadStatusAsync(), .. Children.Select(c => c.RefreshGitStatusAsync())]);
+    }
+
+    /// <summary>Re-resolves FileIgnoreOverride for this node and every already-loaded descendant, via the same _resolveFileIgnore closure supplied at construction (so it picks up whatever the *current* .fileignore ruleset is, not whatever it was when each node was built) - called across the whole tree whenever .fileignore or .gitignore change (see FilesSectionViewModel.OnWatcherChanged). Collapsed folders that were never expanded hold only a placeholder child, so recursion naturally stops there - they resolve fresh (already up to date) whenever eventually expanded, same as RefreshGitStatusAsync.</summary>
+    public void RefreshFileIgnoreState()
+    {
+        if (IsPlaceholder || _resolveFileIgnore is null)
+        {
+            return;
+        }
+
+        FileIgnoreOverride = _resolveFileIgnore(this);
+        foreach (var child in Children)
+        {
+            child.RefreshFileIgnoreState();
+        }
     }
 
     /// <summary>Collapses this node and every already-loaded descendant - see FilesSectionViewModel.CollapseAll. A folder never expanded holds only a placeholder child (not itself IsDirectory), so recursion naturally stops there without needing a _childrenLoaded check.</summary>
@@ -169,7 +198,7 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
         {
             if (!existingPaths.Contains(entry.FullPath))
             {
-                Children.Insert(Math.Min(insertIndex, Children.Count), new FileTreeNodeViewModel(entry, _fileTreeService!));
+                Children.Insert(Math.Min(insertIndex, Children.Count), new FileTreeNodeViewModel(entry, _fileTreeService!, _resolveFileIgnore!));
             }
 
             insertIndex++;

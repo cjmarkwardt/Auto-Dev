@@ -16,6 +16,9 @@ public sealed class WorkspaceTaskSchedulerService(
     private readonly ConcurrentDictionary<string, byte> _userStopped = new();
     private CancellationTokenSource? _cts;
 
+    /// <summary>0 while idle, 1 while any .task file in this workspace is running - guards RunNowAsync so only one task total ever runs at a time per workspace, regardless of which .task file it is. Set/cleared with Interlocked rather than folded into _activeRuns.TryAdd itself, since that dictionary stays keyed by path (IsRunning(taskId)/GetLiveScripts still need to answer "is *this* task running") while this is a single, path-independent gate.</summary>
+    private int _runInProgress;
+
     public event Action<TaskRef>? TaskRunStarted;
     public event Action<TaskRef>? TaskScriptsAvailable;
     public event Action<TaskRunRecord>? TaskRunCompleted;
@@ -42,12 +45,20 @@ public sealed class WorkspaceTaskSchedulerService(
 
     public async Task RunNowAsync(TaskRef task, CancellationToken cancellationToken = default)
     {
-        if (!_activeRuns.TryAdd(task.Path, 0))
+        if (Interlocked.CompareExchange(ref _runInProgress, 1, 0) != 0)
         {
-            return; // already running
+            return; // another task (or this same one) is already running - only one task total runs at a time
         }
 
-        await RunAndTrackAsync(task, cancellationToken);
+        _activeRuns.TryAdd(task.Path, 0);
+        try
+        {
+            await RunAndTrackAsync(task, cancellationToken);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _runInProgress, 0);
+        }
     }
 
     private async Task RunAndTrackAsync(TaskRef task, CancellationToken cancellationToken)

@@ -48,12 +48,18 @@ public interface IGitService
 
     Task<bool> IsRepoAsync(string workspacePath, CancellationToken cancellationToken = default);
 
+    /// <summary>Whether git can resolve a commit identity (`user.name` and `user.email`) for `workspacePath` right now - checked before any action that might create a commit (see VersionSectionViewModel.RunBusyAsync), since git fails outright ("Please tell me who you are") without one, and that failure is fully avoidable by just asking first. Delegates to git's own resolution (`git var GIT_AUTHOR_IDENT`) rather than reading `user.name`/`user.email` separately - the same local-overriding-global-overriding-system precedence, but also correctly recognizes an identity that resolves any other way git itself would accept one (e.g. `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` env vars, or a key with multiple values, which a bare `git config <key>` read fails on with a "multiple values" error even though it genuinely is configured).</summary>
+    Task<bool> HasUserIdentityConfiguredAsync(string workspacePath, CancellationToken cancellationToken = default);
+
+    /// <summary>Sets `user.name`/`user.email` in the user's global git config (`git config --global`, not scoped to `workspacePath` - it's just where the `git` process happens to run from) - see HasUserIdentityConfiguredAsync/VersionSectionViewModel's git-identity prompt.</summary>
+    Task SetGlobalUserIdentityAsync(string workspacePath, string name, string email, CancellationToken cancellationToken = default);
+
     /// <summary>Whether HEAD currently resolves to a real commit - false for a freshly `git init`'d repo, or one cloned from an empty remote, whose branch still exists only as an "unborn" ref name with nothing committed to it yet. Checks the exit code of `git rev-parse --verify --quiet HEAD` rather than RevParseAsync's output, since plain `rev-parse HEAD` prints the literal text "HEAD" back to stdout (not empty) when it can't resolve it.</summary>
     Task<bool> HasCommitsAsync(string workspacePath, CancellationToken cancellationToken = default);
 
     Task InitAsync(string workspacePath, CancellationToken cancellationToken = default);
 
-    /// <summary>Clones `url` into a new `destinationName` subfolder of `parentDirectory` (there's no existing workspace to run "in" yet, unlike every other method here). ErrorMessage is git's own stderr on failure (bad URL, auth/permissions, network - see RunAsync's credential.helper/GIT_SSH_COMMAND overrides, which guarantee a missing-credentials failure like this comes back quickly with a real message instead of hanging on a prompt that will never come).</summary>
+    /// <summary>Clones `url` into a new `destinationName` subfolder of `parentDirectory` (there's no existing workspace to run "in" yet, unlike every other method here). ErrorMessage is git's own stderr on failure (bad URL, auth/permissions, network - see RunAsync's GIT_TERMINAL_PROMPT/GIT_SSH_COMMAND overrides, which guarantee a genuinely missing-credentials failure comes back quickly with a real message instead of hanging on a terminal prompt that will never come, while still letting the user's own configured credential helper answer non-interactively exactly as it would outside AutoDev).</summary>
     Task<GitCloneResult> CloneAsync(string parentDirectory, string url, string destinationName, CancellationToken cancellationToken = default);
 
     /// <summary>Stages every change in the working tree and commits it.</summary>
@@ -94,6 +100,9 @@ public interface IGitService
     Task CreateBranchAsync(string workspacePath, string branchName, string fromRef, CancellationToken cancellationToken = default);
 
     Task DeleteBranchAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
+
+    /// <summary>`git push origin --delete branchName` - deletes `branchName` on the "origin" remote. False if there's no remote configured at all (same convention as PushAsync), or the push itself fails (no permission, the remote ref is already gone, ...).</summary>
+    Task<bool> DeleteRemoteBranchAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
 
     /// <summary>`git tag -d tagName`.</summary>
     Task DeleteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default);
@@ -190,4 +199,13 @@ public interface IGitService
 
     /// <summary>Collapses every commit since `sinceRef` (exclusive) into one new commit at HEAD with `message` - `git reset --soft sinceRef` followed by `git commit`, which preserves HEAD's current tree/index exactly and only changes how many commits it took to get there.</summary>
     Task SquashSinceAsync(string workspacePath, string sinceRef, string message, CancellationToken cancellationToken = default);
+
+    /// <summary>`git stash push -u` (`-u` also grabs untracked files, not just tracked modifications) - false if the stash itself failed (rare; e.g. an in-progress merge/rebase git refuses to stash over). Callers only ever call this once they've already confirmed there's something pending to stash (see WorkspaceVersioningService.PullCurrentBranchWithStashAsync) - unlike a plain `git stash push` with nothing to stash, which exits 0 having done nothing, this is never called in a state where that ambiguity would matter.</summary>
+    Task<bool> StashPushAsync(string workspacePath, CancellationToken cancellationToken = default);
+
+    /// <summary>`git stash pop` (`stash@{0}`, the most recent entry) - Conflicts if popping produced merge conflicts, in which case (unlike a clean pop) git deliberately leaves the stash entry itself in place rather than auto-dropping it, so it isn't lost if the conflict can't be resolved; the caller is responsible for StashDropAsync once conflicts are actually resolved. Failed only for a genuine, non-conflict failure (no stash entries at all, ...).</summary>
+    Task<GitOperationOutcome> StashPopAsync(string workspacePath, CancellationToken cancellationToken = default);
+
+    /// <summary>`git stash drop` (`stash@{0}`) - used only after a conflicted StashPopAsync's conflicts have been resolved and staged, since a clean pop already drops its own stash entry automatically.</summary>
+    Task StashDropAsync(string workspacePath, CancellationToken cancellationToken = default);
 }

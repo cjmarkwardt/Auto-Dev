@@ -57,16 +57,32 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     /// <summary>
     /// True during a visible-but-automated turn (RunAutomatedTurnAsync's visible: true path - the
-    /// conflict-resolution loop). Distinct from _hiddenTurnActive/_activeRequest both: this kind of turn is
-    /// neither hidden from the user's eventual read of LastAssistantText, nor is it a user-submitted request
-    /// that should ever appear as a request card. Critically, ResolveRebaseConflictsAsync runs this turn
-    /// nested inside OnGenerateNormalTurnCompleted - i.e. after a real request's own ResultEvent already
-    /// marked it Completed - while IsSending flips true again for the exchange; without this separate flag,
-    /// that turn's assistant text would land in the just-completed request and corrupt already-persisted
-    /// data. LastAssistantText reads from _visibleAutomatedTurnText, never from a request.
+    /// conflict-resolution loop shared by Rebase, Merge Into Current/Rebase Current Onto This, and the
+    /// stash-pop conflict path in PullWithStashIfNeededAsync). Distinct from _hiddenTurnActive/_activeRequest
+    /// both: this kind of turn is neither hidden from the user's eventual read of LastAssistantText, nor is it
+    /// a user-submitted request that should ever appear as a request card - GenerateTabView shows its own
+    /// separate panel instead (bound to this property), with only Pause/Resume offered - see CanPause/
+    /// CanResume/PauseAsync/ResumeAsync, all of which branch on this alongside _activeRequest. Critically,
+    /// ResolveConflictsAsync runs this turn nested inside OnGenerateNormalTurnCompleted - i.e. after a real
+    /// request's own ResultEvent already marked it Completed - while IsSending flips true again for the
+    /// exchange; without this separate flag, that turn's assistant text would land in the just-completed
+    /// request and corrupt already-persisted data. LastAssistantText reads from _visibleAutomatedTurnText,
+    /// never from a request. An [ObservableProperty] (unlike _hiddenTurnActive, which the UI never needs to
+    /// react to) purely so the View's panel and OnVisibleAutomatedTurnActiveChanged below can bind/react to it.
     /// </summary>
+    [ObservableProperty]
     private bool _visibleAutomatedTurnActive;
     private readonly StringBuilder _visibleAutomatedTurnText = new();
+
+    partial void OnVisibleAutomatedTurnActiveChanged(bool value)
+    {
+        SendCommand.NotifyCanExecuteChanged();
+        CancelCommand.NotifyCanExecuteChanged();
+        StopCommand.NotifyCanExecuteChanged();
+        PauseCommand.NotifyCanExecuteChanged();
+        ResumeCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(ConflictResolutionStatusText));
+    }
 
     /// <summary>The request currently being worked on, if any - set only by SendAsync's real (non-automated) turn path, cleared once its ResultEvent/Cancel arrives. Never touched by automated turns (hidden or visible) - see _hiddenTurnActive/_visibleAutomatedTurnActive.</summary>
     private GenerateRequestViewModel? _activeRequest;
@@ -355,6 +371,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         StopCommand.NotifyCanExecuteChanged();
         PauseCommand.NotifyCanExecuteChanged();
         ResumeCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(ConflictResolutionStatusText));
     }
 
     /// <summary>
@@ -440,8 +457,11 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// <summary>See HiddenTurnStarted - always raised once the hidden turn ends, success or failure alike, so the workspace never stays locked down by a hidden turn that errored out.</summary>
     public event Action? HiddenTurnFinished;
 
-    /// <summary>The most recent plain-text reply of a visible automated turn (RunAutomatedTurnAsync's visible: true path - e.g. conflict-resolution) - used to inspect what Claude actually said/did.</summary>
+    /// <summary>The most recent plain-text reply of a visible automated turn (RunAutomatedTurnAsync's visible: true path - e.g. conflict-resolution) - used to inspect what Claude actually said/did, and (see CaptureVisibleAutomatedTurnText's own OnPropertyChanged) live-bound by GenerateTabView's conflict-resolution panel.</summary>
     public string? LastAssistantText => _visibleAutomatedTurnText.Length > 0 ? _visibleAutomatedTurnText.ToString() : null;
+
+    /// <summary>GenerateTabView's conflict-resolution panel's own status line - "Resolving…" while genuinely running, "Paused" while VisibleAutomatedTurnActive but IsSending has dropped (see PauseAsync). Notified alongside both OnVisibleAutomatedTurnActiveChanged and OnIsSendingChanged.</summary>
+    public string ConflictResolutionStatusText => IsSending ? "Resolving merge conflicts…" : "Paused";
 
     /// <summary>The plain-text reply of the most recent hidden turn (see RunAutomatedTurnAsync's visible: false path), if any - see HiddenTurnStarted.</summary>
     public string? LastHiddenTurnText => _hiddenTurnText.Length > 0 ? _hiddenTurnText.ToString() : null;
@@ -560,10 +580,13 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// <summary>
     /// Not gated on !IsSending - a message sent while a turn is already running is an interjection (see
     /// SendAsync's handling), not a new turn, so there's no reason to block it. Still gated on
-    /// !_hiddenTurnActive though: a hidden turn is a narrow, short exchange the user never sees, and an
-    /// interjection landing inside it could corrupt whatever strict reply format it's expecting back.
+    /// !_hiddenTurnActive and !VisibleAutomatedTurnActive though: both are narrow, strict-reply-format
+    /// exchanges (a hidden turn the user never even sees; a merge-conflict-resolution turn - see
+    /// GenerateTabViewModel.VisibleAutomatedTurnActive's own doc comment) that a stray interjection landing in
+    /// the same live session (SendAsync's own isInterjection path has no request card to attach it to during
+    /// either) could corrupt.
     /// </summary>
-    private bool CanSend() => !_hiddenTurnActive && !IsVersionActionBusy && !HasRunningTasks && (InputText.Trim().Length > 0 || Attachments.Count > 0 || FileAttachments.Count > 0) && _currentSessionKey is not null;
+    private bool CanSend() => !_hiddenTurnActive && !VisibleAutomatedTurnActive && !IsVersionActionBusy && !HasRunningTasks && (InputText.Trim().Length > 0 || Attachments.Count > 0 || FileAttachments.Count > 0) && _currentSessionKey is not null;
 
     partial void OnInputTextChanged(string value)
     {
@@ -706,9 +729,12 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// to ask a paused turn to stop. DisplayedRequest.IsWorking (which GenerateTabView.axaml's Cancel button
     /// visibility mirrors) is already false during an automated turn for the same reason, so the button
     /// naturally hides itself rather than showing disabled. !_cancelRequested guards against sending the same
-    /// "stop and revert" instruction twice while the first one is still being carried out.
+    /// "stop and revert" instruction twice while the first one is still being carried out. The explicit
+    /// !VisibleAutomatedTurnActive is redundant with _activeRequest being null during one (belt-and-suspenders
+    /// - a merge-conflict-resolution turn must never be interruptible via Cancel/Stop, only Pause/Resume, so
+    /// this stays true even if _activeRequest's own nullness here ever changed for an unrelated reason).
     /// </summary>
-    private bool CanCancel() => IsSending && _activeRequest is not null && !_cancelRequested;
+    private bool CanCancel() => IsSending && _activeRequest is not null && !_cancelRequested && !VisibleAutomatedTurnActive;
 
     /// <summary>
     /// Asks Claude to stop what it's doing and revert whatever it's changed so far this turn, rather than
@@ -741,29 +767,34 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         await _client.SendUserMessageAsync(instruction);
     }
 
-    /// <summary>Same gating as CanCancel, minus !_cancelRequested (stopping outright is always fine, even mid-cancel) - also true while the active request is Paused, since Stop is exactly as meaningful there (nothing to kill, but the paused turn still needs to be abandoned and the workspace unlocked).</summary>
-    private bool CanStop() => _activeRequest is not null && (IsSending || _activeRequest.IsPaused);
+    /// <summary>Same gating as CanCancel, minus !_cancelRequested (stopping outright is always fine, even mid-cancel) - also true while the active request is Paused, since Stop is exactly as meaningful there (nothing to kill, but the paused turn still needs to be abandoned and the workspace unlocked). Explicitly excludes an automated turn (see CanCancel) - a merge-conflict-resolution turn can only ever be Paused/Resumed, never Stopped, so forcibly killing it and leaving the repository mid-conflict is never offered.</summary>
+    private bool CanStop() => !VisibleAutomatedTurnActive && _activeRequest is not null && (IsSending || _activeRequest.IsPaused);
 
     /// <summary>Forcibly stops the active request's turn by killing the underlying Claude CLI subprocess outright (see ClaudeSessionClient.DisposeAsync's Kill fallback) if one is even running, rather than waiting for it to wind down on its own - the request is marked Cancelled with whatever partial output had streamed in so far, and a fresh subprocess starts on the next Send. This is what Cancel itself used to do before it became the "ask nicely" action above.</summary>
     [RelayCommand(CanExecute = nameof(CanStop))]
     private Task StopAsync() => KillActiveTurnAsync(GenerateRequestStatus.Cancelled, success: false);
 
-    /// <summary>Same gating as CanCancel (needs a genuinely running turn to pause).</summary>
-    private bool CanPause() => IsSending && _activeRequest is not null;
+    /// <summary>A genuine user-submitted turn (_activeRequest) or a visible automated conflict-resolution turn (VisibleAutomatedTurnActive) - either way, needs to be genuinely running right now (IsSending) to pause.</summary>
+    private bool CanPause() => IsSending && (_activeRequest is not null || VisibleAutomatedTurnActive);
 
     /// <summary>
     /// Immediately stops the AI's work (kills the subprocess, same as Stop) but keeps it resumable: captures
     /// the live session id first (same mechanism RestartClientForSettingsChange uses for a model/effort
-    /// change) so Resume can pick the exact same conversation back up, and marks the request Paused rather
-    /// than Cancelled/Completed - persisted to disk immediately, so the pause survives an app restart (see
-    /// SwitchSessionAsync's loader, which restores a Paused request as still-active on load).
+    /// change) so Resume can pick the exact same conversation back up. For a genuine request, marks it Paused
+    /// rather than Cancelled/Completed - persisted to disk immediately, so the pause survives an app restart
+    /// (see SwitchSessionAsync's loader, which restores a Paused request as still-active on load). For an
+    /// automated conflict-resolution turn there's no request card to mark - VisibleAutomatedTurnActive simply
+    /// stays true while IsSending drops, and _pendingAutomatedTurn (RunAutomatedTurnAsync's own
+    /// TaskCompletionSource) is left untouched/still pending, so whichever git action is awaiting it
+    /// (ResolveConflictsAsync) just stays suspended until ResumeAsync eventually leads to a real ResultEvent;
+    /// this pause is session-only, not restart-persisted, unlike a genuine request's.
     /// Deliberately does NOT raise NormalTurnCompleted - the workspace stays exactly as locked as it was
     /// while the turn was genuinely working, via TurnPaused instead (see VersionSectionViewModel.IsAiPaused).
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanPause))]
     private async Task PauseAsync()
     {
-        if (_activeRequest is null)
+        if (_activeRequest is null && !VisibleAutomatedTurnActive)
         {
             return;
         }
@@ -787,34 +818,44 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // was still Working) even though IsPaused-bound bindings elsewhere (e.g. the button's own IsVisible)
         // already updated fine, since those re-evaluate live off the property instead of a point-in-time notify.
         _cancelRequested = false;
-        _activeRequest.Status = GenerateRequestStatus.Paused;
+        if (_activeRequest is not null)
+        {
+            _activeRequest.Status = GenerateRequestStatus.Paused;
+            await PersistCurrentRequestsAsync();
+        }
+
         IsSending = false;
-        await PersistCurrentRequestsAsync();
 
         TurnPaused?.Invoke();
     }
 
-    private bool CanResume() => _activeRequest is { Status: GenerateRequestStatus.Paused };
+    /// <summary>A genuine user-submitted turn Paused, or an automated conflict-resolution turn currently sitting paused (VisibleAutomatedTurnActive stays true across a pause - see PauseAsync - so !IsSending is what actually distinguishes "paused" from "working" for that case).</summary>
+    private bool CanResume() => _activeRequest is { Status: GenerateRequestStatus.Paused } || (VisibleAutomatedTurnActive && !IsSending);
 
     /// <summary>
     /// Re-enters the working state and tells Claude to continue from where it left off, resuming the exact
     /// same session id PauseAsync captured - still the same request/turn (see GenerateRequestStatus.Paused's
     /// own doc comment), not a new one, no matter how many times it's been paused and resumed. "In the
     /// background" the same way a fresh Send is: this returns as soon as the message is sent, not once
-    /// Claude actually replies.
+    /// Claude actually replies. For an automated conflict-resolution turn, the eventual ResultEvent completes
+    /// _pendingAutomatedTurn exactly as if it had never been paused (see Handle's ResultEvent case, which
+    /// doesn't distinguish a resumed automated turn from one that ran straight through).
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanResume))]
     private async Task ResumeAsync()
     {
-        if (_activeRequest is null)
+        if (_activeRequest is null && !VisibleAutomatedTurnActive)
         {
             return;
         }
 
-        _activeRequest.Status = GenerateRequestStatus.Working;
-        _activeRequest.CurrentActionStartedAt = DateTimeOffset.UtcNow;
-        _pendingTurnCount = 1;
-        await PersistCurrentRequestsAsync();
+        if (_activeRequest is not null)
+        {
+            _activeRequest.Status = GenerateRequestStatus.Working;
+            _activeRequest.CurrentActionStartedAt = DateTimeOffset.UtcNow;
+            _pendingTurnCount = 1;
+            await PersistCurrentRequestsAsync();
+        }
 
         IsSending = true;
         TurnResumed?.Invoke();
@@ -860,6 +901,37 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     }
 
     /// <summary>
+    /// KillActiveTurnAsync's counterpart for a visible automated (conflict-resolution) turn, which has no
+    /// request card for that to finalize - used only by StallWatchdogElapsedAsync, since a genuinely stuck
+    /// automated turn has no Stop button of its own to recover it the way a normal turn does (see
+    /// CanStop/CanCancel, both deliberately false the whole time - see VisibleAutomatedTurnActive's own doc
+    /// comment). Resolves _pendingAutomatedTurn with false (not a real confirmation of success) so whichever
+    /// git action is awaiting it (ResolveConflictsAsync) unblocks and re-checks HasConflictsAsync itself,
+    /// which - still true - lets it retry with a fresh turn up to its own attempt budget, exactly the same
+    /// recovery path a normal completed-but-still-conflicted reply already takes.
+    /// </summary>
+    private async Task KillAutomatedTurnAsync()
+    {
+        if (!VisibleAutomatedTurnActive)
+        {
+            return;
+        }
+
+        var client = _client;
+        _client = null;
+        if (client is not null)
+        {
+            await client.DisposeAsync();
+        }
+
+        VisibleAutomatedTurnActive = false;
+        IsSending = false;
+
+        _pendingAutomatedTurn?.TrySetResult(false);
+        _pendingAutomatedTurn = null;
+    }
+
+    /// <summary>
     /// The guaranteed backstop: fires every StallCheckInterval regardless of anything else happening, and
     /// force-stops the active request the moment it's gone StallTimeout with no event at all. This is
     /// deliberately blunt rather than trying to diagnose *why* nothing arrived - every specific cause found
@@ -878,7 +950,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// </summary>
     private async Task StallWatchdogElapsedAsync()
     {
-        if (!IsSending || _activeRequest is null)
+        if (!IsSending || (_activeRequest is null && !VisibleAutomatedTurnActive))
         {
             return;
         }
@@ -893,7 +965,14 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             "Generate turn for {WorkspacePath} produced no events for {SilentFor} (>= {Timeout}) - treating as stalled and force-completing with whatever output had already streamed in.",
             _workspacePath, silentFor, StallTimeout);
 
-        await KillActiveTurnAsync(GenerateRequestStatus.Completed, success: true);
+        if (_activeRequest is not null)
+        {
+            await KillActiveTurnAsync(GenerateRequestStatus.Completed, success: true);
+        }
+        else
+        {
+            await KillAutomatedTurnAsync();
+        }
     }
 
     /// <summary>
@@ -977,10 +1056,11 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     public async Task<bool> RunAutomatedTurnAsync(string instruction, bool visible = true, CancellationToken cancellationToken = default)
     {
         _hiddenTurnActive = !visible;
-        _visibleAutomatedTurnActive = visible;
+        VisibleAutomatedTurnActive = visible;
         if (visible)
         {
             _visibleAutomatedTurnText.Clear();
+            OnPropertyChanged(nameof(LastAssistantText));
         }
         else
         {
@@ -1077,7 +1157,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         _pendingAutomatedTurn?.TrySetResult(false);
         _pendingAutomatedTurn = null;
         _hiddenTurnActive = false;
-        _visibleAutomatedTurnActive = false;
+        VisibleAutomatedTurnActive = false;
 
         IsSending = false;
     }
@@ -1101,7 +1181,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 {
                     CaptureHiddenAssistantText(assistant);
                 }
-                else if (_visibleAutomatedTurnActive)
+                else if (VisibleAutomatedTurnActive)
                 {
                     CaptureVisibleAutomatedTurnText(assistant);
                 }
@@ -1122,7 +1202,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 _pendingAutomatedTurn?.TrySetResult(!result.IsError);
                 _pendingAutomatedTurn = null;
                 _hiddenTurnActive = false;
-                _visibleAutomatedTurnActive = false;
+                VisibleAutomatedTurnActive = false;
 
                 if (wasAutomatedTurn)
                 {
@@ -1213,6 +1293,10 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         {
             _visibleAutomatedTurnText.Append(block.Text);
         }
+
+        // Live-updates GenerateTabView's conflict-resolution panel as Claude's reply streams in, the same way
+        // CaptureActiveRequestOutput does for a normal request's own Output.
+        OnPropertyChanged(nameof(LastAssistantText));
     }
 
     private void CaptureActiveRequestOutput(AssistantMessageEvent assistant)

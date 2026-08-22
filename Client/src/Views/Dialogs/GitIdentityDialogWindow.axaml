@@ -1,0 +1,25 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AutoDev.ViewModels.Dialogs"
+        x:Class="AutoDev.Views.Dialogs.GitIdentityDialogWindow"
+        x:DataType="vm:GitIdentityDialogViewModel"
+        Width="420" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Git Identity"
+        Background="{DynamicResource EditorBackgroundBrush}">
+    <StackPanel Margin="16" Spacing="10">
+        <TextBlock Text="git needs a name and email to attribute commits to before it can commit anything in this workspace. This sets them globally (git config --global), for every repository, not just this one."
+                   Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" />
+
+        <TextBlock Text="Name" Foreground="{DynamicResource TextMutedBrush}" Margin="0,6,0,0" />
+        <TextBox Text="{Binding Name}" Name="NameBox" />
+
+        <TextBlock Text="Email" Foreground="{DynamicResource TextMutedBrush}" Margin="0,6,0,0" />
+        <TextBox Text="{Binding Email}" Name="EmailBox" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+            <Button Content="Cancel" Command="{Binding CancelCommand}" />
+            <Button Content="OK" Classes="accent" Command="{Binding OkCommand}" IsDefault="True" IsEnabled="{Binding CanConfirm}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

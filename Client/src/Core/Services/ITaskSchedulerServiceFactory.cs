@@ -6,13 +6,13 @@ namespace AutoDev.Core.Services;
 /// <summary>A .task file's identity for scheduling purposes - Path is workspace-relative and doubles as the key every scheduler/history lookup uses (a task's identity now that there's no central registry issuing GUIDs); Name is the display name (filename without extension), carried alongside since callers that only have Path (e.g. history enumeration) still need something to show.</summary>
 public sealed record TaskRef(string Path, string Name);
 
-/// <summary>Tasks only ever run manually (via RunNowAsync) - this tracks/broadcasts the state of those runs across every viewer (sidebar rows, the Output tab) for one workspace.</summary>
+/// <summary>Tasks only ever run manually (via RunNowAsync) - this tracks/broadcasts the state of those runs across every viewer (sidebar rows, the Output tab) for one workspace. Only one task total ever runs at a time per workspace - see RunNowAsync.</summary>
 public interface IWorkspaceTaskScheduler : IDisposable
 {
     /// <summary>Establishes the token every run links against so disposing the scheduler (workspace tab closed, app shutting down) actually kills in-flight subprocesses - call once per workspace before the first RunNowAsync.</summary>
     void Start();
 
-    /// <summary>Runs one task immediately (used by the sidebar's "Run" context-menu action) - a no-op if it's already running.</summary>
+    /// <summary>Runs one task immediately (used by the sidebar's "Run" context-menu action) - a no-op if this same task is already running, or if any other .task file in this workspace is: only one task total runs at a time per workspace.</summary>
     Task RunNowAsync(TaskRef task, CancellationToken cancellationToken = default);
 
     bool IsRunning(string taskId);
