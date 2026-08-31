@@ -23,4 +23,7 @@ public interface IFileTreeService
 
     /// <summary>A file or folder's git status - drives the Files section's per-row status color (see GitFileStatus). Unmodified if the workspace isn't a git repo.</summary>
     Task<GitFileStatus> GetStatusAsync(string path, CancellationToken cancellationToken = default);
+
+    /// <summary>Bulk equivalent of GetStatusAsync - one git status/ls-files call for every path in `paths` at once instead of a subprocess per path, keyed by each input path exactly as given. `rootPath` is the workspace root to run git from (paths don't need to share a single parent the way GetStatusAsync derives one from a lone path).</summary>
+    Task<IReadOnlyDictionary<string, GitFileStatus>> GetStatusesAsync(string rootPath, IReadOnlyList<string> paths, CancellationToken cancellationToken = default);
 }

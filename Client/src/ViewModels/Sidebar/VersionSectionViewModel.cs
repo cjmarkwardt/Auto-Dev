@@ -31,6 +31,9 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 
     private CancellationTokenSource? busyCts;
 
+    /// <summary>Whether this workspace's own tab is the currently-selected one - see SetActive. Starts true, matching a freshly opened workspace always becoming the selected tab immediately (see WorkspaceFactory/MainShellViewModel.OnWorkspaceOpened).</summary>
+    private bool isActive = true;
+
     /// <summary>Set only once the current busy action has failed (see MarkFailed) - RunBusyAsync awaits this instead of closing the overlay immediately; ConfirmBusyCommand completes it once the user has actually seen GitOutputLog and dismisses it themselves.</summary>
     private TaskCompletionSource? busyConfirmTcs;
 
@@ -58,7 +61,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 
         // GitOutputLogText exists purely so the busy overlay can bind one SelectableTextBlock to the whole
         // log as a single selectable/copyable block, rather than one plain (unselectable) TextBlock per line
-        // via an ItemsControl - see WorkspaceTabView.axaml.
+        // via an ItemsControl - see WorkspaceView.axaml.
         GitOutputLog.CollectionChanged += (_, _) => OnPropertyChanged(nameof(GitOutputLogText));
     }
 
@@ -78,11 +81,11 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isBusyFailed;
 
-    /// <summary>True from the moment a user submits a Generate message until the turn finishes - see OnGenerateNormalTurnStarted/Completed. Drives IsInteractionBlocked, which locks the sidebar sections and (via WorkspaceTabViewModel/WorkspaceContentViewModel) the Edit tab and History tab's controls.</summary>
+    /// <summary>True from the moment a user submits a Generate message until the turn finishes - see OnGenerateNormalTurnStarted/Completed. Drives IsInteractionBlocked, which locks the sidebar sections and (via WorkspaceViewModel/WorkspaceContentViewModel) the Edit tab and History tab's controls.</summary>
     [ObservableProperty]
     private bool _isAiWorking;
 
-    /// <summary>Set by WorkspaceTabViewModel from FilesSectionViewModel.HasRunningTasks - true while any .task file in this workspace is running. Folded into IsInteractionBlocked so a running task locks Commit/Merge/etc. here and every History tab action exactly like a busy version action or an in-flight AI turn already does: manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree.</summary>
+    /// <summary>Set by WorkspaceViewModel from FilesSectionViewModel.HasRunningTasks - true while any .task file in this workspace is running. Folded into IsInteractionBlocked so a running task locks Commit/Merge/etc. here and every History tab action exactly like a busy version action or an in-flight AI turn already does: manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree.</summary>
     [ObservableProperty]
     private bool _hasRunningTasks;
 
@@ -93,7 +96,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     /// <summary>The current busy action's own live git command log (command lines plus their output) - see RunBusyAsync/GitCommandLogSink. Shown in the busy overlay; cleared at the start of every new action.</summary>
     public ObservableCollection<string> GitOutputLog { get; } = [];
 
-    /// <summary>GitOutputLog joined into one string, newest content last - what the busy overlay's own SelectableTextBlock actually binds to (see WorkspaceTabView.axaml), so the whole log selects/copies as one continuous block instead of needing to be dragged across one unselectable TextBlock per line.</summary>
+    /// <summary>GitOutputLog joined into one string, newest content last - what the busy overlay's own SelectableTextBlock actually binds to (see WorkspaceView.axaml), so the whole log selects/copies as one continuous block instead of needing to be dragged across one unselectable TextBlock per line.</summary>
     public string GitOutputLogText => string.Join('\n', GitOutputLog);
 
     /// <summary>Blocks every git action triggered from the History tab or this section's own Commit/Reset - true during a git-only action (IsBusy), the whole Generate-turn-plus-commit workflow (IsAiWorking), or a running .task file (HasRunningTasks).</summary>
@@ -142,7 +145,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     /// <summary>Raised whenever the targeted branch/tag/commit changes, at the end of every RefreshAsync.</summary>
     public event Action<GitTarget?>? TargetChanged;
 
-    /// <summary>Raised the instant ResolveConflictsAsync actually starts working a conflict (never for a call that turns out to be a no-op) - WorkspaceTabViewModel switches WorkspaceContentViewModel.SelectedTabIndex to Generate in response, so the user lands on the exchange automatically instead of needing to notice IsAiWorking flipped on and go find it themselves.</summary>
+    /// <summary>Raised the instant ResolveConflictsAsync actually starts working a conflict (never for a call that turns out to be a no-op) - WorkspaceViewModel switches WorkspaceContentViewModel.SelectedTabIndex to Generate in response, so the user lands on the exchange automatically instead of needing to notice IsAiWorking flipped on and go find it themselves.</summary>
     public event Action? SwitchToGenerateRequested;
 
     private void OnGenerateNormalTurnStarted() => IsAiWorking = true;
@@ -187,11 +190,68 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
             await versioningService.EnsureLocalGitExcludeAsync();
         }
 
-        periodicSyncTimer.Start();
+        // Guarded rather than an unconditional Start() - the tab could have already been switched away from
+        // (see SetActive) by the time this async setup finishes, in which case the periodic sync shouldn't
+        // start running at all until it's actually selected again.
+        if (isActive)
+        {
+            periodicSyncTimer.Start();
+        }
     }
 
     /// <summary>
-    /// Set by WorkspaceTabViewModel to flush the Edit tab's pending debounced autosave before every mutating
+    /// Pauses (Deactivate) or resumes (Activate) the periodic background remote sync while this workspace's
+    /// own tab isn't the one currently selected - see FilesSectionViewModel.SetActive's identical reasoning.
+    /// An in-flight busy action (RunBusyAsync) or AI turn is never interrupted by this - it's a plain
+    /// already-running Task either way, wholly unrelated to periodicSyncTimer, so it keeps running to
+    /// completion regardless of which tab is selected.
+    /// </summary>
+    public void SetActive(bool active)
+    {
+        if (active)
+        {
+            Activate();
+        }
+        else
+        {
+            Deactivate();
+        }
+    }
+
+    private void Activate()
+    {
+        if (isActive)
+        {
+            return;
+        }
+
+        isActive = true;
+        periodicSyncTimer.Start();
+
+        // Nothing re-synced while paused - a task run, or an action from elsewhere (another clone, a git
+        // command run outside this app), could have changed the target/pending-changes state in the
+        // meantime. Skipped while a busy action or AI turn is already in flight - whatever's running will
+        // settle this itself once it finishes, and reading git state concurrently with it risks a confusing
+        // intermediate read.
+        if (!IsInteractionBlocked)
+        {
+            _ = RefreshAsync();
+        }
+    }
+
+    private void Deactivate()
+    {
+        if (!isActive)
+        {
+            return;
+        }
+
+        isActive = false;
+        periodicSyncTimer.Stop();
+    }
+
+    /// <summary>
+    /// Set by WorkspaceViewModel to flush the Edit tab's pending debounced autosave before every mutating
     /// action. Without this, typing in Edit then immediately triggering a branch action (within the 750ms
     /// autosave debounce) lets the action happen while the edit still only exists in memory - the debounce
     /// then fires afterward and silently writes that stale content onto whatever branch ended up checked out.
@@ -290,7 +350,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 
     private bool CanCancelBusy() => busyCts is not null && !IsBusyFailed;
 
-    /// <summary>The busy overlay's own Cancel button - signals the running action's CancellationToken, which RunBusyAsync's catch block turns into a revert back to the pre-action snapshot. Hidden (see CanCancelBusy/WorkspaceTabView.axaml) once the action has already finished and failed - ConfirmBusy takes over from there.</summary>
+    /// <summary>The busy overlay's own Cancel button - signals the running action's CancellationToken, which RunBusyAsync's catch block turns into a revert back to the pre-action snapshot. Hidden (see CanCancelBusy/WorkspaceView.axaml) once the action has already finished and failed - ConfirmBusy takes over from there.</summary>
     [RelayCommand(CanExecute = nameof(CanCancelBusy))]
     private void CancelBusy() => busyCts?.Cancel();
 

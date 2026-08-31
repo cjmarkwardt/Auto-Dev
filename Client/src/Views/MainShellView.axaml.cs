@@ -31,9 +31,7 @@ public partial class MainShellView : UserControl
             return;
         }
 
-        if (e.Source is Visual sourceVisual &&
-            (sourceVisual.FindAncestorOfType<Button>(includeSelf: true) is not null ||
-             sourceVisual.FindAncestorOfType<ListBoxItem>(includeSelf: true) is not null))
+        if (e.Source is Visual sourceVisual && sourceVisual.FindAncestorOfType<Button>(includeSelf: true) is not null)
         {
             return;
         }
@@ -51,17 +49,6 @@ public partial class MainShellView : UserControl
 
         window.BeginMoveDrag(e);
     }
-
-    private void OnRecentBackdropPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (DataContext is MainShellViewModel vm)
-        {
-            vm.Header.CloseRecentMenu();
-        }
-    }
-
-    /// <summary>Stops a click inside the dropdown's own body from bubbling to the backdrop and closing it.</summary>
-    private void OnRecentPopupPointerPressed(object? sender, PointerPressedEventArgs e) => e.Handled = true;
 
     private void OnRecentRowPointerPressed(object? sender, PointerPressedEventArgs e)
     {

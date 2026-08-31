@@ -191,9 +191,19 @@
         <Setter Property="Foreground" Value="{DynamicResource UsageCriticalBrush}" />
     </Style>
 
-    <!-- Workspace tab title (header tab strip) - switches to accent blue while that tab's AI is working
-         (see WorkspaceTabViewModel.Version.IsAiWorking, mirrors the tab's own working-indicator dot). -->
-    <Style Selector="TextBlock.tabTitle.aiWorking">
+    <!-- Title bar's workspace-name label - switches to accent blue while its AI is working or a task is
+         running (see WorkspaceViewModel.Version.IsAiWorking/Files.HasRunningTasks, mirrors the adjacent
+         working-indicator dot in MainShellView.axaml). Foreground is set entirely via these styles, not a
+         local attribute in the View - a local value always wins over a style setter regardless of class,
+         which would otherwise permanently shadow the working/taskRunning state below (same reasoning as
+         Border.aiStatusBar's own working/taskRunning pair). -->
+    <Style Selector="TextBlock.workspaceTitle">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+    <Style Selector="TextBlock.workspaceTitle.working">
+        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="TextBlock.workspaceTitle.taskRunning">
         <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
     </Style>
 

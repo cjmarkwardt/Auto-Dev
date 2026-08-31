@@ -43,15 +43,17 @@ public partial class EditTabView : UserControl
     private readonly Dictionary<string, TextDocument> _documentsByPath = [];
 
     /// <summary>
-    /// The EditTabViewModel OnDataContextChanged is currently subscribed to, if any - tracked so it can
-    /// unsubscribe before subscribing to whatever replaces it. Without this, switching the top-level
-    /// workspace tab strip (which Avalonia can satisfy by recycling this same EditTabView instance across
-    /// different WorkspaceTabViewModels, rather than tearing it down - see WorkspaceTabView's own identical
-    /// fix) left the OLD tab's ViewModel still subscribed forever. That old, now-backgrounded tab's own
-    /// NavigateToMatch (e.g. from its own find bar recomputing for any reason while backgrounded) then fired
-    /// straight into THIS view's OnNavigateToMatch/_editor, which by then displayed a completely different,
-    /// differently-sized file - Select(offset, length) with an offset valid for the old tab's document but
-    /// not the new one's crashed with an ArgumentOutOfRangeException.
+    /// The EditTabViewModel OnDataContextChanged/DetachedFromVisualTree are currently subscribed to, if any -
+    /// tracked so both can unsubscribe it. Avalonia never recycles this view across a workspace-tab switch -
+    /// a brand new EditTabView is templated for whichever WorkspaceViewModel becomes selected, and the
+    /// previous one is simply dropped (see WorkspaceView's own identical fix/doc comment). Without
+    /// unsubscribing on detach too, that dropped instance's subscription to its own workspace's long-lived
+    /// EditTabViewModel (which doesn't go away just because a different tab got selected) keeps it permanently
+    /// reachable - and that old, now-backgrounded tab's own NavigateToMatch (e.g. from its own find bar
+    /// recomputing for any reason while backgrounded) fired straight into THIS view's
+    /// OnNavigateToMatch/_editor, which by then displayed a completely different, differently-sized file -
+    /// Select(offset, length) with an offset valid for the old tab's document but not the new one's crashed
+    /// with an ArgumentOutOfRangeException.
     /// </summary>
     private EditTabViewModel? _subscribedVm;
 
@@ -122,8 +124,14 @@ public partial class EditTabView : UserControl
         AttachedToVisualTree += (_, _) => FocusEditor();
 
         // Releases the memory-mapped file the moment this tab closes, rather than leaving it open for the
-        // rest of the process's lifetime - see _hexReader's own doc comment.
-        DetachedFromVisualTree += (_, _) => TeardownHexView();
+        // rest of the process's lifetime - see _hexReader's own doc comment. Also unsubscribes from the VM
+        // (see _subscribedVm's own doc comment) - OnDataContextChanged alone never fires again once this
+        // view is simply dropped rather than reused.
+        DetachedFromVisualTree += (_, _) =>
+        {
+            TeardownHexView();
+            Unsubscribe();
+        };
 
         // Tunnel (not bubble): caught here before any descendant (the text editor, a button) gets a chance
         // to consume Left/Right itself, so Alt+Left/Alt+Right navigate file history from anywhere focus
@@ -387,16 +395,7 @@ public partial class EditTabView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (_subscribedVm is not null)
-        {
-            _subscribedVm.FocusRequested -= FocusEditor;
-            _subscribedVm.FileLoaded -= OnFileLoaded;
-            _subscribedVm.NavigateToMatch -= OnNavigateToMatch;
-            _subscribedVm.FindBarFocusRequested -= FocusFindBox;
-            _subscribedVm.PreviewSearchInvalidated -= RecomputePreviewMatches;
-            _subscribedVm.PreviewMatchMoveRequested -= MovePreviewMatch;
-            _subscribedVm = null;
-        }
+        Unsubscribe();
 
         if (Vm is null)
         {
@@ -411,6 +410,22 @@ public partial class EditTabView : UserControl
         Vm.PreviewMatchMoveRequested += MovePreviewMatch;
         _subscribedVm = Vm;
         OnFileLoaded(null);
+    }
+
+    private void Unsubscribe()
+    {
+        if (_subscribedVm is null)
+        {
+            return;
+        }
+
+        _subscribedVm.FocusRequested -= FocusEditor;
+        _subscribedVm.FileLoaded -= OnFileLoaded;
+        _subscribedVm.NavigateToMatch -= OnNavigateToMatch;
+        _subscribedVm.FindBarFocusRequested -= FocusFindBox;
+        _subscribedVm.PreviewSearchInvalidated -= RecomputePreviewMatches;
+        _subscribedVm.PreviewMatchMoveRequested -= MovePreviewMatch;
+        _subscribedVm = null;
     }
 
     private void FocusEditor() => Dispatcher.UIThread.Post(() => _editor?.Focus(), DispatcherPriority.Background);

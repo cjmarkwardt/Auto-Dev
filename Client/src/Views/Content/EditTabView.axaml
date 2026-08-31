@@ -69,6 +69,17 @@
                         <Path Classes="lineIcon" Data="{StaticResource FindIconGeometry}" Width="12" Height="12" />
                     </ToggleButton>
 
+                    <!-- Scales the whole rendered preview (see EditTabViewModel.MarkdownZoom) - added so a
+                         Mermaid diagram rendered too small/dense to read at 1:1 can be zoomed in without
+                         leaving the preview. The middle button both displays the current level and resets it. -->
+                    <Button Classes="iconButton" Content="−" Command="{Binding ZoomOutMarkdownCommand}"
+                            IsVisible="{Binding ShowMarkdownPreview}" ToolTip.Tip="Zoom out" Padding="6,2" FontSize="13" />
+                    <Button Classes="iconButton" Content="{Binding MarkdownZoom, StringFormat={}{0:P0}}"
+                            Command="{Binding ResetMarkdownZoomCommand}"
+                            IsVisible="{Binding ShowMarkdownPreview}" ToolTip.Tip="Reset zoom" Padding="6,2" FontSize="11" MinWidth="44" />
+                    <Button Classes="iconButton" Content="+" Command="{Binding ZoomInMarkdownCommand}"
+                            IsVisible="{Binding ShowMarkdownPreview}" ToolTip.Tip="Zoom in" Padding="6,2" FontSize="13" />
+
                     <!-- Markdown-only edit toggle (see EditTabViewModel.IsEditingMarkdown) - hidden entirely for any
                          other file type. Off (default) renders the file; on edits it as plain text. -->
                     <ToggleButton Classes="iconButton" IsChecked="{Binding IsEditingMarkdown}"
@@ -128,16 +139,26 @@
                      The FontFamily/Foreground/Background overrides for code spans/blocks live in App.axaml's
                      Application.Styles, not nested here - MarkdownScrollViewer reconstructs its own Styles
                      collection when Markdown updates, which was silently discarding a Styles override nested
-                     directly under this element (see App.axaml for the actual fix and why). -->
-                <mdxaml:MarkdownScrollViewer Name="MarkdownPreview" Markdown="{Binding RenderedContent}" Margin="14,8"
-                                             SelectionEnabled="True">
-                    <mdxaml:MarkdownScrollViewer.Plugins>
-                        <mdxaml:MdAvPlugins>
-                            <syntaxHigh:SyntaxHighlight />
-                            <svc:SvgMarkdownPlugin />
-                        </mdxaml:MdAvPlugins>
-                    </mdxaml:MarkdownScrollViewer.Plugins>
-                </mdxaml:MarkdownScrollViewer>
+                     directly under this element (see App.axaml for the actual fix and why).
+
+                     LayoutTransformControl (not a plain RenderTransform) wraps it for MarkdownZoom - it
+                     re-measures the child at the scaled size rather than just stretching pixels, so
+                     MarkdownScrollViewer's own internal scrolling still sees (and can scroll across) the
+                     content's true zoomed size instead of clipping it at the pre-zoom viewport bounds. -->
+                <LayoutTransformControl>
+                    <LayoutTransformControl.LayoutTransform>
+                        <ScaleTransform ScaleX="{Binding MarkdownZoom}" ScaleY="{Binding MarkdownZoom}" />
+                    </LayoutTransformControl.LayoutTransform>
+                    <mdxaml:MarkdownScrollViewer Name="MarkdownPreview" Markdown="{Binding RenderedContent}" Margin="14,8"
+                                                 SelectionEnabled="True">
+                        <mdxaml:MarkdownScrollViewer.Plugins>
+                            <mdxaml:MdAvPlugins>
+                                <syntaxHigh:SyntaxHighlight />
+                                <svc:SvgMarkdownPlugin />
+                            </mdxaml:MdAvPlugins>
+                        </mdxaml:MarkdownScrollViewer.Plugins>
+                    </mdxaml:MarkdownScrollViewer>
+                </LayoutTransformControl>
             </Border>
 
             <ScrollViewer IsVisible="{Binding IsImage}" Background="{DynamicResource EditorBackgroundBrush}">

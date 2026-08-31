@@ -28,7 +28,7 @@ public sealed partial class WorkspaceContentViewModel(
     private bool _isAiWorking;
     private bool _hasRunningTasks;
 
-    /// <summary>History is the tab shown first when a workspace opens (fresh, cloned, or restored on launch) - a new WorkspaceContentViewModel is created exactly once per opened workspace tab, so this default alone covers every case. History's own data still populates correctly despite [ObservableProperty]'s change hooks never firing for an unchanged initial value (skipping the HistoryTabIndex case in OnSelectedTabIndexChanged below) - HistoryTabViewModel independently reloads on Version.TargetChanged, which always fires once during WorkspaceTabViewModel.InitializeAsync regardless of which tab is selected.</summary>
+    /// <summary>History is the tab shown first when a workspace opens (fresh, cloned, or restored on launch) - a new WorkspaceContentViewModel is created exactly once per opened workspace tab, so this default alone covers every case. History's own data still populates correctly despite [ObservableProperty]'s change hooks never firing for an unchanged initial value (skipping the HistoryTabIndex case in OnSelectedTabIndexChanged below) - HistoryTabViewModel independently reloads on Version.TargetChanged, which always fires once during WorkspaceViewModel.InitializeAsync regardless of which tab is selected.</summary>
     [ObservableProperty]
     private int _selectedTabIndex = HistoryTabIndex;
 
@@ -87,7 +87,7 @@ public sealed partial class WorkspaceContentViewModel(
         UpdateEditReadOnly();
     }
 
-    /// <summary>Edit is also forced read-only for as long as any .task file in this workspace is running - manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree. Mirrors ApplyInteractionBlockedState, kept as its own method/flag purely so ComputeReadOnlyReason can report which one actually applies. Called from WorkspaceTabViewModel whenever FilesSectionViewModel.HasRunningTasks changes.</summary>
+    /// <summary>Edit is also forced read-only for as long as any .task file in this workspace is running - manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree. Mirrors ApplyInteractionBlockedState, kept as its own method/flag purely so ComputeReadOnlyReason can report which one actually applies. Called from WorkspaceViewModel whenever FilesSectionViewModel.HasRunningTasks changes.</summary>
     public void ApplyHasRunningTasksState(bool hasRunningTasks)
     {
         _hasRunningTasks = hasRunningTasks;

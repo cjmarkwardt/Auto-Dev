@@ -22,6 +22,9 @@ public partial class GenerateTabView : UserControl
     private TextBox? _inputBox;
     private MarkdownScrollViewer? _outputMarkdown;
 
+    /// <summary>The GenerateTabViewModel OnVmPropertyChanged/FocusInput are currently subscribed to, if any - tracked so both OnDataContextChanged and DetachedFromVisualTree can unsubscribe it. Avalonia never recycles this view across a workspace-tab switch - a brand new GenerateTabView is templated for whichever WorkspaceViewModel becomes selected, and the previous one is simply dropped, so DataContextChanged alone never fires again to clean it up (see WorkspaceView's own identical fix/doc comment) - without unsubscribing on detach too, every past tab switch leaves one more GenerateTabView permanently reachable through its own workspace's long-lived GenerateTabViewModel.</summary>
+    private GenerateTabViewModel? _subscribedVm;
+
     public GenerateTabView()
     {
         InitializeComponent();
@@ -51,15 +54,34 @@ public partial class GenerateTabView : UserControl
         // yet at that instant. AttachedToVisualTree fires exactly when we're actually realized/visible,
         // which reliably covers that first-activation case regardless of the VM-side event's timing.
         AttachedToVisualTree += (_, _) => FocusInput();
+
+        // See _subscribedVm's own doc comment - OnDataContextChanged alone never fires again once this
+        // view is simply dropped rather than reused.
+        DetachedFromVisualTree += (_, _) => Unsubscribe();
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
+        Unsubscribe();
+
         if (DataContext is GenerateTabViewModel vm)
         {
             vm.PropertyChanged += OnVmPropertyChanged;
             vm.FocusRequested += FocusInput;
+            _subscribedVm = vm;
         }
+    }
+
+    private void Unsubscribe()
+    {
+        if (_subscribedVm is null)
+        {
+            return;
+        }
+
+        _subscribedVm.PropertyChanged -= OnVmPropertyChanged;
+        _subscribedVm.FocusRequested -= FocusInput;
+        _subscribedVm = null;
     }
 
     private void FocusInput() => Dispatcher.UIThread.Post(() => _inputBox?.Focus(), DispatcherPriority.Background);

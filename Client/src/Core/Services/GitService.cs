@@ -139,6 +139,109 @@ public sealed class GitService : IGitService
         return SplitLines(tracked.StandardOutput).Count > 0 ? GitFileStatus.Unmodified : GitFileStatus.Ignored;
     }
 
+    /// <summary>
+    /// Bulk equivalent of GetStatusAsync - one `git status --porcelain --ignored -z` call for the whole
+    /// working tree (plus, only for whatever subset comes back ambiguously ignored, one `git ls-files` call)
+    /// instead of a separate git subprocess per path. `-z`/`--untracked-files=all` avoid the same collapsed-
+    /// directory/quoting pitfalls GetWorkingTreeChangesAsync already guards against. Every entry in `paths` is
+    /// echoed back as its own dictionary key (resolved against `workspacePath` the same pathspec-relative way
+    /// GetStatusAsync's single-path query would), classified by whether any reported change/ignore entry is
+    /// that exact path or falls anywhere under/over it - a query for a directory matches every changed file
+    /// beneath it (aggregating, since folders show their own status too), and a query for a file nested inside
+    /// a wholly-untracked/-ignored directory still matches that directory's own single collapsed entry.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, GitFileStatus>> GetStatusesAsync(string workspacePath, IReadOnlyList<string> paths, CancellationToken cancellationToken = default)
+    {
+        if (paths.Count == 0)
+        {
+            return new Dictionary<string, GitFileStatus>();
+        }
+
+        var result = await RunAsync(workspacePath, ["status", "--porcelain", "--ignored", "-z", "--untracked-files=all"], cancellationToken);
+        var fields = result.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+
+        List<(string Path, char Index, char Worktree)> entries = [];
+        for (var i = 0; i < fields.Length; i++)
+        {
+            var field = fields[i];
+            if (field.Length < 4)
+            {
+                continue;
+            }
+
+            var indexStatus = field[0];
+            var worktreeStatus = field[1];
+            entries.Add((field[3..], indexStatus, worktreeStatus));
+
+            if (indexStatus is 'R' or 'C' || worktreeStatus is 'R' or 'C')
+            {
+                i++; // the next field is the original path - unused, same as GetWorkingTreeChangesAsync
+            }
+        }
+
+        Dictionary<string, GitFileStatus> results = new(paths.Count, StringComparer.Ordinal);
+        List<string> needsTrackedCheck = [];
+        foreach (var queryPath in paths)
+        {
+            var relative = RelativeTo(workspacePath, queryPath);
+
+            GitFileStatus? resolved = null;
+            var sawIgnored = false;
+            foreach (var (entryPath, indexStatus, worktreeStatus) in entries)
+            {
+                if (!IsSameOrRelated(entryPath, relative))
+                {
+                    continue;
+                }
+
+                if (indexStatus == '!' && worktreeStatus == '!')
+                {
+                    sawIgnored = true;
+                    continue;
+                }
+
+                resolved = (indexStatus == '?' && worktreeStatus == '?') || indexStatus == 'A' ? GitFileStatus.Added : GitFileStatus.Modified;
+                break;
+            }
+
+            if (resolved is { } status)
+            {
+                results[queryPath] = status;
+            }
+            else if (sawIgnored)
+            {
+                needsTrackedCheck.Add(queryPath);
+            }
+            else
+            {
+                results[queryPath] = GitFileStatus.Unmodified;
+            }
+        }
+
+        if (needsTrackedCheck.Count > 0)
+        {
+            List<string> lsFilesArgs = ["ls-files", "--"];
+            lsFilesArgs.AddRange(needsTrackedCheck);
+            var tracked = await RunAsync(workspacePath, lsFilesArgs, cancellationToken);
+            var trackedPaths = SplitLines(tracked.StandardOutput);
+
+            foreach (var queryPath in needsTrackedCheck)
+            {
+                var relative = RelativeTo(workspacePath, queryPath);
+                results[queryPath] = trackedPaths.Any(t => IsSameOrRelated(t, relative)) ? GitFileStatus.Unmodified : GitFileStatus.Ignored;
+            }
+        }
+
+        return results;
+    }
+
+    private static string RelativeTo(string workspacePath, string path) =>
+        Path.GetRelativePath(workspacePath, path).Replace(Path.DirectorySeparatorChar, '/');
+
+    /// <summary>Whether `path` (as reported by git, always relative to the repo root/CWD) is the exact path being queried for, or nested on either side of it - either it's a descendant of a collapsed directory entry the query path falls under, or the query path is a descendant of a more specific entry reported below it.</summary>
+    private static bool IsSameOrRelated(string path, string queryPath) =>
+        path == queryPath || path.StartsWith(queryPath + "/", StringComparison.Ordinal) || queryPath.StartsWith(path + "/", StringComparison.Ordinal);
+
     public async Task<IReadOnlyList<string>> ListTagsAsync(string workspacePath, string prefix, CancellationToken cancellationToken = default)
     {
         var result = await RunAsync(workspacePath, ["tag", "--list", $"{prefix}*"], cancellationToken);

@@ -20,27 +20,35 @@ it) happens in one window without shelling out to a terminal.
   offers a sign-in button for whichever CLI(s) it finds installed, or asks you to install one if
   neither is present.
 
+### Installing on Linux
+
+A published Linux binary carries no icon of its own (unlike a Windows `.exe`'s embedded PE
+resource) - app launchers, taskbars, and file managers only show one via a `.desktop` entry
+pointing at an icon installed into the user's icon theme. Run
+`Client/Linux/install-desktop-entry.sh [path-to-AutoDev-executable]` (defaults to `~/Tools/AutoDev`)
+once after deploying the binary to install both; re-run it any time the binary moves to a new path.
+
 ### Opening a workspace
 
-- The folder icon at the top-left of the title bar ("Open Folder…") opens an existing local git
-  repository; the icon next to it ("Clone Repository…") clones a remote one into a folder you pick
-  first. The chevron opens a dropdown of recently-opened workspaces ("Open Recent…").
-- Each opened workspace becomes its own tab along the top of the window - open as many as you
-  like side by side. Right-click a tab for **Move Left**/**Move Right** (reorder the strip) or
-  **Close**.
+- Each AutoDev window opens a single workspace at a time, and always starts empty rather than
+  restoring whatever was open last. The empty state shows **Open** and **Clone** buttons (on the
+  left of the content area) and a list of recently-opened workspaces (on the right) - click either
+  button, or a recent entry, to open a workspace in this window.
+- The icon button at the top-left of the title bar opens a brand-new, fully independent AutoDev
+  window (also starting empty) - this is how you work in more than one workspace at once.
 
 ### Choosing an AI provider
 
 - The account/usage section at the top-right of the title bar is also a button - click it to
-  switch which AI CLI (Claude or Codex) AutoDev drives for every workspace tab. What's shown there
+  switch which AI CLI (Claude or Codex) AutoDev drives for the open workspace. What's shown there
   depends on the provider: Claude shows session/week rate-limit percentages; a provider with no
   such API (Codex) shows a cumulative token count instead.
-- Switching providers starts a fresh conversation on the next message in every tab - a session id
-  from one provider means nothing to the other.
+- Switching providers starts a fresh conversation on the next message - a session id from one
+  provider means nothing to the other.
 
 ### Sidebar
 
-Each workspace tab has its own sidebar, split into two sections:
+The open workspace has its own sidebar, split into two sections:
 
 - **Version** (top) - a centered, passive display of the currently targeted branch/tag name and
   HEAD's own commit message/hash; pending changes show as an asterisk in the corner plus a
@@ -182,9 +190,9 @@ AutoDev/
 - **Explicit, manual DI registration** in `App.axaml.cs` (`Microsoft.Extensions.DependencyInjection`,
   all singletons) - there is no reflection-based auto-registration, despite the interface/
   implementation naming always lining up (`IThing` → `Thing`).
-- **Every workspace tab is fully isolated**: its own file watcher, task scheduler, AI session
-  client, and git-versioning service instance, composed fresh per tab by
-  `WorkspaceTabFactory`. Nothing about one open workspace leaks into another.
+- **The open workspace is fully isolated**: its own file watcher, task scheduler, AI session
+  client, and git-versioning service instance, composed fresh by `WorkspaceFactory` whenever a
+  workspace is opened.
 - **Git is the source of truth** for almost everything - branch/tag identity, task run gating,
   read-only edit state - rather than a separate app-level database. AutoDev invents no naming
   convention of its own on top; see [Version Control](Docs/VersionControl.md).

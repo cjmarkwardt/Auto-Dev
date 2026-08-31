@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=AutoDev
+Comment=AI-driven desktop IDE-shell for local git repositories
+Exec=@EXEC_PATH@
+Icon=@ICON_PATH@
+Terminal=false
+StartupWMClass=AutoDev
+Categories=Development;IDE;

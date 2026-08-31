@@ -34,21 +34,6 @@ public sealed class WorkspaceService(ISettingsService settingsService, IWorkspac
         await settingsService.SaveAsync(settings, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<WorkspaceInfo>> GetOpenWorkspacesAsync(CancellationToken cancellationToken = default)
-    {
-        var settings = await settingsService.LoadAsync(cancellationToken);
-        return [.. settings.OpenWorkspacePaths
-            .Where(Directory.Exists)
-            .Select(p => new WorkspaceInfo(p))];
-    }
-
-    public async Task SaveOpenWorkspacesAsync(IReadOnlyList<string> paths, CancellationToken cancellationToken = default)
-    {
-        var settings = await settingsService.LoadAsync(cancellationToken);
-        settings.OpenWorkspacePaths = [.. paths];
-        await settingsService.SaveAsync(settings, cancellationToken);
-    }
-
     public async Task<string?> GetLastParentFolderAsync(CancellationToken cancellationToken = default)
     {
         var settings = await settingsService.LoadAsync(cancellationToken);

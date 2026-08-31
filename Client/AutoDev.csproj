@@ -91,7 +91,7 @@
          directly by SvgImageResolver to rasterize any other SVG a markdown preview links to (e.g. a
          shields.io badge) - see that class for why, instead of the Markdown.Avalonia.Svg package's own
          native-Avalonia SVG control. -->
-    <PackageReference Include="Mermaider" Version="0.12.1" />
+    <PackageReference Include="Mermaider" Version="0.12.2" />
     <PackageReference Include="Svg.Skia" Version="5.1.1" />
 
     <!-- Parses and executes .task files (see Docs/TaskAutomation.md) - the task language itself, its parser,

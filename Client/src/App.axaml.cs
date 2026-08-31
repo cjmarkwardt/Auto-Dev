@@ -85,6 +85,7 @@ public partial class App : Application
         services.AddSingleton<IWorkspaceService, WorkspaceService>();
         services.AddSingleton<IFileTreeService, FileTreeService>();
         services.AddSingleton<IExternalOpenService, ExternalOpenService>();
+        services.AddSingleton<INewInstanceService, NewInstanceService>();
         services.AddSingleton<IWorkspaceFileWatcherFactory, WorkspaceFileWatcherFactory>();
         services.AddSingleton<IUsageAggregatorService, UsageAggregatorService>();
         services.AddSingleton<ITaskSchedulerServiceFactory, TaskSchedulerServiceFactory>();
@@ -111,7 +112,7 @@ public partial class App : Application
         services.AddSingleton<IClipboardService, AvaloniaClipboardService>();
 
         // ViewModels
-        services.AddSingleton<IWorkspaceTabFactory, WorkspaceTabFactory>();
+        services.AddSingleton<IWorkspaceFactory, WorkspaceFactory>();
         services.AddSingleton<HeaderViewModel>();
         services.AddSingleton<AuthGateViewModel>();
         services.AddSingleton<MainShellViewModel>();

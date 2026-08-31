@@ -15,6 +15,17 @@ namespace AutoDev.Core.Services;
 /// </summary>
 public sealed class SvgImageResolver : IImageResolver
 {
+    /// <summary>
+    /// Markdown.Avalonia tries every registered <see cref="IImageResolver"/> against EVERY image reference
+    /// regardless of format, in turn against the same shared, rewound-before-each-attempt stream - but only
+    /// rewinds it before handing it to the NEXT resolver, not before its own final fallback attempt to load
+    /// the stream as a plain bitmap once every resolver has passed on it. Returning null here without also
+    /// leaving `stream` back at position 0 left that fallback attempt reading from EOF - i.e. reading
+    /// nothing - for every non-SVG image (a rendered Mermaid diagram, or any ordinary PNG/JPEG in a
+    /// README), permanently showing Markdown.Avalonia's broken-image placeholder instead. Parsing PNG/JPEG
+    /// bytes as SVG (XML) also throws rather than failing gracefully, which this catches for the same
+    /// reason - Markdown.Avalonia has no try/catch of its own around a resolver's own Load call.
+    /// </summary>
     /// <inheritdoc />
     public async Task<IImage?> Load(Stream stream)
     {
@@ -23,8 +34,17 @@ public sealed class SvgImageResolver : IImageResolver
         buffer.Position = 0;
 
         using var svg = new SKSvg();
-        if (svg.Load(buffer) is null || svg.Picture is null)
+        try
         {
+            if (svg.Load(buffer) is null || svg.Picture is null)
+            {
+                stream.Position = 0;
+                return null;
+            }
+        }
+        catch
+        {
+            stream.Position = 0;
             return null;
         }
 

@@ -2,20 +2,25 @@
 
 ## Opening, cloning, and recent workspaces
 
-`HeaderViewModel` (bound to the top-left toolbar) owns every way a workspace gets opened:
+`HeaderViewModel` (bound to the empty content area's Open/Clone buttons and recent-workspaces
+list) owns every way a workspace gets opened:
 
 - **`BrowseForFolderAsync`** - native folder picker (`IDialogService.PickFolderAsync`), then the
   shared `OpenWorkspaceAsync(path)` tail.
 - **`CloneAsync`** - prompts for a URL and a destination parent folder, derives the repo name from
   the URL, checks for a destination collision, then runs `IGitService.CloneAsync` under a
-  cancelable `CancellationTokenSource` (`IsCloning` drives the toolbar's "Cloning…"/cancel-button
-  state). A failed or cancelled clone deletes the partial destination folder before reporting the
-  error. On success, it opens the result exactly like any other folder - see
+  cancelable `CancellationTokenSource` (`IsCloning` drives the "Cloning…"/cancel-button state). A
+  failed or cancelled clone deletes the partial destination folder before reporting the error. On
+  success, it opens the result exactly like any other folder - see
   [Version Control](VersionControl.md#auto-initializing-a-repo) for what happens next if the
   cloned remote turned out to be empty.
-- **`OpenRecentAsync`/`RemoveRecentAsync`** - the MRU dropdown, backed by `IWorkspaceService`.
-- **`OpenPathAsync`** - the public entry point `MainShellViewModel` calls once per workspace when
-  restoring the previous session's open tabs on startup.
+- **`OpenRecentAsync`/`RemoveRecentAsync`** - the recent-workspaces list, backed by
+  `IWorkspaceService`.
+
+A window only ever has one workspace open at a time, and never restores anything from a previous
+run - see `MainShellViewModel`'s `WorkspaceOpened` handler in [Architecture](Architecture.md).
+Opening a second workspace concurrently means launching a whole new AutoDev process
+(`INewInstanceService`, the title bar's own icon button).
 
 All of these funnel through one private tail:
 
@@ -32,7 +37,7 @@ private async Task OpenWorkspaceAsync(string path)
 `Directory.CreateDirectory`s it if needed, calls `IWorkspaceMetadataStore.EnsureInitialized` (creates
 `.autodev/` and `.autodev/local/`), and moves the path to the front of the recent-workspaces list.
 It has no knowledge of git at all - repo initialization happens later, when the resulting
-`WorkspaceTabViewModel.InitializeAsync()` calls `Version.EnsureRepoAsync()`.
+`WorkspaceViewModel.InitializeAsync()` calls `Version.EnsureRepoAsync()`.
 
 ## The file tree
 
@@ -68,13 +73,18 @@ at the workspace root:
 
 Git status (`Status`, driving the added/modified color and the `.gitignore`-only fallback above) is
 resolved asynchronously right after construction via `IFileTreeService.GetStatusAsync`
-(`IGitService.GetStatusAsync` underneath), and re-resolved across the whole already-loaded tree
-(`FilesSectionViewModel.RefreshGitStatusAsync`) on any on-disk change at all
-(`OnWatcherChanged` - a file autosaved from this app's own Edit tab, one written externally, a git
-command run outside this app, ...), and separately by `WorkspaceTabViewModel` after any
-version-control action or target switch (commit, squash, merge, checkout, ...), none of which
-necessarily touch the working tree's own files, so the file watcher alone would never notice a
-status that's now stale from one of those.
+(`IGitService.GetStatusAsync` underneath, one subprocess for that single path), and re-resolved
+across the whole already-loaded tree in one shared `IGitService.GetStatusesAsync` call (a single
+`git status` covering every already-loaded node at once, rather than a subprocess per node) via
+`FilesSectionViewModel.RefreshGitStatusAsync` on any on-disk change at all (`OnWatcherChanged` - a
+file autosaved from this app's own Edit tab, one written externally, a git command run outside this
+app, ...) - throttled to at most once every five seconds (`ScheduleGitStatusRefresh`) so a workspace
+with frequent background churn (a running build/dev server, ...) can't re-run it far more often than
+the colors actually need to catch up. `WorkspaceViewModel` separately calls
+`RefreshGitStatusAsync` directly (bypassing that throttle) after any version-control action or
+target switch (commit, squash, merge, checkout, ...), none of which necessarily touch the working
+tree's own files, so the file watcher alone would never notice a status that's now stale from one of
+those - and which should always be reflected immediately rather than waiting on the throttle.
 
 `FilesSectionViewModel` is the sidebar's own view model: `Refresh()` diffs new `GetChildren()`
 results against existing `FileTreeNodeViewModel`s by path (add/remove only what actually changed,
@@ -97,7 +107,7 @@ that same file - not just for a direct tree click, but for every way a file can 
 quick-open mode, a markdown link, Edit's own Alt+Left/Alt+Right history navigation, and any future
 caller. Rather than have each of those individually call `FilesSectionViewModel.SelectPath`, there's
 one shared choke point every one of them already passes through regardless of how it got there:
-`EditTabViewModel.CurrentFilePath` changing. `WorkspaceTabViewModel` subscribes to that and calls
+`EditTabViewModel.CurrentFilePath` changing. `WorkspaceViewModel` subscribes to that and calls
 `Files.HighlightPath(path)` - the same tree lookup/expand as `SelectPath`, but never re-raises
 `FileSelected` (which would otherwise re-open the file it's merely following, redundantly at best
 and racing a still-in-flight seek-to-line open at worst - see `FileSearchViewModel`'s own content
@@ -141,5 +151,5 @@ same moment the candidate file list itself gets rebuilt from scratch anyway.
 `ContentResultChosen(path, line)` goes straight to `WorkspaceContentViewModel.OpenFileAsync(path,
 line)` instead - `SelectPath` would also open the file itself (with no seek line), racing the
 line-seeking open - but still ends up selected in the tree too, via
-`WorkspaceTabViewModel`'s subscription to `EditTabViewModel.CurrentFilePath` (see "The file tree"
+`WorkspaceViewModel`'s subscription to `EditTabViewModel.CurrentFilePath` (see "The file tree"
 above) rather than through `SelectPath` directly.

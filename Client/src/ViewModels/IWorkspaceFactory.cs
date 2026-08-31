@@ -8,9 +8,9 @@ using Microsoft.Extensions.Logging;
 
 namespace AutoDev.ViewModels;
 
-public interface IWorkspaceTabFactory
+public interface IWorkspaceFactory
 {
-    WorkspaceTabViewModel Create(WorkspaceInfo workspace);
+    WorkspaceViewModel Create(WorkspaceInfo workspace);
 }
 
 /// <summary>
@@ -19,7 +19,7 @@ public interface IWorkspaceTabFactory
 /// isolation design. Everything injected here is a stateless/shared singleton; the statefulness lives
 /// entirely in the instances this factory creates.
 /// </summary>
-public sealed class WorkspaceTabFactory(
+public sealed class WorkspaceFactory(
     IFileTreeService fileTreeService,
     IWorkspaceFileWatcherFactory watcherFactory,
     IDialogService dialogService,
@@ -35,9 +35,9 @@ public sealed class WorkspaceTabFactory(
     IExternalOpenService externalOpenService,
     IClipboardService clipboardService,
     ICommandExecutor commandExecutor,
-    ILoggerFactory loggerFactory) : IWorkspaceTabFactory
+    ILoggerFactory loggerFactory) : IWorkspaceFactory
 {
-    public WorkspaceTabViewModel Create(WorkspaceInfo workspace)
+    public WorkspaceViewModel Create(WorkspaceInfo workspace)
     {
         var versioningService = versioningServiceFactory.Create(workspace.FullPath);
         var scheduler = schedulerFactory.Create(workspace.FullPath);
@@ -60,6 +60,6 @@ public sealed class WorkspaceTabFactory(
         var content = new WorkspaceContentViewModel(edit, generate, history, output, command);
         var fileSearch = new FileSearchViewModel(workspace.FullPath, gitService, files);
 
-        return new WorkspaceTabViewModel(workspace, version, files, content, fileSearch);
+        return new WorkspaceViewModel(workspace, version, files, content, fileSearch);
     }
 }

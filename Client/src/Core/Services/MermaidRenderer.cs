@@ -33,6 +33,17 @@ public static class MermaidRenderer
         Border = "#3C3C3C",
     };
 
+    /// <summary>
+    /// The largest pixel width/height this renders down to before rasterizing - a wide `flowchart LR` (or
+    /// tall `flowchart TB`) with enough nodes can produce a picture well into five digits of pixels in one
+    /// dimension, which GPU-backed rendering then fails to upload as a texture at all (most GPUs cap out
+    /// around 8192-16384) - Markdown.Avalonia shows that failure as a broken-image icon rather than any
+    /// error message, with nothing in this pipeline (which succeeds at every step - SVG generation,
+    /// rasterization, PNG encode, disk cache) ever seeing a failure to blame it on. Capped conservatively
+    /// under the lowest common GPU limit rather than the source diagram's own literal size.
+    /// </summary>
+    private const int MaxDimension = 8000;
+
     /// <summary>Renders Mermaid source to PNG bytes, or null if Mermaider/Svg.Skia fails to parse/render it (e.g. an unsupported diagram type) - callers should leave the original fenced block untouched on null rather than show a broken image.</summary>
     public static byte[]? TryRender(string mermaidSource)
     {
@@ -46,8 +57,12 @@ public static class MermaidRenderer
                 return null;
             }
 
+            var bounds = svg.Picture.CullRect;
+            var largestDimension = Math.Max(bounds.Width, bounds.Height);
+            var scale = largestDimension > MaxDimension ? MaxDimension / largestDimension : 1f;
+
             using var stream = new MemoryStream();
-            svg.Picture.ToImage(stream, SKColors.Transparent, SKEncodedImageFormat.Png, 100, 1f, 1f,
+            svg.Picture.ToImage(stream, SKColors.Transparent, SKEncodedImageFormat.Png, 100, scale, scale,
                 SKColorType.Rgba8888, SKAlphaType.Premul, SKColorSpace.CreateSrgb());
             return stream.ToArray();
         }

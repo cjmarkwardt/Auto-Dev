@@ -36,7 +36,7 @@ command.
 
 ## Auto-initializing a repo
 
-`WorkspaceTabViewModel.InitializeAsync()` calls `VersionSectionViewModel.EnsureRepoAsync()` on
+`WorkspaceViewModel.InitializeAsync()` calls `VersionSectionViewModel.EnsureRepoAsync()` on
 every workspace open:
 
 ```csharp
@@ -198,7 +198,7 @@ never configured.
 
 ### The busy overlay: live git output log, Cancel, and Confirm
 
-`WorkspaceTabView`'s busy overlay (bound to `Version.IsBusy`) shows, alongside the usual
+`WorkspaceView`'s busy overlay (bound to `Version.IsBusy`) shows, alongside the usual
 indeterminate progress bar: a scrolling, auto-following log of every git command the current action
 runs (command line plus stdout/stderr - see `GitCommandLogSink` below). While the action is still
 running, that's paired with a Cancel button (`Version.CancelBusyCommand`); once it's failed
@@ -215,9 +215,9 @@ event subscription on `IGitService` (a shared, app-wide singleton) - `RunBusyAsy
 `GitCommandLogSink.Current` right before calling `action`, and `GitService`'s own `RunAsync` helper
 reports to whatever `Current` is (if anything) after every command. Being `AsyncLocal` means it
 flows automatically into everything that single action call awaits, and needs no unsubscription
-when a workspace tab closes - the alternative (an event on the shared `IGitService`) would leak a
-handler referencing a dead `VersionSectionViewModel` every time a tab closed and reopened over the
-app's lifetime.
+when the open workspace closes - the alternative (an event on the shared `IGitService`) would leak
+a handler referencing a dead `VersionSectionViewModel` every time a workspace closed and reopened
+over the app's lifetime.
 
 Clicking Cancel signals `RunBusyAsync`'s own `CancellationTokenSource`, whose token every action
 lambda threads into whichever `IWorkspaceVersioningService` calls it makes (all of them already
@@ -316,7 +316,7 @@ The History tab's Merge/Rebase-onto-this items, the Version section's own Rebase
 `GitOperationOutcome.Conflicts`, the loop (up to 3 attempts):
 
 1. Switches the workspace to the Generate tab (`SwitchToGenerateRequested`, handled by
-   `WorkspaceTabViewModel`) so the exchange is never something the user has to go and notice/find
+   `WorkspaceViewModel`) so the exchange is never something the user has to go and notice/find
    themselves - it also renders its own panel there instead of a normal request card (see "Generate
    tab display" just below).
 2. Lists conflicted files (`GetConflictedFilesAsync`).
@@ -403,7 +403,7 @@ The tab keeps itself in sync with the remote two ways:
 
 - **Automatically, every time it becomes the active tab** -
   `WorkspaceContentViewModel.OnSelectedTabIndexChanged`'s `HistoryTabIndex` case (and
-  `WorkspaceTabViewModel.InitializeAsync`, for the very first view of a freshly opened workspace,
+  `WorkspaceViewModel.InitializeAsync`, for the very first view of a freshly opened workspace,
   since History is the default tab and so never actually triggers that same tab-index-changed path)
   call `RefreshFromRemoteAsync`, which runs `Version.RefreshAsync` (fetch/prune/resync - see "The
   Version sidebar" above) then `Version.PullWithStashIfNeededAsync` - transparently pulling the

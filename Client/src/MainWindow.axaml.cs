@@ -25,7 +25,7 @@ public partial class MainWindow : Window
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        var tab = Vm?.Shell.SelectedTab;
+        var tab = Vm?.Shell.Workspace;
         if (tab is null)
         {
             return;

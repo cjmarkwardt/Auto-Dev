@@ -86,6 +86,9 @@ public interface IGitService
     /// </summary>
     Task<GitFileStatus> GetStatusAsync(string workspacePath, string path, CancellationToken cancellationToken = default);
 
+    /// <summary>Bulk equivalent of GetStatusAsync - one `git status`/`git ls-files` call for every path in `paths` at once instead of a subprocess per path, keyed by each input path exactly as given (see GitService's own implementation for the classification rules, identical to GetStatusAsync's). Used to re-resolve the whole Files section tree's status on any on-disk change without a spawn per already-loaded node.</summary>
+    Task<IReadOnlyDictionary<string, GitFileStatus>> GetStatusesAsync(string workspacePath, IReadOnlyList<string> paths, CancellationToken cancellationToken = default);
+
     /// <summary>Bulk equivalent of IsIgnoredAsync - one `git check-ignore --stdin` call checks every path in `paths` at once instead of one subprocess per file, returning just the ignored subset. Used to filter file search results rather than merely dim them. Empty if the workspace isn't a git repo, or `paths` is empty.</summary>
     Task<IReadOnlySet<string>> GetIgnoredPathsAsync(string workspacePath, IReadOnlyList<string> paths, CancellationToken cancellationToken = default);
 

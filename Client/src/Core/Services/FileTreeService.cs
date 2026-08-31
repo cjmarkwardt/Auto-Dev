@@ -177,4 +177,7 @@ public sealed class FileTreeService(IGitService gitService) : IFileTreeService
         var parent = Path.GetDirectoryName(path.TrimEnd(Path.DirectorySeparatorChar));
         return parent is null ? GitFileStatus.Unmodified : await gitService.GetStatusAsync(parent, path, cancellationToken);
     }
+
+    public Task<IReadOnlyDictionary<string, GitFileStatus>> GetStatusesAsync(string rootPath, IReadOnlyList<string> paths, CancellationToken cancellationToken = default) =>
+        gitService.GetStatusesAsync(rootPath, paths, cancellationToken);
 }

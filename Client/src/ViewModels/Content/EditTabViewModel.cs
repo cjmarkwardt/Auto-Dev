@@ -326,7 +326,24 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// <summary>Whether the Find bar/button and Ctrl+F make sense right now - either a plain-text editable surface or the rendered markdown preview (see IsFindBarOpen's own doc comment for how the two are searched differently), but not an image/hex view or the still-unconfirmed large-file warning.</summary>
     public bool CanFind => ShowTextEditor || ShowMarkdownPreview;
 
-    /// <summary>What ShowMarkdownPreview's MarkdownScrollViewer actually binds to - Content with any ```mermaid fenced blocks replaced by rendered diagram images (see MermaidMarkdownProcessor). The saved file content is never touched - only this computed view of it. A stored (not computed) property: mermaid rendering runs off the UI thread (see UpdateRenderedContent) since it can take a visible moment, so this starts out as the raw, unrendered Content the instant it changes and is swapped in once rendering finishes, rather than blocking the UI thread synchronously on every markdown change.</summary>
+    private const double MinMarkdownZoom = 0.5;
+    private const double MaxMarkdownZoom = 3.0;
+    private const double MarkdownZoomStep = 1.2;
+
+    /// <summary>Scales the whole rendered markdown preview (see EditTabView.axaml's LayoutTransformControl) - added so a Mermaid diagram (see MermaidMarkdownProcessor) rendered too small/dense to read at 1:1 can be zoomed in without leaving the preview. Persists only in-memory for this tab's lifetime, same as SidebarWidth's own reasoning - not saved per-file, since it's a viewing preference for this session rather than a property of the file itself.</summary>
+    [ObservableProperty]
+    private double _markdownZoom = 1.0;
+
+    [RelayCommand]
+    private void ZoomInMarkdown() => MarkdownZoom = Math.Min(MaxMarkdownZoom, MarkdownZoom * MarkdownZoomStep);
+
+    [RelayCommand]
+    private void ZoomOutMarkdown() => MarkdownZoom = Math.Max(MinMarkdownZoom, MarkdownZoom / MarkdownZoomStep);
+
+    [RelayCommand]
+    private void ResetMarkdownZoom() => MarkdownZoom = 1.0;
+
+    /// <summary>What ShowMarkdownPreview's MarkdownScrollViewer actually binds to - Content with any ```mermaid fenced blocks replaced by rendered diagram images (see MermaidMarkdownProcessor) and any `&lt;br&gt;` tags rewritten into a real hard line break (see MarkdownLineBreakProcessor). The saved file content is never touched - only this computed view of it. A stored (not computed) property: mermaid rendering runs off the UI thread (see UpdateRenderedContent) since it can take a visible moment, so this starts out as the raw content (with just the line-break rewrite, which is cheap enough to do inline) the instant Content changes, then is swapped in once mermaid rendering finishes, rather than blocking the UI thread synchronously on every markdown change.</summary>
     [ObservableProperty]
     private string _renderedContent = "";
 
@@ -405,7 +422,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
             return;
         }
 
-        RenderedContent = Content;
+        RenderedContent = MarkdownLineBreakProcessor.Process(Content);
 
         if (!Content.Contains("```mermaid", StringComparison.Ordinal))
         {
@@ -417,7 +434,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
 
     private async Task RenderMermaidAsync(string content, int generation)
     {
-        var rendered = await Task.Run(() => MermaidMarkdownProcessor.Process(content));
+        var rendered = await Task.Run(() => MarkdownLineBreakProcessor.Process(MermaidMarkdownProcessor.Process(content)));
         if (generation == _renderGeneration)
         {
             RenderedContent = rendered;
@@ -441,7 +458,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// <summary>Raised once LoadCoreAsync fully finishes (see there) - every genuine load or reload, including reloading the same path. The View uses this to switch AvaloniaEdit to that path's own cached TextDocument, so each file keeps its own independent undo/redo history across switches instead of sharing one editor-wide undo stack. Carries a line to seek to (from a content-search result click), or null for a normal open.</summary>
     public event Action<int?>? FileLoaded;
 
-    /// <summary>Raised by HandleMarkdownLink for a relative-path link that resolved to a real file - WorkspaceTabViewModel subscribes this to Content.OpenFileAsync, the same way Files.FileSelected already does, since only WorkspaceContentViewModel (which owns both this Edit tab and OpenFileAsync) can actually navigate there.</summary>
+    /// <summary>Raised by HandleMarkdownLink for a relative-path link that resolved to a real file - WorkspaceViewModel subscribes this to Content.OpenFileAsync, the same way Files.FileSelected already does, since only WorkspaceContentViewModel (which owns both this Edit tab and OpenFileAsync) can actually navigate there.</summary>
     public event Action<string>? OpenFileRequested;
 
     /// <summary>

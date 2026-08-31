@@ -117,15 +117,22 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Re-resolves Status for this node and every already-loaded descendant - called across the whole tree whenever .gitignore, the working tree, or which commit/branch is checked out changes (see FilesSectionViewModel.RefreshGitStatusAsync), since a change anywhere can affect any path. Collapsed folders that were never expanded hold only a placeholder child, so recursion naturally stops there - they'll resolve fresh (already up to date) whenever eventually expanded.</summary>
-    public async Task RefreshGitStatusAsync()
+    /// <summary>Applies a freshly bulk-fetched Status (see FilesSectionViewModel.RefreshGitStatusAsync, which resolves every already-loaded node's status in one shared git call rather than a subprocess per node) - the synchronous counterpart to LoadStatusAsync's own single-node fetch, used on initial construction instead.</summary>
+    public void ApplyStatus(GitFileStatus status) => Status = status;
+
+    /// <summary>This node and every already-loaded descendant, depth-first - used by FilesSectionViewModel.RefreshGitStatusAsync to build one combined bulk status query. Collapsed folders that were never expanded hold only a placeholder child, so recursion naturally stops there - they'll resolve fresh (already up to date) whenever eventually expanded.</summary>
+    public IEnumerable<FileTreeNodeViewModel> SelfAndLoadedDescendants()
     {
         if (IsPlaceholder)
         {
-            return;
+            yield break;
         }
 
-        await Task.WhenAll([LoadStatusAsync(), .. Children.Select(c => c.RefreshGitStatusAsync())]);
+        yield return this;
+        foreach (var descendant in Children.SelectMany(c => c.SelfAndLoadedDescendants()))
+        {
+            yield return descendant;
+        }
     }
 
     /// <summary>Re-resolves FileIgnoreOverride for this node and every already-loaded descendant, via the same _resolveFileIgnore closure supplied at construction (so it picks up whatever the *current* .fileignore ruleset is, not whatever it was when each node was built) - called across the whole tree whenever .fileignore or .gitignore change (see FilesSectionViewModel.OnWatcherChanged). Collapsed folders that were never expanded hold only a placeholder child, so recursion naturally stops there - they resolve fresh (already up to date) whenever eventually expanded, same as RefreshGitStatusAsync.</summary>

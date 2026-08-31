@@ -22,68 +22,31 @@
                 Name="TitleBar" PointerPressed="OnTitleBarPointerPressed">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="12,0">
 
-                <!-- Workspace launcher -->
-                <StackPanel Grid.Column="0" DataContext="{Binding Header}" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Classes="iconButton" ToolTip.Tip="Open Folder…" Command="{Binding BrowseForFolderCommand}" IsEnabled="{Binding !IsCloning}">
-                        <Path Classes="lineIcon" Data="{StaticResource FolderIconGeometry}" Width="13" Height="13" />
-                    </Button>
-                    <Button Classes="iconButton" ToolTip.Tip="Clone Repository…" Command="{Binding CloneCommand}" IsVisible="{Binding !IsCloning}">
-                        <Path Classes="lineIcon" Data="{StaticResource CloneIconGeometry}" Width="13" Height="13" />
-                    </Button>
-                    <Button Classes="iconButton" ToolTip.Tip="Cancel Clone" Command="{Binding CancelCloneCommand}" IsVisible="{Binding IsCloning}">
-                        <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="11" Height="11" />
-                    </Button>
-                    <TextBlock Text="Cloning…" FontSize="11" Foreground="{DynamicResource TextMutedBrush}"
-                               VerticalAlignment="Center" Margin="4,0,4,0" IsVisible="{Binding IsCloning}" />
-                    <Button Classes="iconButton" ToolTip.Tip="Open Recent…" Command="{Binding ToggleRecentMenuCommand}" IsEnabled="{Binding !IsCloning}">
-                        <Path Classes="lineIcon" Data="{StaticResource ChevronDownIconGeometry}" Width="10" Height="8" />
-                    </Button>
-                </StackPanel>
+                <!-- New instance -->
+                <Button Grid.Column="0" Classes="iconButton" ToolTip.Tip="Open New Window" Command="{Binding Header.OpenNewInstanceCommand}">
+                    <Path Classes="lineIcon" Data="{StaticResource OpenExternalIconGeometry}" Width="13" Height="13" />
+                </Button>
 
-                <!-- Open workspace tabs -->
-                <ListBox Grid.Column="1" ItemsSource="{Binding Tabs}" SelectedItem="{Binding SelectedTab}"
-                         Background="Transparent" Padding="0" BorderThickness="0" Margin="20,0,0,0"
-                         VerticalAlignment="Stretch" IsVisible="{Binding SelectedTab, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
-                    <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <UniformGrid Rows="1" />
-                        </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.Styles>
-                        <Style Selector="ListBoxItem">
-                            <Setter Property="Padding" Value="0" />
-                            <Setter Property="Background" Value="Transparent" />
-                            <Setter Property="CornerRadius" Value="0" />
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="VerticalContentAlignment" Value="Stretch" />
-                        </Style>
-                        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
-                            <Setter Property="Background" Value="{DynamicResource TabActiveBackgroundBrush}" />
-                        </Style>
-                    </ListBox.Styles>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate DataType="vm:WorkspaceTabViewModel">
-                            <Border Padding="14,0" ToolTip.Tip="{Binding TooltipPath}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                    Background="Transparent">
-                                <Border.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="Move Left" Command="{Binding MoveLeftCommand}" />
-                                        <MenuItem Header="Move Right" Command="{Binding MoveRightCommand}" />
-                                        <Separator />
-                                        <MenuItem Header="Close" Command="{Binding CloseCommand}" />
-                                    </ContextMenu>
-                                </Border.ContextMenu>
-                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <Ellipse Width="6" Height="6" Fill="{DynamicResource AccentBrush}"
-                                             IsVisible="{Binding Version.IsAiWorking}" ToolTip.Tip="AI is working" />
-                                    <TextBlock Classes="tabTitle" Classes.aiWorking="{Binding Version.IsAiWorking}"
-                                               Text="{Binding Title}" FontSize="12" VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <!-- Open workspace's root folder name, centered between the title bar's left (new instance)
+                     and right (account/usage, window controls) control clusters - turns accent blue with a
+                     matching dot while its AI is working or a task is running (see Border.aiStatusBar below,
+                     which reflects the same two flags). -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                            IsVisible="{Binding Workspace, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                    <Ellipse Width="7" Height="7" Fill="{DynamicResource AccentBrush}" ToolTip.Tip="AI is working">
+                        <Ellipse.IsVisible>
+                            <MultiBinding Converter="{x:Static conv:BoolConverters.Or}">
+                                <Binding Path="Workspace.Version.IsAiWorking" />
+                                <Binding Path="Workspace.Files.HasRunningTasks" />
+                            </MultiBinding>
+                        </Ellipse.IsVisible>
+                    </Ellipse>
+                    <TextBlock Text="{Binding Workspace.Title}" FontSize="16" FontWeight="SemiBold"
+                               Classes="workspaceTitle"
+                               Classes.working="{Binding Workspace.Version.IsAiWorking}"
+                               Classes.taskRunning="{Binding Workspace.Files.HasRunningTasks}" />
+                </StackPanel>
 
                 <!-- Account / usage - click to switch the active AI provider (see Header.AvailableProviders'
                      own dropdown below); what's shown here depends on that provider (Session/Week percentages
@@ -149,9 +112,9 @@
              last. -->
         <Border DockPanel.Dock="Bottom" Height="26" Padding="12,0"
                 Classes="aiStatusBar"
-                Classes.working="{Binding SelectedTab.Version.IsAiWorking}"
-                Classes.taskRunning="{Binding SelectedTab.Files.HasRunningTasks}"
-                IsVisible="{Binding SelectedTab, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                Classes.working="{Binding Workspace.Version.IsAiWorking}"
+                Classes.taskRunning="{Binding Workspace.Files.HasRunningTasks}"
+                IsVisible="{Binding Workspace, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
             <!-- Background is set entirely via these styles, not a local attribute on the Border - a local
                  value always wins over a style setter regardless of class, which would otherwise permanently
                  shadow the "working"/"taskRunning" state below no matter what class was actually applied.
@@ -174,8 +137,8 @@
                            Foreground="{DynamicResource TextMutedBrush}">
                     <TextBlock.IsVisible>
                         <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
-                            <Binding Path="!SelectedTab.Version.IsAiWorking" />
-                            <Binding Path="!SelectedTab.Files.HasRunningTasks" />
+                            <Binding Path="!Workspace.Version.IsAiWorking" />
+                            <Binding Path="!Workspace.Files.HasRunningTasks" />
                         </MultiBinding>
                     </TextBlock.IsVisible>
                 </TextBlock>
@@ -183,8 +146,8 @@
                            Foreground="White">
                     <TextBlock.IsVisible>
                         <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
-                            <Binding Path="!SelectedTab.Version.IsAiWorking" />
-                            <Binding Path="SelectedTab.Files.HasRunningTasks" />
+                            <Binding Path="!Workspace.Version.IsAiWorking" />
+                            <Binding Path="Workspace.Files.HasRunningTasks" />
                         </MultiBinding>
                     </TextBlock.IsVisible>
                 </TextBlock>
@@ -192,8 +155,8 @@
                            Foreground="White">
                     <TextBlock.IsVisible>
                         <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
-                            <Binding Path="SelectedTab.Version.IsAiWorking" />
-                            <Binding Path="!SelectedTab.Version.IsAiPaused" />
+                            <Binding Path="Workspace.Version.IsAiWorking" />
+                            <Binding Path="!Workspace.Version.IsAiPaused" />
                         </MultiBinding>
                     </TextBlock.IsVisible>
                 </TextBlock>
@@ -202,55 +165,74 @@
                      for a paused Generate turn (GenerateTabViewModel.PauseAsync) - see
                      VersionSectionViewModel.IsAiPaused. -->
                 <TextBlock Text="AI is paused" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
-                           Foreground="White" IsVisible="{Binding SelectedTab.Version.IsAiPaused}" />
+                           Foreground="White" IsVisible="{Binding Workspace.Version.IsAiPaused}" />
             </Grid>
         </Border>
 
         <Grid>
-            <ContentControl Content="{Binding SelectedTab}" />
-            <StackPanel IsVisible="{Binding SelectedTab, Converter={x:Static conv:ObjectConverters.IsNull}}"
-                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-                <TextBlock Text="No workspace open" FontSize="16" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
-                <TextBlock Text="Use the folder icon in the top bar to get started." FontSize="12" HorizontalAlignment="Center" Foreground="{DynamicResource TextMutedBrush}" />
+            <ContentControl Content="{Binding Workspace}" />
+            <StackPanel IsVisible="{Binding Workspace, Converter={x:Static conv:ObjectConverters.IsNull}}"
+                        Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="24">
+                <StackPanel DataContext="{Binding Header}" VerticalAlignment="Center" Spacing="10" Width="220">
+                    <Button Command="{Binding BrowseForFolderCommand}" IsEnabled="{Binding !IsCloning}"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Path Classes="lineIcon" Data="{StaticResource FolderIconGeometry}" Width="13" Height="13" />
+                            <TextBlock Text="Open" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="accent" Command="{Binding CloneCommand}" IsVisible="{Binding !IsCloning}"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Path Classes="lineIcon" Data="{StaticResource CloneIconGeometry}" Width="13" Height="13" Stroke="White" />
+                            <TextBlock Text="Clone" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding CancelCloneCommand}" IsVisible="{Binding IsCloning}"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="11" Height="11" />
+                            <TextBlock Text="Cancel Clone" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <TextBlock Text="Cloning…" FontSize="12" Foreground="{DynamicResource TextMutedBrush}"
+                               HorizontalAlignment="Center" IsVisible="{Binding IsCloning}" />
+                </StackPanel>
+
+                <Border Width="340" MaxHeight="400" VerticalAlignment="Center"
+                        Background="{DynamicResource EditorBackgroundBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                        BorderThickness="1" CornerRadius="6">
+                    <StackPanel>
+                        <TextBlock Text="No recent workspaces" Margin="12,10" FontSize="12"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   IsVisible="{Binding !Header.RecentWorkspaces.Count}" />
+                        <ScrollViewer MaxHeight="400">
+                            <ItemsControl ItemsSource="{Binding Header.RecentWorkspaces}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:WorkspaceInfo">
+                                        <Border Classes="recentRow" Padding="12,8" PointerPressed="OnRecentRowPointerPressed">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <StackPanel Grid.Column="0" Spacing="1">
+                                                    <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding FullPath}" FontSize="10.5"
+                                                               Foreground="{DynamicResource TextMutedBrush}" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Classes="iconButton" ToolTip.Tip="Remove from recent"
+                                                        Command="{Binding $parent[UserControl].((vm:MainShellViewModel)DataContext).Header.RemoveRecentCommand}"
+                                                        CommandParameter="{Binding}">
+                                                    <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="9" Height="9" />
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Grid>
     </DockPanel>
-
-        <!-- Recent-workspaces dropdown - a plain in-tree overlay (not a native Flyout/Popup) to match the
-             F2 quick-open overlay's own established pattern in this codebase. -->
-        <Panel IsVisible="{Binding Header.IsRecentMenuOpen}" Background="Transparent" PointerPressed="OnRecentBackdropPointerPressed">
-            <Border Width="340" MaxHeight="400" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="46,56,0,0"
-                    Background="{DynamicResource EditorBackgroundBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}"
-                    BorderThickness="1" CornerRadius="6" PointerPressed="OnRecentPopupPointerPressed">
-                <StackPanel>
-                    <TextBlock Text="No recent workspaces" Margin="12,10" FontSize="12"
-                               Foreground="{DynamicResource TextMutedBrush}"
-                               IsVisible="{Binding !Header.RecentWorkspaces.Count}" />
-                    <ScrollViewer MaxHeight="400">
-                        <ItemsControl ItemsSource="{Binding Header.RecentWorkspaces}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="models:WorkspaceInfo">
-                                    <Border Classes="recentRow" Padding="12,8" PointerPressed="OnRecentRowPointerPressed">
-                                        <Grid ColumnDefinitions="*,Auto">
-                                            <StackPanel Grid.Column="0" Spacing="1">
-                                                <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{Binding FullPath}" FontSize="10.5"
-                                                           Foreground="{DynamicResource TextMutedBrush}" TextTrimming="CharacterEllipsis" />
-                                            </StackPanel>
-                                            <Button Grid.Column="1" Classes="iconButton" ToolTip.Tip="Remove from recent"
-                                                    Command="{Binding $parent[UserControl].((vm:MainShellViewModel)DataContext).Header.RemoveRecentCommand}"
-                                                    CommandParameter="{Binding}">
-                                                <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="9" Height="9" />
-                                            </Button>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-        </Panel>
 
         <!-- AI provider switcher dropdown - same plain in-tree overlay pattern as the recent-workspaces one above. -->
         <Panel IsVisible="{Binding Header.IsProviderMenuOpen}" Background="Transparent" PointerPressed="OnProviderBackdropPointerPressed">

@@ -10,30 +10,46 @@ using AutoDev.ViewModels.Sidebar;
 
 namespace AutoDev.Views;
 
-public partial class WorkspaceTabView : UserControl
+public partial class WorkspaceView : UserControl
 {
     private readonly TextBox? _searchBox;
     private readonly ScrollViewer? _gitLogScroll;
     private readonly SelectableTextBlock? _gitLogText;
 
-    /// <summary>The FileSearchViewModel OnFileSearchPropertyChanged is currently subscribed to, if any - tracked so OnDataContextChanged can unsubscribe it before subscribing to whatever replaces it. Without this, a DataContext change (e.g. Avalonia recycling this view across a tab switch) left the old subscription attached forever; if DataContext later went null on this same instance while an old FileSearchViewModel it was never unsubscribed from opened, the handler still fired here and crashed the whole app dereferencing a null Vm.</summary>
+    /// <summary>The FileSearchViewModel OnFileSearchPropertyChanged is currently subscribed to, if any - tracked so both OnDataContextChanged and DetachedFromVisualTree can unsubscribe it. Without unsubscribing on detach, a dropped instance's subscription to this workspace's own long-lived FileSearchViewModel/VersionSectionViewModel would otherwise keep it permanently reachable.</summary>
     private FileSearchViewModel? _subscribedFileSearch;
 
-    /// <summary>The VersionSectionViewModel OnGitOutputLogChanged is currently subscribed to, if any - same leak-prevention reasoning as _subscribedFileSearch.</summary>
+    /// <summary>The VersionSectionViewModel OnGitOutputLogChanged/OnVersionPropertyChanged are currently subscribed to, if any - same leak-prevention reasoning as _subscribedFileSearch.</summary>
     private VersionSectionViewModel? _subscribedVersion;
 
-    public WorkspaceTabView()
+    public WorkspaceView()
     {
         InitializeComponent();
         _searchBox = this.FindControl<TextBox>("SearchBox");
         _gitLogScroll = this.FindControl<ScrollViewer>("GitLogScroll");
         _gitLogText = this.FindControl<SelectableTextBlock>("GitLogText");
         DataContextChanged += OnDataContextChanged;
+        DetachedFromVisualTree += (_, _) => Unsubscribe();
     }
 
-    private WorkspaceTabViewModel? Vm => DataContext as WorkspaceTabViewModel;
+    private WorkspaceViewModel? Vm => DataContext as WorkspaceViewModel;
 
     private void OnDataContextChanged(object? sender, EventArgs e)
+    {
+        Unsubscribe();
+
+        if (Vm is { } vm)
+        {
+            vm.FileSearch.PropertyChanged += OnFileSearchPropertyChanged;
+            _subscribedFileSearch = vm.FileSearch;
+
+            vm.Version.GitOutputLog.CollectionChanged += OnGitOutputLogChanged;
+            vm.Version.PropertyChanged += OnVersionPropertyChanged;
+            _subscribedVersion = vm.Version;
+        }
+    }
+
+    private void Unsubscribe()
     {
         if (_subscribedFileSearch is not null)
         {
@@ -46,16 +62,6 @@ public partial class WorkspaceTabView : UserControl
             _subscribedVersion.GitOutputLog.CollectionChanged -= OnGitOutputLogChanged;
             _subscribedVersion.PropertyChanged -= OnVersionPropertyChanged;
             _subscribedVersion = null;
-        }
-
-        if (Vm is { } vm)
-        {
-            vm.FileSearch.PropertyChanged += OnFileSearchPropertyChanged;
-            _subscribedFileSearch = vm.FileSearch;
-
-            vm.Version.GitOutputLog.CollectionChanged += OnGitOutputLogChanged;
-            vm.Version.PropertyChanged += OnVersionPropertyChanged;
-            _subscribedVersion = vm.Version;
         }
     }
 

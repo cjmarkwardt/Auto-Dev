@@ -296,7 +296,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     private bool _isEditable;
 
     /// <summary>
-    /// Set by WorkspaceTabViewModel from VersionSectionViewModel.IsBusy - true while a plain (non-AI) version
+    /// Set by WorkspaceViewModel from VersionSectionViewModel.IsBusy - true while a plain (non-AI) version
     /// action (Merge, Publish, Iterate, Update, a History switch, etc.) is running its own git commands. A
     /// user-submitted turn started during that window would run Claude's own tool calls against the working
     /// tree at the exact same time the versioning service is checking it out/committing/rebasing it - blocking
@@ -309,7 +309,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     partial void OnIsVersionActionBusyChanged(bool value) => SendCommand.NotifyCanExecuteChanged();
 
     /// <summary>
-    /// Set by WorkspaceTabViewModel from FilesSectionViewModel.HasRunningTasks - true while any .task file in
+    /// Set by WorkspaceViewModel from FilesSectionViewModel.HasRunningTasks - true while any .task file in
     /// this workspace has a run in flight. AI work should only ever start while nothing else is running
     /// against the same working tree, for the same race-avoidance reason IsVersionActionBusy exists - unlike
     /// that flag, this one also disables the input box itself (see GenerateTabView.axaml's InputBox), not just
@@ -563,7 +563,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         {
             // Re-locks the workspace exactly as if the turn were still actively working (see TurnPaused's own
             // doc comment) - VersionSectionViewModel's subscription to these is already in place by now
-            // (WorkspaceTabFactory constructs it before WorkspaceTabViewModel.InitializeAsync ever reaches
+            // (WorkspaceFactory constructs it before WorkspaceViewModel.InitializeAsync ever reaches
             // this call).
             NormalTurnStarted?.Invoke();
             TurnPaused?.Invoke();

@@ -53,7 +53,7 @@ public sealed partial class CommandTabViewModel(string workspacePath, ICommandEx
 
     partial void OnWorkingDirectoryChanged(string value) => OnPropertyChanged(nameof(WorkingDirectoryDisplay));
 
-    /// <summary>Called from FilesSectionViewModel's "Set Command Context" folder context menu item (wired in WorkspaceTabViewModel) - fullPath is always an existing directory already inside this workspace, so no validation beyond that is needed.</summary>
+    /// <summary>Called from FilesSectionViewModel's "Set Command Context" folder context menu item (wired in WorkspaceViewModel) - fullPath is always an existing directory already inside this workspace, so no validation beyond that is needed.</summary>
     public void SetWorkingDirectory(string fullPath) => WorkingDirectory = fullPath;
 
     [RelayCommand]

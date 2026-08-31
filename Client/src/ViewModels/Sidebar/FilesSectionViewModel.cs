@@ -16,6 +16,9 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// <summary>A line in .fileignore consisting of exactly this (surrounding whitespace ignored) is replaced with .gitignore's own lines - see ReloadFileIgnore.</summary>
     private const string GitIgnoreDirective = "$gitignore";
 
+    /// <summary>How often OnWatcherChanged's own git status refresh is allowed to actually run - see ScheduleGitStatusRefresh.</summary>
+    private static readonly TimeSpan GitStatusRefreshThrottle = TimeSpan.FromSeconds(5);
+
     private readonly string _rootPath;
     private readonly IFileTreeService _fileTreeService;
     private readonly IWorkspaceFileWatcher _watcher;
@@ -33,6 +36,12 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// <summary>Null while no .fileignore exists at the workspace root, in which case every node's FileIgnoreOverride is also left null (falling back to its own git Status.Ignored) - see ReloadFileIgnore/ResolveFileIgnore.</summary>
     private FileIgnoreMatcher? _fileIgnoreMatcher;
 
+    /// <summary>Set for the duration of a pending/in-flight throttled git status refresh (see ScheduleGitStatusRefresh) - cancelled on Dispose so a refresh never runs against a torn-down workspace tab.</summary>
+    private CancellationTokenSource? _gitStatusRefreshThrottleCts;
+
+    /// <summary>Whether this workspace's own tab is the currently-selected one - see SetActive. Starts true, matching a freshly opened workspace always becoming the selected tab immediately (see WorkspaceFactory/MainShellViewModel.OnWorkspaceOpened).</summary>
+    private bool _isActive = true;
+
     /// <summary>
     /// True for the whole duration of a Generate turn, OR any plain (non-AI) version action
     /// (Merge/Publish/Iterate/Update/a History switch/etc.) running its own git commands.
@@ -44,7 +53,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isInteractionBlocked;
 
-    /// <summary>True while any .task file in this workspace has a run in flight - mirrors _runningTaskPaths.Count > 0, kept in sync from OnTaskRunStarted/OnTaskRunCompleted. Forwarded to GenerateTabViewModel.HasRunningTasks by WorkspaceTabViewModel, since AI work should only ever start while nothing else is running against the same working tree.</summary>
+    /// <summary>True while any .task file in this workspace has a run in flight - mirrors _runningTaskPaths.Count > 0, kept in sync from OnTaskRunStarted/OnTaskRunCompleted. Forwarded to GenerateTabViewModel.HasRunningTasks by WorkspaceViewModel, since AI work should only ever start while nothing else is running against the same working tree.</summary>
     [ObservableProperty]
     private bool _hasRunningTasks;
 
@@ -81,7 +90,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         RunTaskCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>Called by WorkspaceTabViewModel whenever the targeted version/release/feature (or direct mode) changes.</summary>
+    /// <summary>Called by WorkspaceViewModel whenever the targeted version/release/feature (or direct mode) changes.</summary>
     public void ApplyTargetState(bool isEditableTarget)
     {
         _isEditableTarget = isEditableTarget;
@@ -182,7 +191,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Called by WorkspaceTabViewModel after any version-control action (commit, reset, squash, merge,
+    /// Called by WorkspaceViewModel after any version-control action (commit, reset, squash, merge,
     /// checkout, ...) - none of those necessarily touch the working tree's own files, so the file watcher
     /// alone (see OnWatcherChanged, which only fires for changes it can actually see on disk) would otherwise
     /// leave the Changes Mode tree showing a stale set of changes, or even ones that no longer exist at all.
@@ -259,7 +268,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// <summary>Raised when a .task file's Run or View is picked - the containing workspace tab activates the Output tab and switches its dropdown to this task.</summary>
     public event Action<(string Path, string Name)>? TaskOutputRequested;
 
-    /// <summary>Set by WorkspaceTabViewModel - flushes the Edit tab's debounced autosave before a run actually starts, so Run always uses whatever's currently shown there instead of a stale on-disk copy still mid-debounce.</summary>
+    /// <summary>Set by WorkspaceViewModel - flushes the Edit tab's debounced autosave before a run actually starts, so Run always uses whatever's currently shown there instead of a stale on-disk copy still mid-debounce.</summary>
     public Func<Task>? FlushPendingEditBeforeRun { get; set; }
 
     partial void OnSelectedNodeChanged(FileTreeNodeViewModel? value)
@@ -301,6 +310,64 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
 
         ReapplyRunningStates();
+    }
+
+    /// <summary>
+    /// Pauses (Deactivate) or resumes (Activate) every purely-reactive background service this section owns
+    /// - the file watcher and its throttled git-status refresh (see ScheduleGitStatusRefresh) - while this
+    /// workspace's own tab isn't the one currently selected, so an open-but-backgrounded workspace costs
+    /// nothing at idle. AI work, an in-flight manual git action, and a running .task script are deliberately
+    /// NOT paused by this - none of those are driven by anything here (see GenerateTabViewModel's own
+    /// timers, VersionSectionViewModel.RunBusyAsync, IWorkspaceTaskScheduler, none of which this section
+    /// touches), so they keep running to completion regardless of which tab is selected.
+    /// </summary>
+    public void SetActive(bool active)
+    {
+        if (active)
+        {
+            Activate();
+        }
+        else
+        {
+            Deactivate();
+        }
+    }
+
+    private void Activate()
+    {
+        if (_isActive)
+        {
+            return;
+        }
+
+        _isActive = true;
+        _watcher.Resume();
+
+        // Nothing was watched while paused (Resume alone doesn't replay anything missed) - re-resolve
+        // everything from scratch rather than assuming nothing changed, exactly like OnWatcherChanged does
+        // for a single detected change, just unconditionally rather than only for a .fileignore/.gitignore
+        // edit, since any of it could have changed while this wasn't watching.
+        ReloadFileIgnore();
+        Refresh();
+        foreach (var node in RootNodes)
+        {
+            node.RefreshFileIgnoreState();
+        }
+
+        _ = RefreshGitStatusAsync();
+        _ = RefreshChangesModeAsync();
+    }
+
+    private void Deactivate()
+    {
+        if (!_isActive)
+        {
+            return;
+        }
+
+        _isActive = false;
+        _watcher.Pause();
+        _gitStatusRefreshThrottleCts?.Cancel();
     }
 
     /// <summary>Supplied to every FileTreeNodeViewModel at construction (see FileTreeNodeViewModel._resolveFileIgnore) - a closure rather than a one-off computed value so it keeps reflecting whatever _fileIgnoreMatcher is *current* whenever it's actually called, including long after the node itself was built.</summary>
@@ -407,7 +474,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// the tree to visually follow along, since SelectPath's own open (no seek line, and a second concurrent
     /// LoadFileAsync call) would otherwise race/clobber whatever the caller's own open is doing. This is what
     /// actually makes "whenever a file is opened it becomes selected in Files" true in general - see
-    /// WorkspaceTabViewModel's subscription to EditTabViewModel.CurrentFilePath, the one place every kind of
+    /// WorkspaceViewModel's subscription to EditTabViewModel.CurrentFilePath, the one place every kind of
     /// file open (a tree click, F1 quick-open in either mode, a markdown link, Edit's own Alt+Left/Alt+Right
     /// history navigation, ...) already funnels through regardless of how it got there.
     /// </summary>
@@ -541,7 +608,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     private void OpenFolderInFileManager(FileTreeNodeViewModel node) =>
         _externalOpenService.OpenFolder(node.IsDirectory ? node.FullPath : Path.GetDirectoryName(node.FullPath) ?? _rootPath);
 
-    /// <summary>Raised by a folder's "Set Command Context" context menu item - wired in WorkspaceTabViewModel to CommandTabViewModel.SetWorkingDirectory, pointing the Command tab's working directory at that folder. Non-mutating (just view state elsewhere), so unlike New File/Folder it's never gated on CanMutate.</summary>
+    /// <summary>Raised by a folder's "Set Command Context" context menu item - wired in WorkspaceViewModel to CommandTabViewModel.SetWorkingDirectory, pointing the Command tab's working directory at that folder. Non-mutating (just view state elsewhere), so unlike New File/Folder it's never gated on CanMutate.</summary>
     public event Action<string>? SetCommandContextRequested;
 
     [RelayCommand]
@@ -705,7 +772,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         // ancestor folder's along with it. Refresh() above only resolves Status for brand new node
         // instances (see FileTreeNodeViewModel's own constructor) - every already-loaded node needs
         // recomputing too, not just on a .gitignore edit (which used to be the only trigger here).
-        _ = RefreshGitStatusAsync();
+        ScheduleGitStatusRefresh();
 
         // Keeps the Changes Mode tree honest while it's actually showing - a change made elsewhere (another
         // tool, a git command run outside this app) should appear/disappear from it just like it would from
@@ -716,9 +783,60 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
     });
 
-    /// <summary>Re-resolves every already-loaded node's git status (added/modified/ignored/unmodified) - called on any on-disk change at all (see OnWatcherChanged, including a file autosaved from this app's own Edit tab), and by WorkspaceTabViewModel after any version-control action or target switch (commit, squash, merge, checkout, ...), none of which necessarily touch the working tree's own files, so the file watcher alone would otherwise never notice a status that's now stale.</summary>
-    public async Task RefreshGitStatusAsync() =>
-        await Task.WhenAll(RootNodes.Select(n => n.RefreshGitStatusAsync()));
+    /// <summary>Re-resolves every already-loaded node's git status (added/modified/ignored/unmodified) immediately - called by WorkspaceViewModel after any version-control action or target switch (commit, squash, merge, checkout, ...), which should always be reflected right away, not on OnWatcherChanged's own throttle (see ScheduleGitStatusRefresh, the on-disk-change path this same query also backs). One shared IGitService.GetStatusesAsync call resolves every node at once - a separate git subprocess per already-loaded node here (there can easily be hundreds in a large, mostly-expanded tree) would otherwise re-spawn on every call, which is what used to make this the actual source of the "whole tree flickering"-class of bug FileSystemWatcherAdapter's own doc comment warns about.</summary>
+    public async Task RefreshGitStatusAsync()
+    {
+        var nodes = RootNodes.SelectMany(n => n.SelfAndLoadedDescendants()).ToList();
+        if (nodes.Count == 0)
+        {
+            return;
+        }
+
+        var statuses = await _fileTreeService.GetStatusesAsync(_rootPath, [.. nodes.Select(n => n.FullPath)]);
+        foreach (var node in nodes)
+        {
+            if (statuses.TryGetValue(node.FullPath, out var status))
+            {
+                node.ApplyStatus(status);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Coalesces every on-disk change (see OnWatcherChanged) into at most one RefreshGitStatusAsync run per
+    /// GitStatusRefreshThrottle window, rather than re-running it on every single change - matters most for a
+    /// workspace with frequent background churn (a running build/dev server, a formatter-on-save loop, ...),
+    /// where changes can otherwise arrive far more often than the status colors actually need to catch up.
+    /// A change that lands while a refresh is already pending is covered by that same pending run (status is
+    /// re-queried live, not replayed from a diff), so it's dropped here rather than queued.
+    /// </summary>
+    private void ScheduleGitStatusRefresh()
+    {
+        if (_gitStatusRefreshThrottleCts is not null)
+        {
+            return;
+        }
+
+        _gitStatusRefreshThrottleCts = new CancellationTokenSource();
+        _ = ThrottledRefreshGitStatusAsync(_gitStatusRefreshThrottleCts.Token);
+    }
+
+    private async Task ThrottledRefreshGitStatusAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(GitStatusRefreshThrottle, cancellationToken);
+            await RefreshGitStatusAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // Dispose - a workspace tab closed before the throttle window elapsed.
+        }
+        finally
+        {
+            _gitStatusRefreshThrottleCts = null;
+        }
+    }
 
     private void OnTaskRunStarted(TaskRef task) => _dispatcher.Post(() =>
     {
@@ -745,5 +863,6 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         _scheduler.TaskRunStarted -= OnTaskRunStarted;
         _scheduler.TaskRunCompleted -= OnTaskRunCompleted;
         _scheduler.Dispose();
+        _gitStatusRefreshThrottleCts?.Cancel();
     }
 }

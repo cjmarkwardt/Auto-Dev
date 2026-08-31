@@ -89,6 +89,18 @@ public sealed class FileSystemWatcherAdapter : IWorkspaceFileWatcher
         Changed?.Invoke(paths);
     }
 
+    public void Pause()
+    {
+        _watcher.EnableRaisingEvents = false;
+        lock (_gate)
+        {
+            _debounceCts?.Cancel();
+            _pendingPaths.Clear();
+        }
+    }
+
+    public void Resume() => _watcher.EnableRaisingEvents = true;
+
     public void Dispose()
     {
         _watcher.EnableRaisingEvents = false;

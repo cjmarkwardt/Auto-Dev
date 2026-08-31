@@ -67,7 +67,7 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
 
     public bool HasOutput => !string.IsNullOrEmpty(Output);
 
-    /// <summary>What GenerateTabView's output MarkdownScrollViewer actually binds to - Output with any ```mermaid fenced blocks replaced by rendered diagram images (see MermaidMarkdownProcessor). A stored (not computed) property: mermaid rendering runs off the UI thread since it can take a visible moment, so this starts out as the raw, unrendered Output the instant a turn completes and is swapped in once rendering finishes, rather than blocking the UI thread synchronously.</summary>
+    /// <summary>What GenerateTabView's output MarkdownScrollViewer actually binds to - Output with any ```mermaid fenced blocks replaced by rendered diagram images (see MermaidMarkdownProcessor) and any `&lt;br&gt;` tags rewritten into a real hard line break (see MarkdownLineBreakProcessor). A stored (not computed) property: mermaid rendering runs off the UI thread since it can take a visible moment, so this starts out as Output with just the line-break rewrite (cheap enough to do inline) the instant a turn completes, then is swapped in once mermaid rendering finishes, rather than blocking the UI thread synchronously.</summary>
     [ObservableProperty]
     private string? _renderedOutput;
 
@@ -94,7 +94,7 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasOutput));
 
         var generation = ++_renderGeneration;
-        RenderedOutput = value;
+        RenderedOutput = value is null ? value : MarkdownLineBreakProcessor.Process(value);
 
         if (value is null || !value.Contains("```mermaid", StringComparison.Ordinal))
         {
@@ -107,7 +107,7 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
     /// <summary>Task.Run purely gets the CPU-bound render off the UI thread; the await afterward resumes back on it automatically (OnOutputChanged is always invoked from the UI thread - see GenerateTabViewModel.Handle's _dispatcher.Post - same default-SynchronizationContext-capture reliance as every other async method in this codebase, no explicit dispatcher needed).</summary>
     private async Task RenderMermaidAsync(string output, int generation)
     {
-        var rendered = await Task.Run(() => MermaidMarkdownProcessor.Process(output));
+        var rendered = await Task.Run(() => MarkdownLineBreakProcessor.Process(MermaidMarkdownProcessor.Process(output)));
         if (generation == _renderGeneration)
         {
             RenderedOutput = rendered;

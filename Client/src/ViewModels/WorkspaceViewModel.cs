@@ -3,13 +3,12 @@ using AutoDev.Core.Models;
 using AutoDev.ViewModels.Content;
 using AutoDev.ViewModels.Sidebar;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 
 namespace AutoDev.ViewModels;
 
-public sealed partial class WorkspaceTabViewModel : ViewModelBase, IAsyncDisposable
+public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
 {
-    public WorkspaceTabViewModel(WorkspaceInfo workspace, VersionSectionViewModel version, FilesSectionViewModel files, WorkspaceContentViewModel content, FileSearchViewModel fileSearch)
+    public WorkspaceViewModel(WorkspaceInfo workspace, VersionSectionViewModel version, FilesSectionViewModel files, WorkspaceContentViewModel content, FileSearchViewModel fileSearch)
     {
         Workspace = workspace;
         Version = version;
@@ -116,18 +115,20 @@ public sealed partial class WorkspaceTabViewModel : ViewModelBase, IAsyncDisposa
     public string Title => Workspace.Name;
     public string TooltipPath => Workspace.FullPath;
 
-    /// <summary>Sidebar column width, bound two-way from WorkspaceTabView.axaml's ColumnDefinition - persisted only in-memory for this workspace tab's lifetime, so a GridSplitter drag survives switching to a different open workspace tab and back (the View, not this VM, is torn down/rebuilt on that switch - see WorkspaceContentViewModel.EditColumnWidth's identical reasoning).</summary>
+    /// <summary>Sidebar column width, bound two-way from WorkspaceView.axaml's ColumnDefinition.</summary>
     [ObservableProperty]
     private GridLength _sidebarWidth = new(260);
 
-    /// <summary>True from tab creation until InitializeAsync finishes - the View covers everything with a loading screen while this is true, since the sidebar/content would otherwise render prematurely empty (no repo state yet, etc.). Opening a workspace never blocks the rest of the app: this tab is added and selected immediately, InitializeAsync just runs its own async I/O in the background while every other open tab stays fully interactive.</summary>
+    /// <summary>True from creation until InitializeAsync finishes - the View covers everything with a loading screen while this is true, since the sidebar/content would otherwise render prematurely empty (no repo state yet, etc.).</summary>
     [ObservableProperty]
     private bool _isLoading = true;
 
-    public event Action<WorkspaceTabViewModel>? CloseRequested;
-
-    /// <summary>Raised by MoveLeftCommand/MoveRightCommand (offset -1/+1) - see MainShellViewModel.OnTabMoveRequested, which reorders this tab within its own Tabs collection. A safe no-op there if already at that end of the strip.</summary>
-    public event Action<WorkspaceTabViewModel, int>? MoveRequested;
+    /// <summary>Called by MainShellViewModel when the app's single open workspace becomes (or stops being) active - see FilesSectionViewModel.SetActive/VersionSectionViewModel.SetActive, the two owners of this workspace's own purely-reactive background services (file watcher, periodic remote sync). AI work, an in-flight manual git action, and a running .task script are all deliberately untouched by this - see those methods' own doc comments for why.</summary>
+    public void SetActive(bool active)
+    {
+        Files.SetActive(active);
+        Version.SetActive(active);
+    }
 
     public async Task InitializeAsync()
     {
@@ -157,15 +158,6 @@ public sealed partial class WorkspaceTabViewModel : ViewModelBase, IAsyncDisposa
             IsLoading = false;
         }
     }
-
-    [RelayCommand]
-    private void Close() => CloseRequested?.Invoke(this);
-
-    [RelayCommand]
-    private void MoveLeft() => MoveRequested?.Invoke(this, -1);
-
-    [RelayCommand]
-    private void MoveRight() => MoveRequested?.Invoke(this, 1);
 
     public async ValueTask DisposeAsync()
     {

@@ -21,8 +21,9 @@ public sealed partial class HeaderViewModel : ViewModelBase
     private readonly IGitService _gitService;
     private readonly IDialogService _dialogService;
     private readonly IUiDispatcher _dispatcher;
+    private readonly INewInstanceService _newInstanceService;
 
-    /// <summary>Drives the title bar's provider-switcher popup - see ToggleProviderMenuCommand/SelectProviderCommand, mirroring IsRecentMenuOpen's own popup below it.</summary>
+    /// <summary>Drives the title bar's provider-switcher popup - see ToggleProviderMenuCommand/SelectProviderCommand.</summary>
     public IReadOnlyList<AiProvider> AvailableProviders { get; } = [AiProvider.Claude, AiProvider.Codex];
 
     [ObservableProperty]
@@ -76,9 +77,6 @@ public sealed partial class HeaderViewModel : ViewModelBase
 
     public ObservableCollection<WorkspaceInfo> RecentWorkspaces { get; } = [];
 
-    [ObservableProperty]
-    private bool _isRecentMenuOpen;
-
     /// <summary>True while a clone is in flight - disables the folder/recent buttons in the View (a second clone/open shouldn't start on top of it) and swaps the Clone button for a Cancel one.</summary>
     [ObservableProperty]
     private bool _isCloning;
@@ -96,7 +94,8 @@ public sealed partial class HeaderViewModel : ViewModelBase
         IWorkspaceService workspaceService,
         IGitService gitService,
         IDialogService dialogService,
-        IUiDispatcher dispatcher)
+        IUiDispatcher dispatcher,
+        INewInstanceService newInstanceService)
     {
         _authServices = [.. authServices];
         _usageServices = [.. usageServices];
@@ -106,6 +105,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
         _gitService = gitService;
         _dialogService = dialogService;
         _dispatcher = dispatcher;
+        _newInstanceService = newInstanceService;
         CurrentProvider = providerSelection.CurrentProvider;
         _providerSelection.ProviderChanged += OnProviderChanged;
         _usageAggregator.TotalUsageChanged += OnTotalUsageChanged;
@@ -113,6 +113,10 @@ public sealed partial class HeaderViewModel : ViewModelBase
     }
 
     public event Action<WorkspaceInfo>? WorkspaceOpened;
+
+    /// <summary>Title bar's top-left button - starts a second, fully independent AutoDev instance, since one instance now only ever opens a single workspace at a time.</summary>
+    [RelayCommand]
+    private void OpenNewInstance() => _newInstanceService.OpenNewInstance();
 
     /// <summary>
     /// Called once at startup (see MainShellViewModel.InitializeAsync) and again every time
@@ -180,16 +184,13 @@ public sealed partial class HeaderViewModel : ViewModelBase
         await OpenWorkspaceAsync(path);
     }
 
-    /// <summary>Opens a workspace folder by path with no picker UI involved - shared by BrowseForFolderAsync/CloneAsync/OpenRecentAsync's identical tail, and by MainShellViewModel.InitializeAsync for restoring previously-open tabs on launch.</summary>
+    /// <summary>Opens a workspace folder by path with no picker UI involved - shared by BrowseForFolderAsync/CloneAsync/OpenRecentAsync's identical tail.</summary>
     private async Task OpenWorkspaceAsync(string path)
     {
         var workspace = await _workspaceService.OpenOrCreateAsync(path);
         WorkspaceOpened?.Invoke(workspace);
         await RefreshRecentWorkspacesAsync();
     }
-
-    /// <summary>Public entry point for MainShellViewModel's startup restore - see OpenWorkspaceAsync.</summary>
-    public Task OpenPathAsync(string path) => OpenWorkspaceAsync(path);
 
     /// <summary>Clones a remote repository into a new folder under a user-picked parent directory, then opens it as a workspace - a normal `git clone`, so it comes with whatever branches (version/*, feature/*) the remote already has.</summary>
     [RelayCommand]
@@ -288,16 +289,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void ToggleRecentMenu() => IsRecentMenuOpen = !IsRecentMenuOpen;
-
-    public void CloseRecentMenu() => IsRecentMenuOpen = false;
-
-    [RelayCommand]
-    private async Task OpenRecentAsync(WorkspaceInfo workspace)
-    {
-        IsRecentMenuOpen = false;
-        await OpenWorkspaceAsync(workspace.FullPath);
-    }
+    private async Task OpenRecentAsync(WorkspaceInfo workspace) => await OpenWorkspaceAsync(workspace.FullPath);
 
     [RelayCommand]
     private async Task RemoveRecentAsync(WorkspaceInfo workspace)

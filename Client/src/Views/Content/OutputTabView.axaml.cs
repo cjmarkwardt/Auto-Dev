@@ -18,6 +18,9 @@ public partial class OutputTabView : UserControl
     private ItemsControl? _scriptBlockGrid;
     private Grid? _panel;
 
+    /// <summary>The OutputTabViewModel ApplyGridLayout is currently subscribed to, if any - tracked so both OnDataContextChanged and DetachedFromVisualTree can unsubscribe it. Avalonia never recycles this view across a workspace-tab switch - a brand new OutputTabView is templated for whichever WorkspaceViewModel becomes selected, and the previous one is simply dropped, so DataContextChanged alone never fires again to clean it up (see WorkspaceView's own identical fix/doc comment) - without unsubscribing on detach too, every past tab switch leaves one more OutputTabView permanently reachable through its own workspace's long-lived OutputTabViewModel.</summary>
+    private OutputTabViewModel? _subscribedVm;
+
     public OutputTabView()
     {
         InitializeComponent();
@@ -28,19 +31,34 @@ public partial class OutputTabView : UserControl
         }
 
         DataContextChanged += OnDataContextChanged;
+        DetachedFromVisualTree += (_, _) => Unsubscribe();
     }
 
     private OutputTabViewModel? Vm => DataContext as OutputTabViewModel;
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
+        Unsubscribe();
+
         if (Vm is null)
         {
             return;
         }
 
         Vm.GridLayoutChanged += ApplyGridLayout;
+        _subscribedVm = Vm;
         ApplyGridLayout();
+    }
+
+    private void Unsubscribe()
+    {
+        if (_subscribedVm is null)
+        {
+            return;
+        }
+
+        _subscribedVm.GridLayoutChanged -= ApplyGridLayout;
+        _subscribedVm = null;
     }
 
     private void ApplyGridLayout()

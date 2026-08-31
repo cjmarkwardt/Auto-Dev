@@ -3,7 +3,7 @@
         xmlns:vm="using:AutoDev.ViewModels"
         x:Class="AutoDev.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="AutoDev"
+        Title="{Binding Shell.WindowTitle}"
         Icon="avares://AutoDev/Assets/app.png"
         Width="1280" Height="800"
         WindowStartupLocation="CenterScreen"
