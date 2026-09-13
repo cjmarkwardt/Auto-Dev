@@ -3,7 +3,7 @@
 AutoDev is a desktop IDE-shell for driving an AI coding CLI (Claude Code or Codex) against local
 git repositories. It's a C#/.NET 10 Avalonia application (cross-platform, currently used on Linux)
 that wraps a workspace's file tree, a text/markdown/hex editor, a git-branch workflow with an
-opinionated naming convention, and a `.task` script runner around a headless AI CLI subprocess -
+opinionated naming convention, and a way to run single-file C# scripts, around a headless AI CLI subprocess -
 so day-to-day work (open a repo, target a branch, ask the AI to make a change, review/commit/merge
 it) happens in one window without shelling out to a terminal.
 
@@ -13,6 +13,9 @@ it) happens in one window without shelling out to a terminal.
 
 - `git` on `PATH` - checked on launch before anything else; AutoDev refuses to start at all without
   it, since there's no part of the app that doesn't eventually need to run a git command.
+- The [.NET SDK](https://dotnet.microsoft.com/download) on `PATH` - only needed to use the Files
+  section's Run/Stop/View actions on a `.cs` file (see [Running Scripts](Docs/RunningScripts.md));
+  not checked on launch, since nothing else in the app depends on it.
 - The [`claude`](https://docs.claude.com/en/docs/claude-code) CLI and/or the
   [`codex`](https://github.com/openai/codex) CLI - AutoDev drives whichever one is currently
   selected as a subprocess rather than talking to either service's API directly. On first launch it
@@ -65,17 +68,17 @@ The open workspace has its own sidebar, split into two sections:
   Current Onto This, and Delete for any *other* branch/commit/tag live on the History tab's own
   right-click menus instead - see [Version Control](Docs/VersionControl.md).
 - **Files** (bottom) - the workspace's file tree. Right-click an entry for New File/New Folder,
-  Open (in the OS file manager), Copy Path, Rename, Duplicate, or Delete - a `.task` file also
-  gets Run/Stop/View. A toggle switches the tree into "Changes Mode", showing only files with
-  pending changes against the current target. Ignored/dimmed entries normally follow `.gitignore`;
-  adding a `.fileignore` file at the workspace root (same pattern syntax - `#comments`, `!negation`,
-  a trailing `/` for directories only, `*`/`?`/`**` wildcards) takes over from it entirely for this
-  purpose, so you can hide things from the tree - and from F1 quick-open's own search, both filename
-  and content - without touching what git itself tracks. A line reading just `$gitignore` pulls in
-  `.gitignore`'s own patterns too. Only one `.task` file runs at
-  a time per workspace - starting one while another is already running (or while a version action or
-  the AI is working) is disabled - and a run in turn locks manual editing, tree mutations, every
-  version action, and the AI, until it finishes; see [Task Automation](Docs/TaskAutomation.md).
+  Open (in the OS file manager), Copy Path, Rename, Duplicate, or Delete - a `.cs` file also
+  gets Run/Stop/View (double-clicking one runs it too). A toggle switches the tree into "Changes
+  Mode", showing only files with pending changes against the current target. Ignored/dimmed entries
+  normally follow `.gitignore`; adding a `.fileignore` file at the workspace root (same pattern
+  syntax - `#comments`, `!negation`, a trailing `/` for directories only, `*`/`?`/`**` wildcards)
+  takes over from it entirely for this purpose, so you can hide things from the tree - and from F1
+  quick-open's own search, both filename and content - without touching what git itself tracks. A
+  line reading just `$gitignore` pulls in `.gitignore`'s own patterns too. Only one `.cs` script runs
+  at a time per workspace - starting one while another is already running (or while a version action
+  or the AI is working) is disabled - and a run in turn locks manual editing, tree mutations, every
+  version action, and the AI, until it finishes; see [Running Scripts](Docs/RunningScripts.md).
 
 ### Working with the AI (Generate tab)
 
@@ -119,8 +122,9 @@ The open workspace has its own sidebar, split into two sections:
   resumed, never stopped or cancelled, to avoid ever forcibly leaving the repository mid-conflict.
   The fetch (with prune) button above the timeline does the fetch part on demand without switching
   away and back, and never also pulls.
-- **Output** (**F4**) - results from `.task` scripts you've run - see
-  [Task Automation](Docs/TaskAutomation.md).
+- **Script** (**F4**) - results from `.cs` scripts you've run, and an input box to answer one that's
+  currently blocked reading from stdin (e.g. `Console.ReadLine()`) - see
+  [Running Scripts](Docs/RunningScripts.md).
 - **Command** (**F5**) - run an ad hoc shell command against the workspace and see its output; the
   input box keeps focus after each run, so you can keep typing the next one without reclicking it.
 
@@ -143,8 +147,8 @@ Escape closes the popup.
   viewer, large-file warning) and Mermaid diagram rendering inside markdown.
 - **[Claude Integration](Docs/ClaudeIntegration.md)** - how AutoDev talks to the `claude` CLI, the
   Generate tab's turn lifecycle, and the AI-assisted rebase/merge conflict-resolution loop.
-- **[Task Automation](Docs/TaskAutomation.md)** - the `.task` scripting DSL, its runner, and the
-  Output/Command tabs.
+- **[Running Scripts](Docs/RunningScripts.md)** - running a `.cs` file as a single-file app via
+  `dotnet run --file`, and the Output/Command tabs.
 - **[UI & Theming](Docs/UI-and-Theming.md)** - dialogs, the VS-Code-Dark+-style theme, icons, and shared
   Avalonia conventions.
 
@@ -154,15 +158,14 @@ Escape closes the popup.
 AutoDev/
 ├── AutoDev.slnx                             Solution file, references Client/ and Tests/
 ├── Docs/                                    This repo's own architecture/feature docs
-├── Example.task                             Sample `.task` file
 ├── Client/                                  The AutoDev app itself
 │   ├── AutoDev.csproj, app.manifest           Project file & Windows PE manifest
 │   ├── Assets/                                 App icon
 │   └── src/
 │       ├── Program.cs, App.axaml(.cs), MainWindow.axaml(.cs), ViewLocator.cs   Composition root & shell
 │       ├── Core/                Platform-agnostic domain/service layer (no Avalonia dependency)
-│       │   ├── Models/           Plain data records (WorkspaceInfo, GitTarget, BranchSummary, TaskRunRecord, ...)
-│       │   ├── Services/         GitService, WorkspaceVersioningService, FileTreeService, WorkspaceTaskSchedulerService, ...
+│       │   ├── Models/           Plain data records (WorkspaceInfo, GitTarget, BranchSummary, ScriptRunRecord, ...)
+│       │   ├── Services/         GitService, WorkspaceVersioningService, FileTreeService, WorkspaceScriptRunnerService, ...
 │       │   └── Serialization/    System.Text.Json source-gen context
 │       ├── AiCli/                Provider-agnostic AI session/usage/auth abstractions (IAiSessionClient, ...)
 │       │   └── Models/            Shared stream-event/data types both providers below translate into
@@ -190,7 +193,7 @@ AutoDev/
 - **Explicit, manual DI registration** in `App.axaml.cs` (`Microsoft.Extensions.DependencyInjection`,
   all singletons) - there is no reflection-based auto-registration, despite the interface/
   implementation naming always lining up (`IThing` → `Thing`).
-- **The open workspace is fully isolated**: its own file watcher, task scheduler, AI session
+- **The open workspace is fully isolated**: its own file watcher, script runner, AI session
   client, and git-versioning service instance, composed fresh by `WorkspaceFactory` whenever a
   workspace is opened.
 - **Git is the source of truth** for almost everything - branch/tag identity, task run gating,

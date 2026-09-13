@@ -1,0 +1,86 @@
+{
+  "name": "Protocol Buffers",
+  "scopeName": "source.proto",
+  "fileTypes": ["proto"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#constants" },
+    { "include": "#type-declaration" },
+    { "include": "#rpc-declaration" },
+    { "include": "#keywords" },
+    { "include": "#storage-types" },
+    { "include": "#field-name" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.proto", "match": "//.*$" },
+        { "name": "comment.block.proto", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.proto",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "name": "constant.character.escape.proto", "match": "\\\\." }]
+        },
+        {
+          "name": "string.quoted.single.proto",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "name": "constant.character.escape.proto", "match": "\\\\." }]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.proto", "match": "\\b0[xX][0-9a-fA-F]+\\b" },
+        { "name": "constant.numeric.float.proto", "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.decimal.proto", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.proto", "match": "\\b(true|false)\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.proto",
+          "match": "\\b(syntax|import|package|option|oneof|map|repeated|optional|required|reserved|extend|extensions|to|group|stream|public|weak|returns)\\b"
+        }
+      ]
+    },
+    "storage-types": {
+      "patterns": [
+        {
+          "name": "storage.type.proto",
+          "match": "\\b(double|float|int32|int64|uint32|uint64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64|bool|string|bytes)\\b"
+        }
+      ]
+    },
+    "type-declaration": {
+      "match": "\\b(message|enum|service|extend)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.proto" },
+        "2": { "name": "entity.name.type.proto" }
+      }
+    },
+    "rpc-declaration": {
+      "match": "\\b(rpc)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.proto" },
+        "2": { "name": "entity.name.function.proto" }
+      }
+    },
+    "field-name": {
+      "match": "\\b([a-zA-Z_][A-Za-z0-9_]*)\\s*(?==\\s*[0-9]+)",
+      "name": "variable.other.proto"
+    }
+  }
+}

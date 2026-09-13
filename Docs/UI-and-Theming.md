@@ -71,7 +71,6 @@ Split by concern rather than one monolithic file:
   `SolidColorBrush` resources: `EditorBackgroundBrush`, `SideBarBackgroundBrush`,
   `ActivityBarBackgroundBrush`, `HeaderBackgroundBrush`, `TabActiveBackgroundBrush`/
   `TabInactiveBackgroundBrush`, `AccentBrush`/`AccentHoverBrush`/`TabActiveAccentBrush`,
-  `TaskFileBrush` (only accented while that `.task` file is actively running),
   `TextPrimaryBrush`/`TextMutedBrush`, `BorderSubtleBrush`, `HoverBackgroundBrush`,
   `SelectionBackgroundBrush`, `DangerBrush`, `UsageCriticalBrush`, `SuccessBrush`,
   `ChatFinalTextBrush` (deliberately its own key, not a reuse of `AccentBrush`, so repointing one

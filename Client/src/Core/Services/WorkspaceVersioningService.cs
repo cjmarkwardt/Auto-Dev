@@ -211,6 +211,13 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
     public async Task DeleteTagAsync(string name, CancellationToken cancellationToken = default) =>
         await git.DeleteTagAsync(workspacePath, name, cancellationToken);
 
+    public async Task<bool> DeleteTagEverywhereAsync(string name, CancellationToken cancellationToken = default)
+    {
+        await git.DeleteTagAsync(workspacePath, name, cancellationToken);
+        return await git.GetRemoteUrlAsync(workspacePath, cancellationToken) is null
+            || await git.DeleteRemoteTagAsync(workspacePath, name, cancellationToken);
+    }
+
     public async Task ResetAsync(CancellationToken cancellationToken = default) =>
         await git.DiscardChangesAsync(workspacePath, cancellationToken);
 

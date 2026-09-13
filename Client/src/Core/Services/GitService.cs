@@ -299,6 +299,17 @@ public sealed class GitService : IGitService
     public async Task DeleteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default) =>
         await RunAsync(workspacePath, ["tag", "-d", tagName], cancellationToken);
 
+    public async Task<bool> DeleteRemoteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default)
+    {
+        if (await GetRemoteUrlAsync(workspacePath, cancellationToken) is null)
+        {
+            return false;
+        }
+
+        var result = await RunAsync(workspacePath, ["push", "origin", "--delete", $"refs/tags/{tagName}"], cancellationToken);
+        return result.ExitCode == 0;
+    }
+
     public async Task<bool> BranchExistsAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default) =>
         (await RunAsync(workspacePath, ["show-ref", "--verify", "--quiet", $"refs/heads/{branchName}"], cancellationToken)).ExitCode == 0;
 

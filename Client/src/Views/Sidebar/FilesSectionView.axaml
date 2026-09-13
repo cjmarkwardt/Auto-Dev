@@ -89,10 +89,10 @@
                 <Style Selector="TextBlock.ignored">
                     <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
                 </Style>
-                <!-- .task files (see FileTreeNodeViewModel.IsTaskFile) are marked by TaskFileIconGeometry
-                     (below) rather than a text color of their own now - only IsTaskRunning still gets its own
-                     styling, bolding the name while that task actually has a run in flight. -->
-                <Style Selector="TextBlock.taskFileRunning">
+                <!-- .cs files (see FileTreeNodeViewModel.IsScriptFile) are marked by ScriptFileIconGeometry
+                     (below) rather than a text color of their own now - only IsScriptRunning still gets its own
+                     styling, bolding the name while that script actually has a run in flight. -->
+                <Style Selector="TextBlock.scriptFileRunning">
                     <Setter Property="FontWeight" Value="Bold" />
                 </Style>
             </TreeView.Styles>
@@ -135,16 +135,16 @@
                                           Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).CopyPathCommand}"
                                           CommandParameter="{Binding}" />
                                 <Separator />
-                                <MenuItem Header="Run" IsVisible="{Binding IsTaskFile}"
-                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).RunTaskCommand}"
+                                <MenuItem Header="Run" IsVisible="{Binding IsScriptFile}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).RunScriptCommand}"
                                           CommandParameter="{Binding}" />
-                                <MenuItem Header="Stop" IsVisible="{Binding IsTaskFile}"
-                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).StopTaskCommand}"
+                                <MenuItem Header="Stop" IsVisible="{Binding IsScriptFile}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).StopScriptCommand}"
                                           CommandParameter="{Binding}" />
-                                <MenuItem Header="View" IsVisible="{Binding IsTaskFile}"
-                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).ViewTaskCommand}"
+                                <MenuItem Header="View" IsVisible="{Binding IsScriptFile}"
+                                          Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).ViewScriptCommand}"
                                           CommandParameter="{Binding}" />
-                                <Separator IsVisible="{Binding IsTaskFile}" />
+                                <Separator IsVisible="{Binding IsScriptFile}" />
                                 <MenuItem Header="Rename"
                                           Command="{Binding $parent[UserControl].((vm:FilesSectionViewModel)DataContext).RenameCommand}"
                                           CommandParameter="{Binding}" />
@@ -162,12 +162,12 @@
                                  1px left of folder rows at the same level. -->
                             <Panel Width="12" Height="12">
                                 <Path Classes="lineIcon" Data="{StaticResource FolderIconGeometry}" Width="12" Height="12" IsVisible="{Binding IsDirectory}" />
-                                <Path Classes="lineIcon" Data="{StaticResource TaskFileIconGeometry}" Width="11" Height="11" IsVisible="{Binding IsTaskFile}" />
+                                <Path Classes="lineIcon" Data="{StaticResource ScriptFileIconGeometry}" Width="11" Height="11" IsVisible="{Binding IsScriptFile}" />
                                 <Path Classes="lineIcon" Data="{StaticResource FileIconGeometry}" Width="11" Height="11" IsVisible="{Binding IsPlainFile}" />
                             </Panel>
                             <TextBlock Text="{Binding Name}" FontSize="12" Classes.added="{Binding IsAdded}"
                                        Classes.modified="{Binding IsModified}" Classes.ignored="{Binding IsIgnored}"
-                                       Classes.taskFileRunning="{Binding IsTaskRunning}" />
+                                       Classes.scriptFileRunning="{Binding IsScriptRunning}" />
                         </StackPanel>
                     </Border>
                 </TreeDataTemplate>

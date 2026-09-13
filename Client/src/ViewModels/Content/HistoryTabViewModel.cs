@@ -369,7 +369,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
             return;
         }
 
-        await _version.RunBusyAsync(ct => _versioningService.DeleteBranchAsync(name, ct));
+        await _version.RunBusyAsync(ct => _versioningService.DeleteBranchEverywhereAsync(name, ct));
     }
 
     [RelayCommand(CanExecute = nameof(CanMutate))]
@@ -380,6 +380,6 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
             return;
         }
 
-        await _version.RunBusyAsync(ct => _versioningService.DeleteTagAsync(name, ct));
+        await _version.RunBusyAsync(ct => _versioningService.DeleteTagEverywhereAsync(name, ct));
     }
 }

@@ -8,7 +8,8 @@ namespace AutoDev.ViewModels.Content;
 
 /// <summary>A simple REPL-style shell console for the workspace, rooted at the workspace's own directory by
 /// default (see WorkingDirectory, changeable via GoHome or SetWorkingDirectory) - runs arbitrary commands via
-/// the same ICommandExecutor/CliWrap backend the .task runner uses.</summary>
+/// ICommandExecutor, the same CliWrap-based subprocess pattern WorkspaceScriptRunnerService uses for `dotnet
+/// run --file`.</summary>
 public sealed partial class CommandTabViewModel(string workspacePath, ICommandExecutor executor, IUiDispatcher dispatcher) : ViewModelBase, IDisposable
 {
     /// <summary>Copied out of the primary constructor's own workspacePath parameter once, here, so nothing else in this class reads that parameter directly - it's also used to initialize WorkingDirectory below, and reading the same primary-constructor parameter from more than one member trips CS9124 (ambiguous whether it's meant as shared constant state or a one-off initializer value).</summary>

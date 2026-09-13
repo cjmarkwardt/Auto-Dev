@@ -230,12 +230,12 @@ Permission mode is **not** user-selectable - it's hardcoded to `bypassPermission
 
 ### Guards against racing the working tree
 
-`IsVersionActionBusy` (mirrored from `VersionSectionViewModel.IsBusy`) and `HasRunningTasks`
-(mirrored from `FilesSectionViewModel.HasRunningTasks`, itself driven by
-[the task scheduler](TaskAutomation.md)) both gate `CanSend()`. The rationale is symmetric with why
+`IsVersionActionBusy` (mirrored from `VersionSectionViewModel.IsBusy`) and `HasRunningScripts`
+(mirrored from `FilesSectionViewModel.HasRunningScripts`, itself driven by
+[the script runner](RunningScripts.md)) both gate `CanSend()`. The rationale is symmetric with why
 an in-progress AI turn locks the Version section and Edit tab: a Claude turn's tool calls (file
-edits, `git` commands via Bash) and a plain git action or a `.task` script both mutate the same
-working tree, so only one of "the user", "a version action", "a task run", or "Claude" is ever
-allowed to be actively changing it at a time. It cuts both ways: `FilesSectionViewModel.CanRunTask`
-also refuses to start a `.task` file while `IsInteractionBlocked` (a version action or a Claude turn
-already in flight) is true, so a task can't start mid-turn either.
+edits, `git` commands via Bash) and a plain git action or a `.cs` script both mutate the same
+working tree, so only one of "the user", "a version action", "a script run", or "Claude" is ever
+allowed to be actively changing it at a time. It cuts both ways: `FilesSectionViewModel.CanRunScript`
+also refuses to start a `.cs` file while `IsInteractionBlocked` (a version action or a Claude turn
+already in flight) is true, so a script can't start mid-turn either.

@@ -22,14 +22,19 @@
                 Name="TitleBar" PointerPressed="OnTitleBarPointerPressed">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="12,0">
 
-                <!-- New instance -->
-                <Button Grid.Column="0" Classes="iconButton" ToolTip.Tip="Open New Window" Command="{Binding Header.OpenNewInstanceCommand}">
-                    <Path Classes="lineIcon" Data="{StaticResource OpenExternalIconGeometry}" Width="13" Height="13" />
-                </Button>
+                <!-- New instance / Templates -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Button Classes="iconButton" ToolTip.Tip="Open New Window" Command="{Binding Header.OpenNewInstanceCommand}">
+                        <Path Classes="lineIcon" Data="{StaticResource OpenExternalIconGeometry}" Width="13" Height="13" />
+                    </Button>
+                    <Button Classes="iconButton" ToolTip.Tip="Templates" Command="{Binding OpenTemplatesCommand}">
+                        <Path Classes="lineIcon" Data="{StaticResource TemplateIconGeometry}" Width="13" Height="13" />
+                    </Button>
+                </StackPanel>
 
                 <!-- Open workspace's root folder name, centered between the title bar's left (new instance)
                      and right (account/usage, window controls) control clusters - turns accent blue with a
-                     matching dot while its AI is working or a task is running (see Border.aiStatusBar below,
+                     matching dot while its AI is working or a script is running (see Border.aiStatusBar below,
                      which reflects the same two flags). -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
                             HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -38,14 +43,14 @@
                         <Ellipse.IsVisible>
                             <MultiBinding Converter="{x:Static conv:BoolConverters.Or}">
                                 <Binding Path="Workspace.Version.IsAiWorking" />
-                                <Binding Path="Workspace.Files.HasRunningTasks" />
+                                <Binding Path="Workspace.Files.HasRunningScripts" />
                             </MultiBinding>
                         </Ellipse.IsVisible>
                     </Ellipse>
                     <TextBlock Text="{Binding Workspace.Title}" FontSize="16" FontWeight="SemiBold"
                                Classes="workspaceTitle"
                                Classes.working="{Binding Workspace.Version.IsAiWorking}"
-                               Classes.taskRunning="{Binding Workspace.Files.HasRunningTasks}" />
+                               Classes.scriptRunning="{Binding Workspace.Files.HasRunningScripts}" />
                 </StackPanel>
 
                 <!-- Account / usage - click to switch the active AI provider (see Header.AvailableProviders'
@@ -100,12 +105,12 @@
         </Border>
 
         <!-- AI status bar - reflects the selected tab's own Version.IsAiWorking, the same flag that locks
-             Tasks/Edit/History/Version-menu controls, so this bar's color always matches whether the
-             controls are actually locked right now. It also reflects Files.HasRunningTasks the same way (same
-             accent-colored "working" look) - a running task doesn't lock those same controls the way
+             Files/Edit/History/Version-menu controls, so this bar's color always matches whether the
+             controls are actually locked right now. It also reflects Files.HasRunningScripts the same way (same
+             accent-colored "working" look) - a running script doesn't lock those same controls the way
              IsAiWorking does, but it does block a new Claude turn from starting (see GenerateTabViewModel.
              CanSend), so this still needs to surface as a reason "the workspace can't be changed" right now.
-             IsAiWorking's own text always wins when both are somehow true at once (e.g. a task started
+             IsAiWorking's own text always wins when both are somehow true at once (e.g. a script started
              mid-turn), since it's the more disruptive state - the bar still just shows accent-colored either
              way. Must come before the main content Grid below: a DockPanel's LAST child always fills remaining
              space regardless of its own Dock value (LastChildFill), so the Grid - not this bar - needs to stay
@@ -113,11 +118,11 @@
         <Border DockPanel.Dock="Bottom" Height="26" Padding="12,0"
                 Classes="aiStatusBar"
                 Classes.working="{Binding Workspace.Version.IsAiWorking}"
-                Classes.taskRunning="{Binding Workspace.Files.HasRunningTasks}"
+                Classes.scriptRunning="{Binding Workspace.Files.HasRunningScripts}"
                 IsVisible="{Binding Workspace, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
             <!-- Background is set entirely via these styles, not a local attribute on the Border - a local
                  value always wins over a style setter regardless of class, which would otherwise permanently
-                 shadow the "working"/"taskRunning" state below no matter what class was actually applied.
+                 shadow the "working"/"scriptRunning" state below no matter what class was actually applied.
                  Two independent selectors (rather than one combined-condition class) both map to the same
                  accent color, since Classes.<name>="{Binding ...}" only accepts a single simple boolean
                  binding, not a MultiBinding OR of the two source properties. -->
@@ -128,7 +133,7 @@
                 <Style Selector="Border.aiStatusBar.working">
                     <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
                 </Style>
-                <Style Selector="Border.aiStatusBar.taskRunning">
+                <Style Selector="Border.aiStatusBar.scriptRunning">
                     <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
                 </Style>
             </Border.Styles>
@@ -138,16 +143,16 @@
                     <TextBlock.IsVisible>
                         <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
                             <Binding Path="!Workspace.Version.IsAiWorking" />
-                            <Binding Path="!Workspace.Files.HasRunningTasks" />
+                            <Binding Path="!Workspace.Files.HasRunningScripts" />
                         </MultiBinding>
                     </TextBlock.IsVisible>
                 </TextBlock>
-                <TextBlock Text="Task is running…" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
+                <TextBlock Text="Script is running…" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
                            Foreground="White">
                     <TextBlock.IsVisible>
                         <MultiBinding Converter="{x:Static conv:BoolConverters.And}">
                             <Binding Path="!Workspace.Version.IsAiWorking" />
-                            <Binding Path="Workspace.Files.HasRunningTasks" />
+                            <Binding Path="Workspace.Files.HasRunningScripts" />
                         </MultiBinding>
                     </TextBlock.IsVisible>
                 </TextBlock>

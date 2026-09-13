@@ -26,12 +26,12 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     private readonly IUiDispatcher _dispatcher;
     private readonly IExternalOpenService _externalOpenService;
     private readonly IClipboardService _clipboardService;
-    private readonly IWorkspaceTaskScheduler _scheduler;
+    private readonly IWorkspaceScriptRunner _scriptRunner;
     private readonly IWorkspaceVersioningService _versioningService;
     private readonly EditTabViewModel _edit;
 
-    /// <summary>Workspace-relative paths (see RelativePathOf) of every .task file currently running - maintained from the scheduler's events and re-applied to nodes after every Refresh() (which can recreate node instances). See ApplyRunningState.</summary>
-    private readonly HashSet<string> _runningTaskPaths = [];
+    /// <summary>Workspace-relative paths (see RelativePathOf) of every .cs file currently running - maintained from the script runner's events and re-applied to nodes after every Refresh() (which can recreate node instances). See ApplyRunningState.</summary>
+    private readonly HashSet<string> _runningScriptPaths = [];
 
     /// <summary>Null while no .fileignore exists at the workspace root, in which case every node's FileIgnoreOverride is also left null (falling back to its own git Status.Ignored) - see ReloadFileIgnore/ResolveFileIgnore.</summary>
     private FileIgnoreMatcher? _fileIgnoreMatcher;
@@ -53,9 +53,9 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isInteractionBlocked;
 
-    /// <summary>True while any .task file in this workspace has a run in flight - mirrors _runningTaskPaths.Count > 0, kept in sync from OnTaskRunStarted/OnTaskRunCompleted. Forwarded to GenerateTabViewModel.HasRunningTasks by WorkspaceViewModel, since AI work should only ever start while nothing else is running against the same working tree.</summary>
+    /// <summary>True while any .cs file in this workspace has a run in flight - mirrors _runningScriptPaths.Count > 0, kept in sync from OnScriptRunStarted/OnScriptRunCompleted. Forwarded to GenerateTabViewModel.HasRunningScripts by WorkspaceViewModel, since AI work should only ever start while nothing else is running against the same working tree.</summary>
     [ObservableProperty]
-    private bool _hasRunningTasks;
+    private bool _hasRunningScripts;
 
     /// <summary>
     /// Whether a branch is currently targeted - set via ApplyTargetState. Creating a new file/folder is only
@@ -74,11 +74,11 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         RenameCommand.NotifyCanExecuteChanged();
         DeleteCommand.NotifyCanExecuteChanged();
         DuplicateCommand.NotifyCanExecuteChanged();
-        RunTaskCommand.NotifyCanExecuteChanged();
+        RunScriptCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>Mirrors OnIsInteractionBlockedChanged - a running task blocks tree mutations exactly like a busy version action or AI turn does (manual editing, task running, and AI working are meant to be mutually exclusive), and blocks starting a second task on top of it (see CanRunTask).</summary>
-    partial void OnHasRunningTasksChanged(bool value)
+    /// <summary>Mirrors OnIsInteractionBlockedChanged - a running script blocks tree mutations exactly like a busy version action or AI turn does (manual editing, script running, and AI working are meant to be mutually exclusive), and blocks starting a second script on top of it (see CanRunScript).</summary>
+    partial void OnHasRunningScriptsChanged(bool value)
     {
         NewFileCommand.NotifyCanExecuteChanged();
         NewFolderCommand.NotifyCanExecuteChanged();
@@ -87,7 +87,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         RenameCommand.NotifyCanExecuteChanged();
         DeleteCommand.NotifyCanExecuteChanged();
         DuplicateCommand.NotifyCanExecuteChanged();
-        RunTaskCommand.NotifyCanExecuteChanged();
+        RunScriptCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Called by WorkspaceViewModel whenever the targeted version/release/feature (or direct mode) changes.</summary>
@@ -100,11 +100,11 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         NewFolderInFolderCommand.NotifyCanExecuteChanged();
     }
 
-    private bool CanMutate() => !IsInteractionBlocked && !HasRunningTasks && !IsChangesMode && _isEditableTarget;
+    private bool CanMutate() => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode && _isEditableTarget;
 
-    private bool CanMutateInFolder(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningTasks && !IsChangesMode && _isEditableTarget;
+    private bool CanMutateInFolder(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode && _isEditableTarget;
 
-    private bool CanMutateNode(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningTasks && !IsChangesMode;
+    private bool CanMutateNode(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode;
 
     public FilesSectionViewModel(
         string rootPath,
@@ -114,7 +114,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         IUiDispatcher dispatcher,
         IExternalOpenService externalOpenService,
         IClipboardService clipboardService,
-        IWorkspaceTaskScheduler scheduler,
+        IWorkspaceScriptRunner scriptRunner,
         IWorkspaceVersioningService versioningService,
         EditTabViewModel edit)
     {
@@ -124,14 +124,14 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         _dispatcher = dispatcher;
         _externalOpenService = externalOpenService;
         _clipboardService = clipboardService;
-        _scheduler = scheduler;
+        _scriptRunner = scriptRunner;
         _versioningService = versioningService;
         _edit = edit;
         _watcher = watcherFactory.Create(rootPath);
         _watcher.Changed += OnWatcherChanged;
-        _scheduler.TaskRunStarted += OnTaskRunStarted;
-        _scheduler.TaskRunCompleted += OnTaskRunCompleted;
-        _scheduler.Start();
+        _scriptRunner.ScriptRunStarted += OnScriptRunStarted;
+        _scriptRunner.ScriptRunCompleted += OnScriptRunCompleted;
+        _scriptRunner.Start();
         ReloadFileIgnore();
         Refresh();
     }
@@ -265,8 +265,8 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// <summary>Raw (non-debounced-per-file) change notification, forwarded so the owning workspace can also check the currently-open Edit tab file for external edits.</summary>
     public event Action? WorkspaceFilesChanged;
 
-    /// <summary>Raised when a .task file's Run or View is picked - the containing workspace tab activates the Output tab and switches its dropdown to this task.</summary>
-    public event Action<(string Path, string Name)>? TaskOutputRequested;
+    /// <summary>Raised when a .cs file's Run or View is picked - the containing workspace tab activates the Script tab and switches its dropdown to this script.</summary>
+    public event Action<(string Path, string Name)>? ScriptOutputRequested;
 
     /// <summary>Set by WorkspaceViewModel - flushes the Edit tab's debounced autosave before a run actually starts, so Run always uses whatever's currently shown there instead of a stale on-disk copy still mid-debounce.</summary>
     public Func<Task>? FlushPendingEditBeforeRun { get; set; }
@@ -316,9 +316,9 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// Pauses (Deactivate) or resumes (Activate) every purely-reactive background service this section owns
     /// - the file watcher and its throttled git-status refresh (see ScheduleGitStatusRefresh) - while this
     /// workspace's own tab isn't the one currently selected, so an open-but-backgrounded workspace costs
-    /// nothing at idle. AI work, an in-flight manual git action, and a running .task script are deliberately
+    /// nothing at idle. AI work, an in-flight manual git action, and a running .cs script are deliberately
     /// NOT paused by this - none of those are driven by anything here (see GenerateTabViewModel's own
-    /// timers, VersionSectionViewModel.RunBusyAsync, IWorkspaceTaskScheduler, none of which this section
+    /// timers, VersionSectionViewModel.RunBusyAsync, IWorkspaceScriptRunner, none of which this section
     /// touches), so they keep running to completion regardless of which tab is selected.
     /// </summary>
     public void SetActive(bool active)
@@ -432,27 +432,27 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     }
 
 
-    /// <summary>Re-stamps IsTaskRunning on whatever node currently represents each still-running task path - Refresh() can recreate node instances (SyncChildren), so a running task's freshly-inserted node would otherwise default back to not-running.</summary>
+    /// <summary>Re-stamps IsScriptRunning on whatever node currently represents each still-running script path - Refresh() can recreate node instances (SyncChildren), so a running script's freshly-inserted node would otherwise default back to not-running.</summary>
     private void ReapplyRunningStates()
     {
-        foreach (var path in _runningTaskPaths)
+        foreach (var path in _runningScriptPaths)
         {
             ApplyRunningState(RootNodes, path, running: true);
         }
     }
 
-    private void ApplyRunningState(IEnumerable<FileTreeNodeViewModel> nodes, string taskPath, bool running)
+    private void ApplyRunningState(IEnumerable<FileTreeNodeViewModel> nodes, string scriptPath, bool running)
     {
         foreach (var node in nodes)
         {
-            if (node.IsTaskFile && RelativePathOf(node) == taskPath)
+            if (node.IsScriptFile && RelativePathOf(node) == scriptPath)
             {
-                node.IsTaskRunning = running;
+                node.IsScriptRunning = running;
             }
 
             if (node.IsDirectory)
             {
-                ApplyRunningState(node.Children, taskPath, running);
+                ApplyRunningState(node.Children, scriptPath, running);
             }
         }
     }
@@ -647,28 +647,28 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// A task can only start while nothing else is already using the working tree: not this same task, not a
-    /// different one (only one task total runs at a time per workspace - see IWorkspaceTaskScheduler.RunNowAsync),
+    /// A script can only start while nothing else is already using the working tree: not this same script, not
+    /// a different one (only one script total runs at a time per workspace - see IWorkspaceScriptRunner.RunNowAsync),
     /// and not a busy version action or an in-flight AI turn (IsInteractionBlocked).
     /// </summary>
-    private bool CanRunTask(FileTreeNodeViewModel? node) => node is { IsTaskFile: true, IsTaskRunning: false } && !HasRunningTasks && !IsInteractionBlocked;
+    private bool CanRunScript(FileTreeNodeViewModel? node) => node is { IsScriptFile: true, IsScriptRunning: false } && !HasRunningScripts && !IsInteractionBlocked;
 
-    private bool CanStopTask(FileTreeNodeViewModel? node) => node is { IsTaskFile: true, IsTaskRunning: true };
+    private bool CanStopScript(FileTreeNodeViewModel? node) => node is { IsScriptFile: true, IsScriptRunning: true };
 
-    /// <summary>AllowConcurrentExecutions is required: RunTaskCommand is one shared IAsyncRelayCommand instance across every row (bound via CommandParameter), and CommunityToolkit's default only allows one execution of a given async command in flight at a time regardless of parameter - without this, running task B while task A's run was still in flight would silently no-op instead of starting B.</summary>
-    [RelayCommand(CanExecute = nameof(CanRunTask), AllowConcurrentExecutions = true)]
-    private async Task RunTaskAsync(FileTreeNodeViewModel node)
+    /// <summary>AllowConcurrentExecutions is required: RunScriptCommand is one shared IAsyncRelayCommand instance across every row (bound via CommandParameter), and CommunityToolkit's default only allows one execution of a given async command in flight at a time regardless of parameter - without this, running script B while script A's run was still in flight would silently no-op instead of starting B.</summary>
+    [RelayCommand(CanExecute = nameof(CanRunScript), AllowConcurrentExecutions = true)]
+    private async Task RunScriptAsync(FileTreeNodeViewModel node)
     {
-        var taskPath = RelativePathOf(node);
-        var taskName = Path.GetFileNameWithoutExtension(node.Name);
-        TaskOutputRequested?.Invoke((taskPath, taskName));
+        var scriptPath = RelativePathOf(node);
+        var scriptName = Path.GetFileNameWithoutExtension(node.Name);
+        ScriptOutputRequested?.Invoke((scriptPath, scriptName));
 
-        if (node.IsTaskRunning)
+        if (node.IsScriptRunning)
         {
             return; // already running (e.g. started elsewhere) - View was still worth raising above
         }
 
-        // If this task is open in the Edit tab with a debounced autosave still pending, flush it first -
+        // If this script is open in the Edit tab with a debounced autosave still pending, flush it first -
         // otherwise a run started right after typing could read the stale on-disk copy instead of what's
         // actually showing in the editor.
         if (FlushPendingEditBeforeRun is not null)
@@ -676,14 +676,14 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             await FlushPendingEditBeforeRun();
         }
 
-        await _scheduler.RunNowAsync(new TaskRef(taskPath, taskName));
+        await _scriptRunner.RunNowAsync(new ScriptRef(scriptPath, scriptName));
     }
 
-    [RelayCommand(CanExecute = nameof(CanStopTask))]
-    private void StopTask(FileTreeNodeViewModel node) => _scheduler.StopRun(RelativePathOf(node));
+    [RelayCommand(CanExecute = nameof(CanStopScript))]
+    private void StopScript(FileTreeNodeViewModel node) => _scriptRunner.StopRun(RelativePathOf(node));
 
     [RelayCommand]
-    private void ViewTask(FileTreeNodeViewModel node) => TaskOutputRequested?.Invoke((RelativePathOf(node), Path.GetFileNameWithoutExtension(node.Name)));
+    private void ViewScript(FileTreeNodeViewModel node) => ScriptOutputRequested?.Invoke((RelativePathOf(node), Path.GetFileNameWithoutExtension(node.Name)));
 
     /// <summary>
     /// Moves file/folder paths dragged in from outside the app (e.g. the OS's own file manager - see
@@ -838,31 +838,31 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OnTaskRunStarted(TaskRef task) => _dispatcher.Post(() =>
+    private void OnScriptRunStarted(ScriptRef script) => _dispatcher.Post(() =>
     {
-        _runningTaskPaths.Add(task.Path);
-        ApplyRunningState(RootNodes, task.Path, running: true);
-        RunTaskCommand.NotifyCanExecuteChanged();
-        StopTaskCommand.NotifyCanExecuteChanged();
-        HasRunningTasks = _runningTaskPaths.Count > 0;
+        _runningScriptPaths.Add(script.Path);
+        ApplyRunningState(RootNodes, script.Path, running: true);
+        RunScriptCommand.NotifyCanExecuteChanged();
+        StopScriptCommand.NotifyCanExecuteChanged();
+        HasRunningScripts = _runningScriptPaths.Count > 0;
     });
 
-    private void OnTaskRunCompleted(TaskRunRecord record) => _dispatcher.Post(() =>
+    private void OnScriptRunCompleted(ScriptRunRecord record) => _dispatcher.Post(() =>
     {
-        _runningTaskPaths.Remove(record.TaskPath);
-        ApplyRunningState(RootNodes, record.TaskPath, running: false);
-        RunTaskCommand.NotifyCanExecuteChanged();
-        StopTaskCommand.NotifyCanExecuteChanged();
-        HasRunningTasks = _runningTaskPaths.Count > 0;
+        _runningScriptPaths.Remove(record.FilePath);
+        ApplyRunningState(RootNodes, record.FilePath, running: false);
+        RunScriptCommand.NotifyCanExecuteChanged();
+        StopScriptCommand.NotifyCanExecuteChanged();
+        HasRunningScripts = _runningScriptPaths.Count > 0;
     });
 
     public void Dispose()
     {
         _watcher.Changed -= OnWatcherChanged;
         _watcher.Dispose();
-        _scheduler.TaskRunStarted -= OnTaskRunStarted;
-        _scheduler.TaskRunCompleted -= OnTaskRunCompleted;
-        _scheduler.Dispose();
+        _scriptRunner.ScriptRunStarted -= OnScriptRunStarted;
+        _scriptRunner.ScriptRunCompleted -= OnScriptRunCompleted;
+        _scriptRunner.Dispose();
         _gitStatusRefreshThrottleCts?.Cancel();
     }
 }

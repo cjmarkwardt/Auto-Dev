@@ -1,0 +1,79 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AutoDev.ViewModels.Content"
+             x:Class="AutoDev.Views.Content.ScriptTabView"
+             x:DataType="vm:ScriptTabViewModel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1"
+                Padding="10,6" IsVisible="{Binding HasEntries}">
+            <ComboBox ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch" PlaceholderText="Select a script…">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate DataType="vm:ScriptEntry">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}"
+                                       VerticalAlignment="Center" IsVisible="{Binding IsRunning}" />
+                            <TextBlock Text="{Binding Name}" FontSize="12" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}" Padding="10,4"
+                IsVisible="{Binding HasScript}">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ScriptName}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="5" IsVisible="{Binding ShowRunning}">
+                        <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="Running…" FontStyle="Italic" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                    </StackPanel>
+                    <TextBlock Text="✓ Succeeded" IsVisible="{Binding ShowSucceeded}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
+                    <TextBlock Text="⊘ Stopped" IsVisible="{Binding ShowStopped}" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                    <TextBlock Text="✗ Failed" IsVisible="{Binding ShowFailed}" FontSize="11" Foreground="Crimson" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <!-- Always available regardless of whatever text selection (if any) the output area
+                         below currently has - see ScriptTabViewModel.CanCopyOutput's own doc comment for why
+                         that can't always be trusted on its own. -->
+                    <Button Classes="iconButton" ToolTip.Tip="Copy Output" Command="{Binding CopyOutputCommand}">
+                        <Path Classes="lineIcon" Data="{StaticResource CopyIconGeometry}" Width="13" Height="13" />
+                    </Button>
+                    <Button Classes="sidebarAction" Content="Stop" Command="{Binding StopCommand}"
+                            IsVisible="{Binding ShowRunning}" ToolTip.Tip="Forcefully stop this script" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Only shown while the viewed script is actually running - lets it receive a line of text on its
+             own stdin (e.g. a Console.ReadLine() call it's currently blocked on), which would otherwise hang
+             forever since nothing else in AutoDev ever supplies it input. See ScriptTabViewModel.
+             SendInputAsync/LiveScriptRun.SendInputAsync. -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource HeaderBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,1,0,0" Padding="10,6"
+                IsVisible="{Binding ShowRunning}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBox Grid.Column="0" Name="InputBox" Text="{Binding InputText}"
+                         PlaceholderText="Enter input for the running script… (Enter to send)" />
+                <Button Grid.Column="1" Content="Send" Margin="8,0,0,0" Command="{Binding SendInputCommand}" />
+            </Grid>
+        </Border>
+
+        <!-- A DockPanel only gives HorizontalAlignment/VerticalAlignment room to work with on its LAST
+             child (LastChildFill) - these two are mutually-exclusive alternates for the same body area, so
+             they're grouped in their own Grid where every child gets the full remaining space to center in. -->
+        <Grid>
+            <TextBlock Text="No script selected. Pick one from the dropdown above, or right-click a .cs file in the sidebar and choose View."
+                       IsVisible="{Binding !HasScript}" TextWrapping="Wrap" TextAlignment="Center" Margin="24,0"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextMutedBrush}" FontSize="13" />
+
+            <ScrollViewer IsVisible="{Binding HasScript}" Name="Scroller">
+                <SelectableTextBlock Text="{Binding OutputText}" TextWrapping="Wrap" Margin="14,10,14,14"
+                                      FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace" FontSize="12" />
+            </ScrollViewer>
+        </Grid>
+    </DockPanel>
+</UserControl>

@@ -85,9 +85,9 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isAiWorking;
 
-    /// <summary>Set by WorkspaceViewModel from FilesSectionViewModel.HasRunningTasks - true while any .task file in this workspace is running. Folded into IsInteractionBlocked so a running task locks Commit/Merge/etc. here and every History tab action exactly like a busy version action or an in-flight AI turn already does: manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree.</summary>
+    /// <summary>Set by WorkspaceViewModel from FilesSectionViewModel.HasRunningScripts - true while any .cs file in this workspace is running. Folded into IsInteractionBlocked so a running script locks Commit/Merge/etc. here and every History tab action exactly like a busy version action or an in-flight AI turn already does: manual editing, script running, and AI working are meant to be mutually exclusive states over the same working tree.</summary>
     [ObservableProperty]
-    private bool _hasRunningTasks;
+    private bool _hasRunningScripts;
 
     /// <summary>True while the active Generate turn is paused (GenerateTabViewModel.TurnPaused/TurnResumed) - IsAiWorking stays true the whole time too (see OnGenerateNormalTurnStarted/Completed, deliberately not fired around a pause), so the workspace stays exactly as locked as it was while genuinely working; this only distinguishes the bottom status bar's own "AI is paused" text from "AI work in progress…" (see MainShellView.axaml).</summary>
     [ObservableProperty]
@@ -99,8 +99,8 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     /// <summary>GitOutputLog joined into one string, newest content last - what the busy overlay's own SelectableTextBlock actually binds to (see WorkspaceView.axaml), so the whole log selects/copies as one continuous block instead of needing to be dragged across one unselectable TextBlock per line.</summary>
     public string GitOutputLogText => string.Join('\n', GitOutputLog);
 
-    /// <summary>Blocks every git action triggered from the History tab or this section's own Commit/Reset - true during a git-only action (IsBusy), the whole Generate-turn-plus-commit workflow (IsAiWorking), or a running .task file (HasRunningTasks).</summary>
-    public bool IsInteractionBlocked => IsBusy || IsAiWorking || HasRunningTasks;
+    /// <summary>Blocks every git action triggered from the History tab or this section's own Commit/Reset - true during a git-only action (IsBusy), the whole Generate-turn-plus-commit workflow (IsAiWorking), or a running .cs file (HasRunningScripts).</summary>
+    public bool IsInteractionBlocked => IsBusy || IsAiWorking || HasRunningScripts;
 
     /// <summary>Shared CanExecute for every command below.</summary>
     private bool CanMutate() => !IsInteractionBlocked;
@@ -136,7 +136,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         NotifyMutatingCommandsCanExecuteChanged();
     }
 
-    partial void OnHasRunningTasksChanged(bool value)
+    partial void OnHasRunningScriptsChanged(bool value)
     {
         OnPropertyChanged(nameof(IsInteractionBlocked));
         NotifyMutatingCommandsCanExecuteChanged();
@@ -180,6 +180,14 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         if (!await versioningService.IsRepoInitializedAsync())
         {
             await RunBusyAsync(ct => versioningService.InitializeRepoAsync(ct));
+
+            // "Not initialized yet" covers both a literally empty folder AND a repo freshly cloned from an
+            // empty remote (see IsRepoInitializedAsync's own doc comment) - exactly the two cases scaffolding
+            // from a template makes sense for. Skipped if InitializeRepoAsync itself failed.
+            if (!IsBusyFailed)
+            {
+                await OfferScaffoldFromTemplateAsync();
+            }
         }
         else
         {
@@ -438,6 +446,70 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 
         return outcome;
     }
+
+    /// <summary>Asks whether to scaffold a just-initialized (empty) workspace from a template - see EnsureRepoAsync. A plain no-op if declined, or if the Templates popup is closed without applying one.</summary>
+    private async Task OfferScaffoldFromTemplateAsync()
+    {
+        if (!await dialogService.ShowConfirmDialogAsync(
+                "Scaffold Workspace",
+                "This workspace is empty. Would you like to scaffold it from a template?",
+                confirmLabel: "Choose Template",
+                isDestructive: false))
+        {
+            return;
+        }
+
+        if (await dialogService.ShowTemplatesDialogAsync(canApply: true) is { } applied)
+        {
+            await ApplyTemplateAsync(applied.Name, applied.Content);
+        }
+    }
+
+    /// <summary>
+    /// Submits a real Generate request (see GenerateTabViewModel.SubmitRequestAsync) instructing the AI to
+    /// apply a template's content (see ITemplateService/TemplatesDialogViewModel) to this workspace, with
+    /// "Apply template {templateName}" as the request card's own display text rather than the template's full
+    /// raw content - switches to Generate automatically so the user lands on it right away, same as a
+    /// genuinely typed message would once submitted. IsAiWorking is handled by the usual
+    /// OnGenerateNormalTurnStarted/Completed subscription below, exactly like any other Generate request - no
+    /// separate handling needed here. Works the same whether the workspace is empty (scaffolding it fresh) or
+    /// already has content (restructuring it to conform, up to and including a large rewrite - see
+    /// BuildTemplateInstruction) - the instruction itself covers both, so this doesn't need to distinguish
+    /// them. Called either right after EnsureRepoAsync silently initializes a brand-new empty repo (offering
+    /// to scaffold it - see EnsureRepoAsync), or from the title bar's Templates popup applying one to whatever
+    /// workspace happens to be open at the time.
+    /// </summary>
+    public async Task ApplyTemplateAsync(string templateName, string templateContent)
+    {
+        if (IsInteractionBlocked)
+        {
+            await dialogService.ShowMessageDialogAsync("Apply Template", "Can't apply a template while the workspace is busy - try again once the current action finishes.");
+            return;
+        }
+
+        SwitchToGenerateRequested?.Invoke();
+        await generate.SubmitRequestAsync($"Apply template {templateName}", BuildTemplateInstruction(templateContent));
+    }
+
+    private static string BuildTemplateInstruction(string templateContent) =>
+        "Apply the following template to this workspace, which describes how it should be organized and " +
+        "configured. This applies equally whether the workspace is currently empty or already has content: " +
+        "if empty, scaffold the initial structure the template describes; if it already has files, restructure " +
+        "and rewrite whatever's there as needed so the workspace conforms to the template, moving/renaming/" +
+        "deleting/rewriting existing files as needed rather than only adding alongside them.\n\n" +
+        "The template may itself be written as a diff against some other baseline (e.g. \"inherits from " +
+        "X, only what's different is listed below\") that this workspace was never literally built from - " +
+        "don't treat that as a blocker or a reason to stop and ask. Read through the template for its actual " +
+        "intent (the conventions, layout, and configuration it's steering toward), compare that against " +
+        "this workspace's current structure/naming/conventions, and map the existing workspace onto that " +
+        "intent yourself: e.g. if the template says some directory replaces another with the same internal " +
+        "shape, find this workspace's own equivalent (even if named or organized differently) and restructure " +
+        "it accordingly, adapting file/config content along the way rather than only renaming folders.\n\n" +
+        "A large rewrite of the existing workspace is expected and fully intended here, not a concern to " +
+        "flag or hesitate over - this workspace is under version control, so every change here is fully " +
+        "reversible; there's no reason for caution about the size or invasiveness of the restructuring. " +
+        "Proceed directly without asking for confirmation first; there's no user available to respond " +
+        "mid-turn.\n\n" + templateContent;
 
     private static string BuildConflictInstruction(IReadOnlyList<string> conflictedFiles) =>
         "This produced merge conflicts in: " + string.Join(", ", conflictedFiles) + ". " +

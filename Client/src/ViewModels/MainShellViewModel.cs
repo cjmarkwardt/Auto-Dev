@@ -1,6 +1,8 @@
 using AutoDev.Core.Models;
 using AutoDev.Core.Services;
+using AutoDev.ViewModels.Infrastructure;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 
 namespace AutoDev.ViewModels;
@@ -8,12 +10,14 @@ namespace AutoDev.ViewModels;
 public sealed partial class MainShellViewModel : ViewModelBase
 {
     private readonly IWorkspaceFactory _workspaceFactory;
+    private readonly IDialogService _dialogService;
     private readonly ILogger<MainShellViewModel> _logger;
 
-    public MainShellViewModel(HeaderViewModel header, IWorkspaceFactory workspaceFactory, ILogger<MainShellViewModel> logger)
+    public MainShellViewModel(HeaderViewModel header, IWorkspaceFactory workspaceFactory, IDialogService dialogService, ILogger<MainShellViewModel> logger)
     {
         Header = header;
         _workspaceFactory = workspaceFactory;
+        _dialogService = dialogService;
         _logger = logger;
         Header.WorkspaceOpened += OnWorkspaceOpened;
     }
@@ -38,6 +42,16 @@ public sealed partial class MainShellViewModel : ViewModelBase
     {
         await Header.RefreshAccountAsync();
         await Header.RefreshRecentWorkspacesAsync();
+    }
+
+    /// <summary>Title bar's Templates icon button - opens the register/remove/apply popup; Apply only shows while a workspace is actually open (see TemplatesDialogViewModel.CanApply), targeting whichever one that is.</summary>
+    [RelayCommand]
+    private async Task OpenTemplatesAsync()
+    {
+        if (await _dialogService.ShowTemplatesDialogAsync(canApply: Workspace is not null) is { } applied && Workspace is not null)
+        {
+            await Workspace.ApplyTemplateAsync(applied.Name, applied.Content);
+        }
     }
 
     private async void OnWorkspaceOpened(WorkspaceInfo workspace)

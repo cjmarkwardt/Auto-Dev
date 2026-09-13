@@ -67,15 +67,15 @@ public sealed class WorkspaceFactory(/* ~16 shared singletons */) : IWorkspaceFa
     public WorkspaceViewModel Create(WorkspaceInfo workspace)
     {
         var versioningService = versioningServiceFactory.Create(workspace.FullPath);
-        var scheduler = schedulerFactory.Create(workspace.FullPath);
+        var scriptRunner = scriptRunnerFactory.Create(workspace.FullPath);
         var files = new FilesSectionViewModel(workspace.FullPath, fileTreeService, watcherFactory, ...);
         var edit = new EditTabViewModel(fileTreeService);
         var generate = new GenerateTabViewModel(workspace.FullPath, sessionClientFactory, ...);
         var version = new VersionSectionViewModel(versioningService, generate, dispatcher);
         var history = new HistoryTabViewModel(versioningService, version, dialogService, edit);
-        var output = new OutputTabViewModel(workspace.FullPath, metadataStore, scheduler, dispatcher);
+        var script = new ScriptTabViewModel(workspace.FullPath, metadataStore, scriptRunner, dispatcher);
         var command = new CommandTabViewModel(workspace.FullPath, commandExecutor, dispatcher);
-        var content = new WorkspaceContentViewModel(edit, generate, history, output, command);
+        var content = new WorkspaceContentViewModel(edit, generate, history, script, command);
         var fileSearch = new FileSearchViewModel(workspace.FullPath, gitService);
 
         return new WorkspaceViewModel(workspace, version, files, content, fileSearch);
@@ -84,9 +84,9 @@ public sealed class WorkspaceFactory(/* ~16 shared singletons */) : IWorkspaceFa
 ```
 
 Every argument the factory itself takes is a stateless, process-wide singleton (or a `*Factory`
-that produces per-workspace instances, like `IVersioningServiceFactory`/`ITaskSchedulerServiceFactory`/
+that produces per-workspace instances, like `IVersioningServiceFactory`/`IScriptRunnerServiceFactory`/
 `IClaudeSessionClientFactory`); all the statefulness lives in what `Create` builds. This is what
-gives the open workspace its own isolated file watcher, task scheduler, Claude session subprocess,
+gives the open workspace its own isolated file watcher, script runner, Claude session subprocess,
 and git-versioning service.
 
 ## The shell: `MainShellViewModel` and the open workspace
@@ -113,7 +113,7 @@ together with plain C# events in its constructor, not a shared mediator/message 
 |---|---|---|
 | `Files` | `FileSelected` | `Content.OpenFileAsync(path)` |
 | `Files` | `WorkspaceFilesChanged` | `Content.Edit.CheckForExternalChangesAsync()` |
-| `Files` | `TaskOutputRequested` | selects the task in `Content.Output`, switches to the Output tab |
+| `Files` | `ScriptOutputRequested` | selects the script in `Content.Script`, switches to the Script tab |
 | `FileSearch` | `FileChosen` | `Files.SelectPath(path)` (→ itself raises `FileSelected`) |
 | `FileSearch` | `ContentResultChosen` | `Content.OpenFileAsync(path, line)` directly (bypasses `Files`, to avoid a race on the seek position) |
 | `Version` | `TargetChanged` / `IsInteractionBlocked` change | recomputes editable state, pushed into `Files`/`Content` |
@@ -125,13 +125,13 @@ autosave.
 
 `WorkspaceViewModel.InitializeAsync()` calls `Version.EnsureRepoAsync()` (which silently
 `git init`s an un-versioned folder into AutoDev's branch convention - see
-[Version Control](VersionControl.md)) then `Content.Output.LoadAsync()`. `DisposeAsync()` flushes
+[Version Control](VersionControl.md)) then `Content.Script.LoadAsync()`. `DisposeAsync()` flushes
 pending edits and disposes `Content`, `Files`, `Version` in that order.
 
 ## Read-only editing and per-tab layout
 
 **`WorkspaceContentViewModel`** is the right-hand pane: `Edit` (always visible, not a switchable
-tab) plus four indexed tabs - `GenerateTabIndex = 0`, `HistoryTabIndex = 1`, `OutputTabIndex = 2`,
+tab) plus four indexed tabs - `GenerateTabIndex = 0`, `HistoryTabIndex = 1`, `ScriptTabIndex = 2`,
 `CommandTabIndex = 3` (these are also what `MainWindow.axaml.cs`'s global `F2`-`F5` shortcuts
 target).
 
@@ -179,8 +179,8 @@ Two separate, deliberately-scoped persistence layers:
   `System.Text.Json` source-generated context (`Core/Serialization/AppJson.cs`).
 - **Per-workspace metadata** - `IWorkspaceMetadataStore`/`WorkspaceMetadataStore`
   (`Core/Services/WorkspaceMetadataStore.cs`), rooted at `<workspace>/.autodev/local/` inside each
-  repo itself: Generate session ids, unsent drafts, request history, and `.task` run history (see
-  [Claude Integration](ClaudeIntegration.md) and [Task Automation](TaskAutomation.md)). This
+  repo itself: Generate session ids, unsent drafts, request history, and `.cs` script run history
+  (see [Claude Integration](ClaudeIntegration.md) and [Running Scripts](RunningScripts.md)). This
   folder is excluded from git via `.git/info/exclude` (not a tracked `.gitignore`), so it never
   shows up as a change to commit - see `EnsureLocalGitExcludeAsync` in
   [Version Control](VersionControl.md).

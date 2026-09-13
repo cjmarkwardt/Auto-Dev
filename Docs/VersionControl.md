@@ -134,11 +134,11 @@ inline label - see "The busy overlay" below for what that actually does.
 It also owns the shared busy/lock machinery every action (Commit/Reset/Branch/Tag/Remote/Squash/
 Rebase/Merge here, everything else triggered from the History tab - see below) runs through:
 
-- `IsBusy`/`IsAiWorking`/`HasRunningTasks` combined into `IsInteractionBlocked`, which locks the
-  sidebar, Edit tab, and History tab's action commands while true. `HasRunningTasks` is set from
-  `FilesSectionViewModel.HasRunningTasks` (see [Task Automation](TaskAutomation.md)) - a running
-  `.task` file locks Commit/Merge/etc. and every History tab action exactly like a busy version
-  action or an in-flight AI turn does, so manual editing, task running, and AI working never race
+- `IsBusy`/`IsAiWorking`/`HasRunningScripts` combined into `IsInteractionBlocked`, which locks the
+  sidebar, Edit tab, and History tab's action commands while true. `HasRunningScripts` is set from
+  `FilesSectionViewModel.HasRunningScripts` (see [Running Scripts](RunningScripts.md)) - a running
+  `.cs` file locks Commit/Merge/etc. and every History tab action exactly like a busy version
+  action or an in-flight AI turn does, so manual editing, script running, and AI working never race
   the same working tree.
 - `GitOutputLog` - the current action's own live git command log (each command line plus its
   output), shown in the busy overlay - see "The busy overlay" below.

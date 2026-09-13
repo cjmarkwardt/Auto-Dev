@@ -21,10 +21,10 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         // goes straight through Content.OpenFileAsync rather than Files.SelectPath (which assumes a workspace-tree path to highlight).
         Content.Edit.OpenFileRequested += path => _ = Content.OpenFileAsync(path);
         Files.WorkspaceFilesChanged += () => _ = Content.Edit.CheckForExternalChangesAsync();
-        Files.TaskOutputRequested += task =>
+        Files.ScriptOutputRequested += script =>
         {
-            Content.Output.SelectTask(task.Path, task.Name);
-            Content.SelectedTabIndex = WorkspaceContentViewModel.OutputTabIndex;
+            Content.Script.SelectScript(script.Path, script.Name);
+            Content.SelectedTabIndex = WorkspaceContentViewModel.ScriptTabIndex;
         };
         Files.SetCommandContextRequested += path => Content.Command.SetWorkingDirectory(path);
         FileSearch.FileChosen += path => Files.SelectPath(path); // also opens it in the Edit tab, via Files.FileSelected above
@@ -70,18 +70,18 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
 
         Files.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(FilesSectionViewModel.HasRunningTasks))
+            if (e.PropertyName == nameof(FilesSectionViewModel.HasRunningScripts))
             {
-                Content.Generate.HasRunningTasks = Files.HasRunningTasks;
+                Content.Generate.HasRunningScripts = Files.HasRunningScripts;
 
-                // Manual editing, task running, and AI working are meant to be mutually exclusive states over
-                // the same working tree - a running task locks Edit exactly like a busy version action or an
-                // in-flight AI turn already does (see the IsInteractionBlocked handler below).
-                Content.ApplyHasRunningTasksState(Files.HasRunningTasks);
+                // Manual editing, script running, and AI working are meant to be mutually exclusive states
+                // over the same working tree - a running script locks Edit exactly like a busy version action
+                // or an in-flight AI turn already does (see the IsInteractionBlocked handler below).
+                Content.ApplyHasRunningScriptsState(Files.HasRunningScripts);
 
                 // Also locks Commit/Merge/etc. and every History tab action (Version.IsInteractionBlocked folds
-                // this in), so a running task can't race a git action mutating the same working tree either.
-                Version.HasRunningTasks = Files.HasRunningTasks;
+                // this in), so a running script can't race a git action mutating the same working tree either.
+                Version.HasRunningScripts = Files.HasRunningScripts;
             }
         };
 
@@ -123,12 +123,15 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
     [ObservableProperty]
     private bool _isLoading = true;
 
-    /// <summary>Called by MainShellViewModel when the app's single open workspace becomes (or stops being) active - see FilesSectionViewModel.SetActive/VersionSectionViewModel.SetActive, the two owners of this workspace's own purely-reactive background services (file watcher, periodic remote sync). AI work, an in-flight manual git action, and a running .task script are all deliberately untouched by this - see those methods' own doc comments for why.</summary>
+    /// <summary>Called by MainShellViewModel when the app's single open workspace becomes (or stops being) active - see FilesSectionViewModel.SetActive/VersionSectionViewModel.SetActive, the two owners of this workspace's own purely-reactive background services (file watcher, periodic remote sync). AI work, an in-flight manual git action, and a running .cs script are all deliberately untouched by this - see those methods' own doc comments for why.</summary>
     public void SetActive(bool active)
     {
         Files.SetActive(active);
         Version.SetActive(active);
     }
+
+    /// <summary>Applies a template to this workspace - see the title bar's Templates popup and VersionSectionViewModel.ApplyTemplateAsync.</summary>
+    public Task ApplyTemplateAsync(string templateName, string templateContent) => Version.ApplyTemplateAsync(templateName, templateContent);
 
     public async Task InitializeAsync()
     {
@@ -143,7 +146,7 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
             // call to get the same "fetched, and pulled if the tree is clean" treatment as switching back to
             // History later does.
             await Content.History.RefreshFromRemoteAsync();
-            await Content.Output.LoadAsync();
+            await Content.Script.LoadAsync();
 
             // Selecting (rather than just opening) also highlights it in the Files tree, matching what
             // clicking it there would do - same as FileSearch's own FileChosen -> Files.SelectPath wiring.

@@ -83,12 +83,13 @@ public partial class App : Application
         services.AddSingleton<ISettingsService, JsonSettingsService>();
         services.AddSingleton<IWorkspaceMetadataStore, WorkspaceMetadataStore>();
         services.AddSingleton<IWorkspaceService, WorkspaceService>();
+        services.AddSingleton<ITemplateService, TemplateService>();
         services.AddSingleton<IFileTreeService, FileTreeService>();
         services.AddSingleton<IExternalOpenService, ExternalOpenService>();
         services.AddSingleton<INewInstanceService, NewInstanceService>();
         services.AddSingleton<IWorkspaceFileWatcherFactory, WorkspaceFileWatcherFactory>();
         services.AddSingleton<IUsageAggregatorService, UsageAggregatorService>();
-        services.AddSingleton<ITaskSchedulerServiceFactory, TaskSchedulerServiceFactory>();
+        services.AddSingleton<IScriptRunnerServiceFactory, ScriptRunnerServiceFactory>();
         services.AddSingleton<ICommandExecutor, CommandExecutor>();
         services.AddSingleton<IGitService, GitService>();
         services.AddSingleton<IVersioningServiceFactory, VersioningServiceFactory>();

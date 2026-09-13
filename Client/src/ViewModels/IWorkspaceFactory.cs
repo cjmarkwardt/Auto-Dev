@@ -15,7 +15,7 @@ public interface IWorkspaceFactory
 
 /// <summary>
 /// Composes a brand-new, fully isolated set of VM/service instances per workspace tab (own file watcher,
-/// own task scheduler, own AI session client, own console state) - see plan doc's per-workspace
+/// own script runner, own AI session client, own console state) - see plan doc's per-workspace
 /// isolation design. Everything injected here is a stateless/shared singleton; the statefulness lives
 /// entirely in the instances this factory creates.
 /// </summary>
@@ -25,7 +25,7 @@ public sealed class WorkspaceFactory(
     IDialogService dialogService,
     IUiDispatcher dispatcher,
     IWorkspaceMetadataStore metadataStore,
-    ITaskSchedulerServiceFactory schedulerFactory,
+    IScriptRunnerServiceFactory scriptRunnerFactory,
     IVersioningServiceFactory versioningServiceFactory,
     IAiSessionClientFactory sessionClientFactory,
     IAiProviderSelectionService providerSelection,
@@ -40,9 +40,9 @@ public sealed class WorkspaceFactory(
     public WorkspaceViewModel Create(WorkspaceInfo workspace)
     {
         var versioningService = versioningServiceFactory.Create(workspace.FullPath);
-        var scheduler = schedulerFactory.Create(workspace.FullPath);
+        var scriptRunner = scriptRunnerFactory.Create(workspace.FullPath);
         var edit = new EditTabViewModel(fileTreeService, externalOpenService);
-        var files = new FilesSectionViewModel(workspace.FullPath, fileTreeService, watcherFactory, dialogService, dispatcher, externalOpenService, clipboardService, scheduler, versioningService, edit);
+        var files = new FilesSectionViewModel(workspace.FullPath, fileTreeService, watcherFactory, dialogService, dispatcher, externalOpenService, clipboardService, scriptRunner, versioningService, edit);
 
         var generate = new GenerateTabViewModel(
             workspace.FullPath,
@@ -55,9 +55,9 @@ public sealed class WorkspaceFactory(
             loggerFactory.CreateLogger<GenerateTabViewModel>());
         var version = new VersionSectionViewModel(versioningService, dialogService, generate, dispatcher);
         var history = new HistoryTabViewModel(versioningService, version, dialogService, edit);
-        var output = new OutputTabViewModel(workspace.FullPath, metadataStore, scheduler, dispatcher);
+        var script = new ScriptTabViewModel(workspace.FullPath, metadataStore, scriptRunner, clipboardService, dispatcher);
         var command = new CommandTabViewModel(workspace.FullPath, commandExecutor, dispatcher);
-        var content = new WorkspaceContentViewModel(edit, generate, history, output, command);
+        var content = new WorkspaceContentViewModel(edit, generate, history, script, command);
         var fileSearch = new FileSearchViewModel(workspace.FullPath, gitService, files);
 
         return new WorkspaceViewModel(workspace, version, files, content, fileSearch);

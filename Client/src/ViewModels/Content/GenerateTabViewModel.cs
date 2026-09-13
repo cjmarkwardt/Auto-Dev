@@ -74,6 +74,9 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     private bool _visibleAutomatedTurnActive;
     private readonly StringBuilder _visibleAutomatedTurnText = new();
 
+    /// <summary>What AutomatedTurnStatusText shows while IsSending - set per-call by RunAutomatedTurnAsync's own statusLabel parameter, since this generic panel is shared by every kind of visible automated turn (conflict resolution, template scaffolding, ...), not just conflict resolution.</summary>
+    private string _visibleAutomatedTurnLabel = "Working…";
+
     partial void OnVisibleAutomatedTurnActiveChanged(bool value)
     {
         SendCommand.NotifyCanExecuteChanged();
@@ -81,7 +84,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         StopCommand.NotifyCanExecuteChanged();
         PauseCommand.NotifyCanExecuteChanged();
         ResumeCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(ConflictResolutionStatusText));
+        OnPropertyChanged(nameof(AutomatedTurnStatusText));
     }
 
     /// <summary>The request currently being worked on, if any - set only by SendAsync's real (non-automated) turn path, cleared once its ResultEvent/Cancel arrives. Never touched by automated turns (hidden or visible) - see _hiddenTurnActive/_visibleAutomatedTurnActive.</summary>
@@ -309,29 +312,29 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     partial void OnIsVersionActionBusyChanged(bool value) => SendCommand.NotifyCanExecuteChanged();
 
     /// <summary>
-    /// Set by WorkspaceViewModel from FilesSectionViewModel.HasRunningTasks - true while any .task file in
+    /// Set by WorkspaceViewModel from FilesSectionViewModel.HasRunningScripts - true while any .cs file in
     /// this workspace has a run in flight. AI work should only ever start while nothing else is running
     /// against the same working tree, for the same race-avoidance reason IsVersionActionBusy exists - unlike
     /// that flag, this one also disables the input box itself (see GenerateTabView.axaml's InputBox), not just
     /// Send, per this feature's own explicit "disable input" requirement.
     /// </summary>
     [ObservableProperty]
-    private bool _hasRunningTasks;
+    private bool _hasRunningScripts;
 
-    /// <summary>A request whose own ResultEvent already arrived while HasRunningTasks was still true - held back from its own final status/the ding until OnHasRunningTasksChanged sees it clear. See the ResultEvent handler in Handle().</summary>
-    private GenerateRequestViewModel? _pendingTaskCompletionRequest;
+    /// <summary>A request whose own ResultEvent already arrived while HasRunningScripts was still true - held back from its own final status/the ding until OnHasRunningScriptsChanged sees it clear. See the ResultEvent handler in Handle().</summary>
+    private GenerateRequestViewModel? _pendingScriptCompletionRequest;
 
-    /// <summary>The status _pendingTaskCompletionRequest should actually finalize as (Completed, or Cancelled if the user had asked Claude to stop and revert - see CancelAsync) - captured alongside it rather than re-read from _cancelRequested later, since that field could otherwise already belong to a different, newer turn by the time a background task finally finishes.</summary>
-    private GenerateRequestStatus _pendingTaskCompletionStatus = GenerateRequestStatus.Completed;
+    /// <summary>The status _pendingScriptCompletionRequest should actually finalize as (Completed, or Cancelled if the user had asked Claude to stop and revert - see CancelAsync) - captured alongside it rather than re-read from _cancelRequested later, since that field could otherwise already belong to a different, newer turn by the time the running script finally finishes.</summary>
+    private GenerateRequestStatus _pendingScriptCompletionStatus = GenerateRequestStatus.Completed;
 
-    partial void OnHasRunningTasksChanged(bool value)
+    partial void OnHasRunningScriptsChanged(bool value)
     {
         SendCommand.NotifyCanExecuteChanged();
 
-        if (!value && _pendingTaskCompletionRequest is { } request)
+        if (!value && _pendingScriptCompletionRequest is { } request)
         {
-            _pendingTaskCompletionRequest = null;
-            request.Status = _pendingTaskCompletionStatus;
+            _pendingScriptCompletionRequest = null;
+            request.Status = _pendingScriptCompletionStatus;
             _ = PersistCurrentRequestsAsync();
             _soundService.PlayDing();
         }
@@ -371,7 +374,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         StopCommand.NotifyCanExecuteChanged();
         PauseCommand.NotifyCanExecuteChanged();
         ResumeCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(ConflictResolutionStatusText));
+        OnPropertyChanged(nameof(AutomatedTurnStatusText));
     }
 
     /// <summary>
@@ -460,8 +463,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// <summary>The most recent plain-text reply of a visible automated turn (RunAutomatedTurnAsync's visible: true path - e.g. conflict-resolution) - used to inspect what Claude actually said/did, and (see CaptureVisibleAutomatedTurnText's own OnPropertyChanged) live-bound by GenerateTabView's conflict-resolution panel.</summary>
     public string? LastAssistantText => _visibleAutomatedTurnText.Length > 0 ? _visibleAutomatedTurnText.ToString() : null;
 
-    /// <summary>GenerateTabView's conflict-resolution panel's own status line - "Resolving…" while genuinely running, "Paused" while VisibleAutomatedTurnActive but IsSending has dropped (see PauseAsync). Notified alongside both OnVisibleAutomatedTurnActiveChanged and OnIsSendingChanged.</summary>
-    public string ConflictResolutionStatusText => IsSending ? "Resolving merge conflicts…" : "Paused";
+    /// <summary>GenerateTabView's visible-automated-turn panel's own status line - _visibleAutomatedTurnLabel (set per-call by RunAutomatedTurnAsync) while genuinely running, "Paused" while VisibleAutomatedTurnActive but IsSending has dropped (see PauseAsync). Notified alongside both OnVisibleAutomatedTurnActiveChanged and OnIsSendingChanged.</summary>
+    public string AutomatedTurnStatusText => IsSending ? _visibleAutomatedTurnLabel : "Paused";
 
     /// <summary>The plain-text reply of the most recent hidden turn (see RunAutomatedTurnAsync's visible: false path), if any - see HiddenTurnStarted.</summary>
     public string? LastHiddenTurnText => _hiddenTurnText.Length > 0 ? _hiddenTurnText.ToString() : null;
@@ -482,7 +485,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         }
 
         await FlushPendingDraftSaveAsync();
-        await FlushPendingTaskCompletionAsync();
+        await FlushPendingScriptCompletionAsync();
 
         // Persist (as Cancelled) whatever request is still active under the OLD session key before leaving
         // it - this used to just fall out of Requests.Clear() below with no save at all, so any request still
@@ -586,7 +589,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// the same live session (SendAsync's own isInterjection path has no request card to attach it to during
     /// either) could corrupt.
     /// </summary>
-    private bool CanSend() => !_hiddenTurnActive && !VisibleAutomatedTurnActive && !IsVersionActionBusy && !HasRunningTasks && (InputText.Trim().Length > 0 || Attachments.Count > 0 || FileAttachments.Count > 0) && _currentSessionKey is not null;
+    private bool CanSend() => !_hiddenTurnActive && !VisibleAutomatedTurnActive && !IsVersionActionBusy && !HasRunningScripts && (InputText.Trim().Length > 0 || Attachments.Count > 0 || FileAttachments.Count > 0) && _currentSessionKey is not null;
 
     partial void OnInputTextChanged(string value)
     {
@@ -679,32 +682,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         }
         else
         {
-            var request = new GenerateRequestViewModel
-            {
-                Id = Guid.NewGuid().ToString(),
-                Input = textWithFileReferences,
-                Status = GenerateRequestStatus.Working,
-                CreatedAt = DateTimeOffset.UtcNow,
-                CurrentActionStartedAt = DateTimeOffset.UtcNow,
-            };
-
-            if (Requests.Count >= MaxRequests)
-            {
-                Requests.RemoveAt(0);
-            }
-
-            Requests.Add(request);
-            _activeRequest = request;
-            _activeRequestOutputBuffer.Clear();
-            _lastActiveRequestSegment = "";
-            _pendingTurnCount = 1;
-            _cancelRequested = false;
-            DisplayedIndex = Requests.Count - 1;
-            _ = PersistCurrentRequestsAsync();
-
-            IsSending = true;
-            NormalTurnStarted?.Invoke();
-            EnsureClientStarted();
+            BeginNewNormalTurn(textWithFileReferences);
         }
 
         // Baseline for the stall watchdog (see StallWatchdogElapsedAsync) - stamped here rather than only
@@ -720,6 +698,54 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         {
             await _client!.SendUserMessageAsync(outgoingText);
         }
+    }
+
+    /// <summary>Starts a brand-new normal turn's tracking - shared by SendAsync's own "not an interjection" branch and SubmitRequestAsync, both of which still need to actually send something themselves afterward (their own outgoing text can differ from displayInput - see SubmitRequestAsync).</summary>
+    private void BeginNewNormalTurn(string displayInput)
+    {
+        var request = new GenerateRequestViewModel
+        {
+            Id = Guid.NewGuid().ToString(),
+            Input = displayInput,
+            Status = GenerateRequestStatus.Working,
+            CreatedAt = DateTimeOffset.UtcNow,
+            CurrentActionStartedAt = DateTimeOffset.UtcNow,
+        };
+
+        if (Requests.Count >= MaxRequests)
+        {
+            Requests.RemoveAt(0);
+        }
+
+        Requests.Add(request);
+        _activeRequest = request;
+        _activeRequestOutputBuffer.Clear();
+        _lastActiveRequestSegment = "";
+        _pendingTurnCount = 1;
+        _cancelRequested = false;
+        DisplayedIndex = Requests.Count - 1;
+        _ = PersistCurrentRequestsAsync();
+
+        IsSending = true;
+        NormalTurnStarted?.Invoke();
+        EnsureClientStarted();
+    }
+
+    /// <summary>
+    /// Submits a message on the user's behalf as a genuine new Generate request - same Requests/IsSending/
+    /// NormalTurnStarted-Completed tracking as a message actually typed into the input box (see SendAsync/
+    /// BeginNewNormalTurn), unlike RunAutomatedTurnAsync's separate, request-card-free path. displayText is
+    /// what the request card shows (kept short/readable); outgoingText is what's actually sent to the CLI,
+    /// which can be considerably longer/more detailed (e.g. VersionSectionViewModel.ApplyTemplateAsync shows
+    /// "Apply template Foo" while sending the whole template body as the real instruction). Callers are
+    /// responsible for checking IsInteractionBlocked (or equivalent) first - unlike SendAsync, this always
+    /// starts a brand-new turn and never folds into an in-flight one as an interjection.
+    /// </summary>
+    public async Task SubmitRequestAsync(string displayText, string outgoingText)
+    {
+        BeginNewNormalTurn(displayText);
+        _lastEventReceivedAt = DateTimeOffset.UtcNow;
+        await _client!.SendUserMessageAsync(outgoingText);
     }
 
     /// <summary>
@@ -976,23 +1002,23 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     }
 
     /// <summary>
-    /// Resolves a request still waiting on OnHasRunningTasksChanged (see the ResultEvent handler in Handle())
-    /// as its own already-decided final status (see _pendingTaskCompletionStatus) right away and persists -
+    /// Resolves a request still waiting on OnHasRunningScriptsChanged (see the ResultEvent handler in Handle())
+    /// as its own already-decided final status (see _pendingScriptCompletionStatus) right away and persists -
     /// called before leaving a session (switch/dispose) so that wait can never span a session boundary:
-    /// HasRunningTasks clearing later would otherwise finalize a request that's no longer part of the current
+    /// HasRunningScripts clearing later would otherwise finalize a request that's no longer part of the current
     /// session into the NEW session's file (or never get to it at all, if the workspace tab itself is gone by
-    /// then). The task itself may well still be running - this only resolves the display/ding, exactly like
+    /// then). The script itself may well still be running - this only resolves the display/ding, exactly like
     /// leaving mid-turn already does for a genuinely active request.
     /// </summary>
-    private async Task FlushPendingTaskCompletionAsync()
+    private async Task FlushPendingScriptCompletionAsync()
     {
-        if (_pendingTaskCompletionRequest is not { } request)
+        if (_pendingScriptCompletionRequest is not { } request)
         {
             return;
         }
 
-        _pendingTaskCompletionRequest = null;
-        request.Status = _pendingTaskCompletionStatus;
+        _pendingScriptCompletionRequest = null;
+        request.Status = _pendingScriptCompletionStatus;
         await PersistCurrentRequestsAsync();
     }
 
@@ -1053,14 +1079,17 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// LastAssistantText. False keeps the exchange entirely invisible instead, recoverable via
     /// LastHiddenTurnText - no current caller uses this, see HiddenTurnStarted's own doc comment.
     /// </param>
-    public async Task<bool> RunAutomatedTurnAsync(string instruction, bool visible = true, CancellationToken cancellationToken = default)
+    /// <param name="statusLabel">Shown by AutomatedTurnStatusText for the duration of a visible turn - ignored when visible is false.</param>
+    public async Task<bool> RunAutomatedTurnAsync(string instruction, bool visible = true, string statusLabel = "Resolving merge conflicts…", CancellationToken cancellationToken = default)
     {
         _hiddenTurnActive = !visible;
         VisibleAutomatedTurnActive = visible;
         if (visible)
         {
+            _visibleAutomatedTurnLabel = statusLabel;
             _visibleAutomatedTurnText.Clear();
             OnPropertyChanged(nameof(LastAssistantText));
+            OnPropertyChanged(nameof(AutomatedTurnStatusText));
         }
         else
         {
@@ -1245,23 +1274,23 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 // Cancelled (not Completed) if the user had asked Claude to stop and revert (CancelAsync) and
                 // this is that request's own reply finally landing - captured now, not read again later,
                 // since _cancelRequested could belong to a different turn by the time a deferred
-                // (HasRunningTasks) completion below actually resolves.
+                // (HasRunningScripts) completion below actually resolves.
                 var finalStatus = _cancelRequested ? GenerateRequestStatus.Cancelled : GenerateRequestStatus.Completed;
                 _cancelRequested = false;
 
-                if (HasRunningTasks)
+                if (HasRunningScripts)
                 {
                     // Claude's own turn ended, but it left (or already had) at least one AutoDev-tracked
-                    // .task run still going - e.g. a dev server or watch build it started in the background
-                    // and considers "done" from its own side. Marking this SPECIFIC request Completed/
-                    // playing the ding now would tell the user everything's finished while a process it
-                    // started is still visibly running - see OnHasRunningTasksChanged, which finishes this
-                    // off once that also clears. Deliberately doesn't delay IsSending/NormalTurnCompleted
+                    // .cs script run still going - e.g. a dev server or watch build it started in the
+                    // background and considers "done" from its own side. Marking this SPECIFIC request
+                    // Completed/playing the ding now would tell the user everything's finished while a process
+                    // it started is still visibly running - see OnHasRunningScriptsChanged, which finishes
+                    // this off once that also clears. Deliberately doesn't delay IsSending/NormalTurnCompleted
                     // above (already fired): that governs the app-wide "AI is working" lock, and gating it on
-                    // a background task with no bounded runtime would just reintroduce the "stuck in Working"
-                    // bug for a different reason - only this one request's own displayed status/ding waits.
-                    _pendingTaskCompletionRequest = request;
-                    _pendingTaskCompletionStatus = finalStatus;
+                    // a script run with no bounded runtime would just reintroduce the "stuck in Working" bug
+                    // for a different reason - only this one request's own displayed status/ding waits.
+                    _pendingScriptCompletionRequest = request;
+                    _pendingScriptCompletionStatus = finalStatus;
                 }
                 else
                 {
@@ -1270,7 +1299,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 }
 
                 NormalTurnCompleted?.Invoke(!result.IsError);
-                if (_pendingTaskCompletionRequest is null)
+                if (_pendingScriptCompletionRequest is null)
                 {
                     _soundService.PlayDing();
                 }
@@ -1418,7 +1447,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         _elapsedDisplayTimer.Dispose();
 
         await FlushPendingDraftSaveAsync();
-        await FlushPendingTaskCompletionAsync();
+        await FlushPendingScriptCompletionAsync();
 
         // A normal app/workspace close mid-turn (this Dispose call, not a crash) is the one clean-exit path
         // that can still write the true state back before going away - SwitchSessionAsync's load-time

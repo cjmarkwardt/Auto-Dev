@@ -1,0 +1,51 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AutoDev.ViewModels.Dialogs"
+        xmlns:models="using:AutoDev.Core.Models"
+        xmlns:conv="using:Avalonia.Data.Converters"
+        x:Class="AutoDev.Views.Dialogs.TemplatesDialogWindow"
+        x:DataType="vm:TemplatesDialogViewModel"
+        Width="460" MinHeight="220" MaxHeight="520" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Templates"
+        Background="{DynamicResource EditorBackgroundBrush}">
+    <StackPanel Margin="16" Spacing="10">
+        <TextBlock Text="No templates registered yet." Foreground="{DynamicResource TextMutedBrush}"
+                   IsVisible="{Binding !Templates.Count}" />
+
+        <ScrollViewer MaxHeight="360" IsVisible="{Binding Templates.Count}">
+            <ItemsControl ItemsSource="{Binding Templates}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="models:WorkspaceTemplate">
+                        <Border Padding="10,8" Margin="0,0,0,4" CornerRadius="4"
+                                Background="{DynamicResource HeaderBackgroundBrush}">
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <StackPanel Grid.Column="0" Spacing="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Path}" FontSize="10.5"
+                                               Foreground="{DynamicResource TextMutedBrush}" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Classes="iconButton" ToolTip.Tip="Apply to the open workspace"
+                                        IsVisible="{Binding $parent[Window].((vm:TemplatesDialogViewModel)DataContext).CanApply}"
+                                        Command="{Binding $parent[Window].((vm:TemplatesDialogViewModel)DataContext).ApplyCommand}"
+                                        CommandParameter="{Binding}">
+                                    <Path Classes="lineIcon" Data="{StaticResource PlayIconGeometry}" Width="11" Height="11" />
+                                </Button>
+                                <Button Grid.Column="2" Classes="iconButton" ToolTip.Tip="Remove"
+                                        Command="{Binding $parent[Window].((vm:TemplatesDialogViewModel)DataContext).RemoveCommand}"
+                                        CommandParameter="{Binding}">
+                                    <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="10" Height="10" />
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" Content="Add Template…" Command="{Binding AddTemplateCommand}" />
+            <Button Grid.Column="2" Content="Close" Command="{Binding CloseCommand}" />
+        </Grid>
+    </StackPanel>
+</Window>

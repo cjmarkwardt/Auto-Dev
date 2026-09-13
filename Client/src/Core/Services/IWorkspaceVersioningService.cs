@@ -37,7 +37,7 @@ public sealed record PullWithStashResult(PullWithStashOutcome Outcome, string? O
 /// Business logic for the git-backed branch/tag workflow, built directly on IGitService with no naming
 /// convention or invented semantics layered on top - a branch or tag's only identity is its own literal git
 /// ref name. Deliberately has no knowledge of Claude or any ViewModel - same separation as
-/// IWorkspaceTaskScheduler knowing nothing about the Generate tab.
+/// IWorkspaceScriptRunner knowing nothing about the Generate tab.
 /// </summary>
 public interface IWorkspaceVersioningService
 {
@@ -92,6 +92,9 @@ public interface IWorkspaceVersioningService
 
     /// <summary>`git tag -d` - callers confirm with the user first.</summary>
     Task DeleteTagAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes `name` locally, then on the remote too if one's configured - CreateTagAsync always pushes a tag it creates, so deletion is symmetric rather than leaving the remote copy behind for HistoryTabViewModel.DeleteTagAsync to silently resurrect on the next fetch. Local deletion always runs regardless; true unless a configured remote's own deletion push actually fails (no remote at all is not a failure - nothing to clean up there).</summary>
+    Task<bool> DeleteTagEverywhereAsync(string name, CancellationToken cancellationToken = default);
 
     /// <summary>Discards all pending changes (`git reset --hard` + `git clean -fd`). Destructive; callers confirm with the user first.</summary>
     Task ResetAsync(CancellationToken cancellationToken = default);

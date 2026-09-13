@@ -11,7 +11,7 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
     private const string GenerateSessionsFileName = "generate-sessions.json";
     private const string GenerateDraftsFileName = "generate-drafts.json";
     private const string GenerateRequestsFileName = "generate-requests.json";
-    private const string TaskRunsDirName = "task-runs";
+    private const string ScriptRunsDirName = "script-runs";
 
     public void EnsureInitialized(string workspacePath)
     {
@@ -19,60 +19,60 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
         Directory.CreateDirectory(LocalDir(workspacePath));
     }
 
-    public async Task AppendTaskRunAsync(string workspacePath, TaskRunRecord record, CancellationToken cancellationToken = default)
+    public async Task AppendScriptRunAsync(string workspacePath, ScriptRunRecord record, CancellationToken cancellationToken = default)
     {
-        var dir = Path.Combine(LocalDir(workspacePath), TaskRunsDirName, SanitizeTaskFolder(record.TaskPath));
+        var dir = Path.Combine(LocalDir(workspacePath), ScriptRunsDirName, SanitizeScriptFolder(record.FilePath));
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, $"{record.Id}.json");
         await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, record, AppJson.Options, cancellationToken);
     }
 
-    public async Task<List<TaskRunRecord>> LoadTaskRunsAsync(string workspacePath, string taskPath, CancellationToken cancellationToken = default)
+    public async Task<List<ScriptRunRecord>> LoadScriptRunsAsync(string workspacePath, string scriptPath, CancellationToken cancellationToken = default)
     {
-        var dir = Path.Combine(LocalDir(workspacePath), TaskRunsDirName, SanitizeTaskFolder(taskPath));
+        var dir = Path.Combine(LocalDir(workspacePath), ScriptRunsDirName, SanitizeScriptFolder(scriptPath));
         var records = await LoadRunRecordsInFolderAsync(dir, cancellationToken);
-        // Filters by exact TaskPath match as a safeguard against a (practically impossible) sanitize collision
+        // Filters by exact FilePath match as a safeguard against a (practically impossible) sanitize collision
         // between two different paths landing in the same folder.
-        return [.. records.Where(r => r.TaskPath == taskPath).OrderByDescending(r => r.StartedAt)];
+        return [.. records.Where(r => r.FilePath == scriptPath).OrderByDescending(r => r.StartedAt)];
     }
 
-    public async Task<IReadOnlyList<TaskRef>> LoadRunTaskRefsAsync(string workspacePath, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ScriptRef>> LoadRunScriptRefsAsync(string workspacePath, CancellationToken cancellationToken = default)
     {
-        var root = Path.Combine(LocalDir(workspacePath), TaskRunsDirName);
+        var root = Path.Combine(LocalDir(workspacePath), ScriptRunsDirName);
         if (!Directory.Exists(root))
         {
             return [];
         }
 
-        var refs = new Dictionary<string, TaskRef>();
+        var refs = new Dictionary<string, ScriptRef>();
         foreach (var folder in Directory.EnumerateDirectories(root))
         {
             var records = await LoadRunRecordsInFolderAsync(folder, cancellationToken);
             var newest = records.OrderByDescending(r => r.StartedAt).FirstOrDefault();
             if (newest is not null)
             {
-                refs[newest.TaskPath] = new TaskRef(newest.TaskPath, newest.TaskName);
+                refs[newest.FilePath] = new ScriptRef(newest.FilePath, newest.FileName);
             }
         }
 
         return [.. refs.Values];
     }
 
-    private static async Task<List<TaskRunRecord>> LoadRunRecordsInFolderAsync(string dir, CancellationToken cancellationToken)
+    private static async Task<List<ScriptRunRecord>> LoadRunRecordsInFolderAsync(string dir, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(dir))
         {
             return [];
         }
 
-        var records = new List<TaskRunRecord>();
+        var records = new List<ScriptRunRecord>();
         foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
         {
             try
             {
                 await using var stream = File.OpenRead(file);
-                var record = await JsonSerializer.DeserializeAsync<TaskRunRecord>(stream, AppJson.Options, cancellationToken);
+                var record = await JsonSerializer.DeserializeAsync<ScriptRunRecord>(stream, AppJson.Options, cancellationToken);
                 if (record is not null)
                 {
                     records.Add(record);
@@ -87,10 +87,10 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
         return records;
     }
 
-    /// <summary>Turns a .task file's workspace-relative path into a filesystem-safe directory name for its run-history folder - replaces path separators and anything outside [A-Za-z0-9._-] with '_'. Opaque but deterministic; the original path is still recorded inside each TaskRunRecord, so nothing depends on reversing this.</summary>
-    private static string SanitizeTaskFolder(string taskPath)
+    /// <summary>Turns a .cs file's workspace-relative path into a filesystem-safe directory name for its run-history folder - replaces path separators and anything outside [A-Za-z0-9._-] with '_'. Opaque but deterministic; the original path is still recorded inside each ScriptRunRecord, so nothing depends on reversing this.</summary>
+    private static string SanitizeScriptFolder(string scriptPath)
     {
-        var chars = taskPath.Select(c => c is '/' or '\\' ? '_' : (char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '_'));
+        var chars = scriptPath.Select(c => c is '/' or '\\' ? '_' : (char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '_'));
         return new string(chars.ToArray());
     }
 

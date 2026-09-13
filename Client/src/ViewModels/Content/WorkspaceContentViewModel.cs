@@ -8,25 +8,25 @@ public sealed partial class WorkspaceContentViewModel(
     EditTabViewModel edit,
     GenerateTabViewModel generate,
     HistoryTabViewModel history,
-    OutputTabViewModel output,
+    ScriptTabViewModel script,
     CommandTabViewModel command)
     : ViewModelBase, IAsyncDisposable
 {
     public const int GenerateTabIndex = 0;
     public const int HistoryTabIndex = 1;
-    public const int OutputTabIndex = 2;
+    public const int ScriptTabIndex = 2;
     public const int CommandTabIndex = 3;
 
     public EditTabViewModel Edit { get; } = edit;
     public GenerateTabViewModel Generate { get; } = generate;
     public HistoryTabViewModel History { get; } = history;
-    public OutputTabViewModel Output { get; } = output;
+    public ScriptTabViewModel Script { get; } = script;
     public CommandTabViewModel Command { get; } = command;
 
     private GitTarget? _lastTarget;
     private bool _isBusy;
     private bool _isAiWorking;
-    private bool _hasRunningTasks;
+    private bool _hasRunningScripts;
 
     /// <summary>History is the tab shown first when a workspace opens (fresh, cloned, or restored on launch) - a new WorkspaceContentViewModel is created exactly once per opened workspace tab, so this default alone covers every case. History's own data still populates correctly despite [ObservableProperty]'s change hooks never firing for an unchanged initial value (skipping the HistoryTabIndex case in OnSelectedTabIndexChanged below) - HistoryTabViewModel independently reloads on Version.TargetChanged, which always fires once during WorkspaceViewModel.InitializeAsync regardless of which tab is selected.</summary>
     [ObservableProperty]
@@ -87,10 +87,10 @@ public sealed partial class WorkspaceContentViewModel(
         UpdateEditReadOnly();
     }
 
-    /// <summary>Edit is also forced read-only for as long as any .task file in this workspace is running - manual editing, task running, and AI working are meant to be mutually exclusive states over the same working tree. Mirrors ApplyInteractionBlockedState, kept as its own method/flag purely so ComputeReadOnlyReason can report which one actually applies. Called from WorkspaceViewModel whenever FilesSectionViewModel.HasRunningTasks changes.</summary>
-    public void ApplyHasRunningTasksState(bool hasRunningTasks)
+    /// <summary>Edit is also forced read-only for as long as any .cs file in this workspace is running - manual editing, script running, and AI working are meant to be mutually exclusive states over the same working tree. Mirrors ApplyInteractionBlockedState, kept as its own method/flag purely so ComputeReadOnlyReason can report which one actually applies. Called from WorkspaceViewModel whenever FilesSectionViewModel.HasRunningScripts changes.</summary>
+    public void ApplyHasRunningScriptsState(bool hasRunningScripts)
     {
-        _hasRunningTasks = hasRunningTasks;
+        _hasRunningScripts = hasRunningScripts;
         UpdateEditReadOnly();
     }
 
@@ -98,11 +98,11 @@ public sealed partial class WorkspaceContentViewModel(
 
     private void UpdateEditReadOnly()
     {
-        Edit.IsReadOnly = _isBusy || _isAiWorking || _hasRunningTasks || !IsEditableTarget;
+        Edit.IsReadOnly = _isBusy || _isAiWorking || _hasRunningScripts || !IsEditableTarget;
         Edit.ReadOnlyReason = Edit.IsReadOnly ? ComputeReadOnlyReason() : "";
     }
 
-    /// <summary>The specific, currently-true reason editing is blocked - checked in the same priority order UpdateEditReadOnly itself uses (AI-working/busy/task-running override target kind, since any of them locks a branch target too).</summary>
+    /// <summary>The specific, currently-true reason editing is blocked - checked in the same priority order UpdateEditReadOnly itself uses (AI-working/busy/script-running override target kind, since any of them locks a branch target too).</summary>
     private string ComputeReadOnlyReason()
     {
         if (_isAiWorking)
@@ -115,9 +115,9 @@ public sealed partial class WorkspaceContentViewModel(
             return "Read-only — a version action is in progress.";
         }
 
-        if (_hasRunningTasks)
+        if (_hasRunningScripts)
         {
-            return "Read-only — a task is running.";
+            return "Read-only — a script is running.";
         }
 
         return _lastTarget?.Kind switch
@@ -131,7 +131,7 @@ public sealed partial class WorkspaceContentViewModel(
     public async ValueTask DisposeAsync()
     {
         await Generate.DisposeAsync();
-        Output.Dispose();
+        Script.Dispose();
         Command.Dispose();
     }
 }

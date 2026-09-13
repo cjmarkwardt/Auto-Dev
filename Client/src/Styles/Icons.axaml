@@ -2,10 +2,10 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <!-- Simple monochrome line-icon geometries (VS-Code-ish flat outline style) rather than colorful emoji. -->
     <Geometry x:Key="FileIconGeometry">M4,1 L10,1 L13,4 L13,15 L4,15 Z M10,1 L10,4 L13,4</Geometry>
-    <!-- FileIconGeometry's dog-eared-corner shape plus a small play triangle - marks a .task file in the
-         Files section's tree (see FileTreeNodeViewModel.IsTaskFile) as runnable, in place of the plain file
+    <!-- FileIconGeometry's dog-eared-corner shape plus a small play triangle - marks a .cs file in the
+         Files section's tree (see FileTreeNodeViewModel.IsScriptFile) as runnable, in place of the plain file
          icon every other file gets. -->
-    <Geometry x:Key="TaskFileIconGeometry">M4,1 L10,1 L13,4 L13,15 L4,15 Z M10,1 L10,4 L13,4 M6.5,7.5 L6.5,11.5 L10,9.5 Z</Geometry>
+    <Geometry x:Key="ScriptFileIconGeometry">M4,1 L10,1 L13,4 L13,15 L4,15 Z M10,1 L10,4 L13,4 M6.5,7.5 L6.5,11.5 L10,9.5 Z</Geometry>
     <!-- Bounding box deliberately pinned to a 12x12 square (matching this icon's own Path Width/Height in
          FilesSectionView.axaml's tree rows) so Stretch="Uniform" doesn't distort it - the original shape's
          bounding box was 14 wide x 9 tall, rendering visibly shorter than FileIconGeometry's own box-filling
@@ -51,4 +51,9 @@
     <!-- A magnifying glass (near-full circle, drawn as a single almost-360-degree arc like GearIconGeometry's
          own center hole, plus a handle) - stands in for the Edit Tab's Find-in-file toggle. -->
     <Geometry x:Key="FindIconGeometry">M9,5 A4,4 0 1,1 8.999,5 Z M7.83,7.83 L13,13</Geometry>
+
+    <!-- FileIconGeometry's dog-eared-corner shape plus ruled lines - stands in for the title bar's Templates
+         icon button (a template is a plain .md file, so this reuses the same file outline other file-shaped
+         icons here do, just with the ruled-document look instead of ScriptFileIconGeometry's play triangle). -->
+    <Geometry x:Key="TemplateIconGeometry">M4,1 L10,1 L13,4 L13,15 L4,15 Z M10,1 L10,4 L13,4 M6,7.5 L11,7.5 M6,10 L11,10 M6,12.5 L9,12.5</Geometry>
 </ResourceDictionary>

@@ -110,6 +110,9 @@ public interface IGitService
     /// <summary>`git tag -d tagName`.</summary>
     Task DeleteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default);
 
+    /// <summary>`git push origin --delete refs/tags/tagName` - deletes `tagName` on the "origin" remote. The explicit `refs/tags/` refspec (rather than a plain name, as DeleteRemoteBranchAsync uses) keeps this unambiguous if a branch happens to share the tag's name. False if there's no remote configured at all (same convention as DeleteRemoteBranchAsync), or the push itself fails (no permission, the remote ref is already gone, ...).</summary>
+    Task<bool> DeleteRemoteTagAsync(string workspacePath, string tagName, CancellationToken cancellationToken = default);
+
     /// <summary>Whether a local branch named `branchName` exists.</summary>
     Task<bool> BranchExistsAsync(string workspacePath, string branchName, CancellationToken cancellationToken = default);
 

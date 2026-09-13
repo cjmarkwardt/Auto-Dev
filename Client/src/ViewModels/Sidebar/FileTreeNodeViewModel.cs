@@ -57,11 +57,11 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
     public bool IsDirectory { get; }
     public bool IsPlaceholder { get; }
 
-    /// <summary>Whether this is a .task file - shown with TaskFileIconGeometry instead of the plain file icon, and offered Run/Stop/View alongside the normal file context menu. See FilesSectionViewModel.</summary>
-    public bool IsTaskFile => !IsDirectory && Path.GetExtension(FullPath).Equals(".task", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Whether this is a .cs file - shown with ScriptFileIconGeometry instead of the plain file icon, and offered Run/Stop/View alongside the normal file context menu (runs it as a single-file app via `dotnet run --file`). See FilesSectionViewModel.</summary>
+    public bool IsScriptFile => !IsDirectory && Path.GetExtension(FullPath).Equals(".cs", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>A file row gets exactly one icon - FolderIconGeometry, TaskFileIconGeometry, or (this) the plain FileIconGeometry - never more than one at once.</summary>
-    public bool IsPlainFile => !IsDirectory && !IsTaskFile;
+    /// <summary>A file row gets exactly one icon - FolderIconGeometry, ScriptFileIconGeometry, or (this) the plain FileIconGeometry - never more than one at once.</summary>
+    public bool IsPlainFile => !IsDirectory && !IsScriptFile;
 
     public ObservableCollection<FileTreeNodeViewModel> Children { get; } = [];
 
@@ -71,9 +71,9 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isSelected;
 
-    /// <summary>Whether this .task file currently has a run in flight - drives the Run/Stop context-menu enablement. Maintained by FilesSectionViewModel from the scheduler's TaskRunStarted/TaskRunCompleted events, re-applied after every Refresh() since nodes get rebuilt.</summary>
+    /// <summary>Whether this .cs file currently has a run in flight - drives the Run/Stop context-menu enablement. Maintained by FilesSectionViewModel from the script runner's ScriptRunStarted/ScriptRunCompleted events, re-applied after every Refresh() since nodes get rebuilt.</summary>
     [ObservableProperty]
-    private bool _isTaskRunning;
+    private bool _isScriptRunning;
 
     /// <summary>This path's git status - drives the row's name text color (see GitFileStatus). Resolved asynchronously right after construction (a git subprocess call); also re-resolved on demand whenever .gitignore or the working tree itself changes - see RefreshStatusAsync.</summary>
     [ObservableProperty]
@@ -218,6 +218,6 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
         FullPath = newFullPath;
         OnPropertyChanged(nameof(Name));
         OnPropertyChanged(nameof(FullPath));
-        OnPropertyChanged(nameof(IsTaskFile));
+        OnPropertyChanged(nameof(IsScriptFile));
     }
 }

@@ -64,7 +64,7 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 return;
             case Key.F4:
-                tab.Content.SelectedTabIndex = WorkspaceContentViewModel.OutputTabIndex;
+                tab.Content.SelectedTabIndex = WorkspaceContentViewModel.ScriptTabIndex;
                 e.Handled = true;
                 return;
             case Key.F5:

@@ -39,9 +39,9 @@ public partial class FilesSectionView : UserControl
         {
             vm.ActivateFile(node.FullPath);
 
-            if (e.ClickCount == 2 && node.IsTaskFile && vm.RunTaskCommand.CanExecute(node))
+            if (e.ClickCount == 2 && node.IsScriptFile && vm.RunScriptCommand.CanExecute(node))
             {
-                vm.RunTaskCommand.Execute(node);
+                vm.RunScriptCommand.Execute(node);
             }
         }
     }

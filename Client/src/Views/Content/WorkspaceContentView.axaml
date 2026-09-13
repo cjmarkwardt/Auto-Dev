@@ -4,7 +4,7 @@
              x:Class="AutoDev.Views.Content.WorkspaceContentView"
              x:DataType="vm:WorkspaceContentViewModel"
              Background="{DynamicResource EditorBackgroundBrush}">
-    <!-- Edit is a permanent left pane; Generate/History/Output are tabbed on the right, split by a
+    <!-- Edit is a permanent left pane; Generate/History/Script are tabbed on the right, split by a
          resizable GridSplitter (same idiom as WorkspaceView's sidebar/content split). -->
     <Grid>
         <Grid.ColumnDefinitions>
@@ -35,8 +35,8 @@
                 <TabItem Header="History" HorizontalContentAlignment="Center">
                     <ContentControl Content="{Binding History}" />
                 </TabItem>
-                <TabItem Header="Output" HorizontalContentAlignment="Center">
-                    <ContentControl Content="{Binding Output}" />
+                <TabItem Header="Script" HorizontalContentAlignment="Center">
+                    <ContentControl Content="{Binding Script}" />
                 </TabItem>
                 <TabItem Header="Command" HorizontalContentAlignment="Center">
                     <ContentControl Content="{Binding Command}" />

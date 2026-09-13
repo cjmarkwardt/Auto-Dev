@@ -108,7 +108,7 @@
                                     <TextBlock Text="●" FontSize="14" VerticalAlignment="Center"
                                                Classes="requestStatus" Classes.working="{Binding IsSending}"
                                                IsVisible="{Binding IsSending}" />
-                                    <TextBlock Text="{Binding ConflictResolutionStatusText}" FontSize="20" LineHeight="28"
+                                    <TextBlock Text="{Binding AutomatedTurnStatusText}" FontSize="20" LineHeight="28"
                                                TextWrapping="Wrap" TextAlignment="Center" MaxWidth="480"
                                                HorizontalAlignment="Center"
                                                Classes="requestStatus" Classes.working="{Binding IsSending}" />
@@ -204,11 +204,11 @@
                         </ItemsControl>
                     </StackPanel>
 
-                    <!-- Deliberately no IsEnabled binding to HasRunningTasks (or anything else) here - typing/
+                    <!-- Deliberately no IsEnabled binding to HasRunningScripts (or anything else) here - typing/
                          editing/the debounced draft autosave (see GenerateTabViewModel's draft-save timer)
                          should always stay available regardless of what's blocking a genuine send. CanSend
-                         already covers HasRunningTasks (see SendCommand's CanExecute), so the Send action
-                         itself is what's actually disabled while a task is running, not the box. -->
+                         already covers HasRunningScripts (see SendCommand's CanExecute), so the Send action
+                         itself is what's actually disabled while a script is running, not the box. -->
                     <TextBox Name="InputBox" Text="{Binding InputText}"
                              PlaceholderText="Enter query… (Enter to send, Shift+Enter for a new line, paste images/files to attach)"
                              AcceptsReturn="True" TextWrapping="Wrap"

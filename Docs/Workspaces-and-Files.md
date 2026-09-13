@@ -88,8 +88,8 @@ those - and which should always be reflected immediately rather than waiting on 
 
 `FilesSectionViewModel` is the sidebar's own view model: `Refresh()` diffs new `GetChildren()`
 results against existing `FileTreeNodeViewModel`s by path (add/remove only what actually changed,
-so unrelated expanded state survives a refresh) and re-applies which `.task` files are currently
-"running" (see [Task Automation](TaskAutomation.md)) since a refresh recreates node instances.
+so unrelated expanded state survives a refresh) and re-applies which `.cs` files are currently
+"running" (see [Running Scripts](RunningScripts.md)) since a refresh recreates node instances.
 Mutating commands (`NewFileAsync`, `NewFolderAsync`, `RenameAsync`, `DeleteAsync`, `Duplicate`,
 drag-and-drop `MoveExternalItemsAsync`) are gated on `CanMutate`/`CanMutateNode`, which require a
 branch actually being targeted and no interaction-blocking action in flight.
