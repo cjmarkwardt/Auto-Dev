@@ -1,8 +1,8 @@
 # AutoDev
 
-[![Latest release](https://img.shields.io/github/v/release/cjmarkwardt/Auto-Dev?label=Release)](https://github.com/cjmarkwardt/Auto-Dev/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/Markwardt-Labs/Auto-Dev?label=Release)](https://github.com/Markwardt-Labs/Auto-Dev/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Build](https://github.com/cjmarkwardt/Auto-Dev/actions/workflows/build.yml/badge.svg)](https://github.com/cjmarkwardt/Auto-Dev/actions/workflows/build.yml)
+[![Build](https://github.com/Markwardt-Labs/Auto-Dev/actions/workflows/build.yml/badge.svg)](https://github.com/Markwardt-Labs/Auto-Dev/actions/workflows/build.yml)
 [![Coverage](.github/badges/badge_linecoverage.svg)](.github/badges/badge_linecoverage.svg)
 
 AutoDev is a desktop IDE-shell for driving an AI coding CLI (Claude Code or Codex) against local
@@ -31,7 +31,7 @@ it) happens in one window without shelling out to a terminal.
 ## Installing
 
 Download the executable for your platform from the latest
-[Release](https://github.com/cjmarkwardt/Auto-Dev/releases/latest):
+[Release](https://github.com/Markwardt-Labs/Auto-Dev/releases/latest):
 
 - **Windows** - download `AutoDev.exe` and run it.
 - **Linux** - download `AutoDev`, mark it executable (`chmod +x AutoDev`), and run it. A raw Linux
