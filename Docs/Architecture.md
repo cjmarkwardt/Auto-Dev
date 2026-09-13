@@ -124,9 +124,9 @@ run can force-save a dirty editor buffer first rather than racing the editor's o
 autosave.
 
 `WorkspaceViewModel.InitializeAsync()` calls `Version.EnsureRepoAsync()` (which silently
-`git init`s an un-versioned folder into AutoDev's branch convention - see
-[Version Control](VersionControl.md)) then `Content.Script.LoadAsync()`. `DisposeAsync()` flushes
-pending edits and disposes `Content`, `Files`, `Version` in that order.
+`git init`s an un-versioned folder into AutoDev's branch convention) then
+`Content.Script.LoadAsync()`. `DisposeAsync()` flushes pending edits and disposes `Content`,
+`Files`, `Version` in that order.
 
 ## Read-only editing and per-tab layout
 
@@ -172,18 +172,16 @@ its whole content between an `AuthGate` view and the `Shell` view based on
 Two separate, deliberately-scoped persistence layers:
 
 - **Global app settings** - `ISettingsService`/`JsonSettingsService`
-  (`Core/Services/JsonSettingsService.cs`), one JSON file at
+  (`src/Core/Services/JsonSettingsService.cs`), one JSON file at
   `~/.config/AutoDev/settings.json` (`Environment.SpecialFolder.ApplicationData`), holding
   `AppSettings { RecentWorkspacePaths }` - the app-wide MRU list shown in the empty state's
   recent-workspaces panel (nothing is ever auto-restored on launch). Serialized via a
-  `System.Text.Json` source-generated context (`Core/Serialization/AppJson.cs`).
+  `System.Text.Json` source-generated context (`src/Core/Serialization/AppJson.cs`).
 - **Per-workspace metadata** - `IWorkspaceMetadataStore`/`WorkspaceMetadataStore`
-  (`Core/Services/WorkspaceMetadataStore.cs`), rooted at `<workspace>/.autodev/local/` inside each
-  repo itself: Generate session ids, unsent drafts, request history, and `.cs` script run history
-  (see [Claude Integration](ClaudeIntegration.md) and [Running Scripts](RunningScripts.md)). This
-  folder is excluded from git via `.git/info/exclude` (not a tracked `.gitignore`), so it never
-  shows up as a change to commit - see `EnsureLocalGitExcludeAsync` in
-  [Version Control](VersionControl.md).
+  (`src/Core/Services/WorkspaceMetadataStore.cs`), rooted at `<workspace>/.autodev/local/` inside
+  each repo itself: Generate session ids, unsent drafts, request history, and `.cs` script run
+  history. This folder is excluded from git via `.git/info/exclude` (not a tracked `.gitignore`),
+  so it never shows up as a change to commit - see `EnsureLocalGitExcludeAsync`.
 
 Both stores tolerate corruption/missing files by falling back to empty defaults rather than
 throwing, and both filter stale entries against `Directory.Exists` on load.

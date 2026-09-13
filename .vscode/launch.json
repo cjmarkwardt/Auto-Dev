@@ -6,9 +6,9 @@
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}/Client/bin/Debug/net10.0/AutoDev.dll",
+            "program": "${workspaceFolder}/App/bin/Debug/net10.0/AutoDev.dll",
             "args": [],
-            "cwd": "${workspaceFolder}/Client",
+            "cwd": "${workspaceFolder}/App",
             "stopAtEntry": false,
             "console": "internalConsole"
         }

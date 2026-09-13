@@ -1,5 +1,10 @@
 # AutoDev
 
+[![Latest release](https://img.shields.io/github/v/release/cjmarkwardt/Auto-Dev?label=Release)](https://github.com/cjmarkwardt/Auto-Dev/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Build](https://github.com/cjmarkwardt/Auto-Dev/actions/workflows/build.yml/badge.svg)](https://github.com/cjmarkwardt/Auto-Dev/actions/workflows/build.yml)
+[![Coverage](.github/badges/badge_linecoverage.svg)](.github/badges/badge_linecoverage.svg)
+
 AutoDev is a desktop IDE-shell for driving an AI coding CLI (Claude Code or Codex) against local
 git repositories. It's a C#/.NET 10 Avalonia application (cross-platform, currently used on Linux)
 that wraps a workspace's file tree, a text/markdown/hex editor, a git-branch workflow with an
@@ -7,15 +12,15 @@ opinionated naming convention, and a way to run single-file C# scripts, around a
 so day-to-day work (open a repo, target a branch, ask the AI to make a change, review/commit/merge
 it) happens in one window without shelling out to a terminal.
 
-## Using AutoDev
+## Requirements
 
-### Requirements
-
+- Linux, x86-64, or Windows 10/11, 64-bit. No separate .NET runtime install needed - the executable
+  is self-contained.
 - `git` on `PATH` - checked on launch before anything else; AutoDev refuses to start at all without
   it, since there's no part of the app that doesn't eventually need to run a git command.
 - The [.NET SDK](https://dotnet.microsoft.com/download) on `PATH` - only needed to use the Files
-  section's Run/Stop/View actions on a `.cs` file (see [Running Scripts](Docs/RunningScripts.md));
-  not checked on launch, since nothing else in the app depends on it.
+  section's Run/Stop/View actions on a `.cs` file; not checked on launch, since nothing else in the
+  app depends on it.
 - The [`claude`](https://docs.claude.com/en/docs/claude-code) CLI and/or the
   [`codex`](https://github.com/openai/codex) CLI - AutoDev drives whichever one is currently
   selected as a subprocess rather than talking to either service's API directly. On first launch it
@@ -23,13 +28,20 @@ it) happens in one window without shelling out to a terminal.
   offers a sign-in button for whichever CLI(s) it finds installed, or asks you to install one if
   neither is present.
 
-### Installing on Linux
+## Installing
 
-A published Linux binary carries no icon of its own (unlike a Windows `.exe`'s embedded PE
-resource) - app launchers, taskbars, and file managers only show one via a `.desktop` entry
-pointing at an icon installed into the user's icon theme. Run
-`Client/Linux/install-desktop-entry.sh [path-to-AutoDev-executable]` (defaults to `~/Tools/AutoDev`)
-once after deploying the binary to install both; re-run it any time the binary moves to a new path.
+Download the executable for your platform from the latest
+[Release](https://github.com/cjmarkwardt/Auto-Dev/releases/latest):
+
+- **Windows** - download `AutoDev.exe` and run it.
+- **Linux** - download `AutoDev`, mark it executable (`chmod +x AutoDev`), and run it. A raw Linux
+  executable carries no icon of its own (unlike a Windows `.exe`'s embedded PE resource) - app
+  launchers, taskbars, and file managers only show one via a `.desktop` entry pointing at an icon
+  installed into the user's icon theme. Run `App/Linux/install-desktop-entry.sh
+  [path-to-AutoDev-executable]` (defaults to `~/Tools/AutoDev`) once after deploying the binary to
+  install both; re-run it any time the binary moves to a new path.
+
+## Using AutoDev
 
 ### Opening a workspace
 
@@ -66,7 +78,7 @@ The open workspace has its own sidebar, split into two sections:
   detached at the commit it was on (pending changes untouched) and the stale local branch is deleted
   too, rather than left pointing nowhere. Checkout, Merge Into Current, Rebase
   Current Onto This, and Delete for any *other* branch/commit/tag live on the History tab's own
-  right-click menus instead - see [Version Control](Docs/VersionControl.md).
+  right-click menus instead.
 - **Files** (bottom) - the workspace's file tree. Right-click an entry for New File/New Folder,
   Open (in the OS file manager), Copy Path, Rename, Duplicate, or Delete - a `.cs` file also
   gets Run/Stop/View (double-clicking one runs it too). A toggle switches the tree into "Changes
@@ -78,7 +90,7 @@ The open workspace has its own sidebar, split into two sections:
   line reading just `$gitignore` pulls in `.gitignore`'s own patterns too. Only one `.cs` script runs
   at a time per workspace - starting one while another is already running (or while a version action
   or the AI is working) is disabled - and a run in turn locks manual editing, tree mutations, every
-  version action, and the AI, until it finishes; see [Running Scripts](Docs/RunningScripts.md).
+  version action, and the AI, until it finishes.
 
 ### Working with the AI (Generate tab)
 
@@ -96,6 +108,8 @@ The open workspace has its own sidebar, split into two sections:
   A merge-conflict-resolution turn (Merge/Rebase, or a stash-pop conflict from opening History -
   see below) shows its own panel here instead of a normal request, with only **Pause**/**Resume**
   offered - Cancel/Stop never are, so it can never be forcibly interrupted mid-resolution.
+- The title bar's Templates popup registers/applies scaffolding templates - applying one submits a
+  request here too, visible and progressing exactly like a typed message.
 - The model and effort/reasoning-level dropdowns at the bottom of the tab apply starting with the
   next message sent - both lists depend on whichever AI provider is currently selected.
 - Earlier requests in the same conversation stay in a short scrollback (◀/▶ at the top of the
@@ -118,13 +132,12 @@ The open workspace has its own sidebar, split into two sections:
   which are stashed first and popped back on top once the pull lands (untracked files included). If
   that pop conflicts with what was just pulled in, AutoDev switches to the Generate tab and starts
   an AI turn to resolve it, reconciling the stashed changes against the newly-pulled commits the
-  same way a Merge/Rebase conflict is resolved (see below) - that turn can only ever be paused and
+  same way a Merge/Rebase conflict is resolved (see above) - that turn can only ever be paused and
   resumed, never stopped or cancelled, to avoid ever forcibly leaving the repository mid-conflict.
   The fetch (with prune) button above the timeline does the fetch part on demand without switching
   away and back, and never also pulls.
 - **Script** (**F4**) - results from `.cs` scripts you've run, and an input box to answer one that's
-  currently blocked reading from stdin (e.g. `Console.ReadLine()`) - see
-  [Running Scripts](Docs/RunningScripts.md).
+  currently blocked reading from stdin (e.g. `Console.ReadLine()`).
 - **Command** (**F5**) - run an ad hoc shell command against the workspace and see its output; the
   input box keeps focus after each run, so you can keep typing the next one without reclicking it.
 
@@ -134,62 +147,24 @@ Press **F1** to open a quick-open popup and fuzzy-search files by name; press F1
 it into full-text content search, and again to switch back. Enter opens the selected result;
 Escape closes the popup.
 
-## Start here
+## Documentation
 
-- **[Architecture](Docs/Architecture.md)** - process bootstrap, dependency injection, the MVVM
-  view/view-model split, per-workspace-tab composition, and the top-level shell.
-- **[Version Control](Docs/VersionControl.md)** - AutoDev's own thin `IGitService` wrapper around
-  plain git, with no naming convention or invented identity on top, and the Version
-  sidebar/History tab built on it.
-- **[Workspaces & Files](Docs/Workspaces-and-Files.md)** - opening/cloning a workspace, recent-workspace
-  and settings persistence, the file tree, and in-workspace file/content search.
-- **[Editor](Docs/Editor.md)** - the Edit tab's five content modes (text, markdown preview, image, hex
-  viewer, large-file warning) and Mermaid diagram rendering inside markdown.
-- **[Claude Integration](Docs/ClaudeIntegration.md)** - how AutoDev talks to the `claude` CLI, the
-  Generate tab's turn lifecycle, and the AI-assisted rebase/merge conflict-resolution loop.
-- **[Running Scripts](Docs/RunningScripts.md)** - running a `.cs` file as a single-file app via
-  `dotnet run --file`, and the Output/Command tabs.
-- **[UI & Theming](Docs/UI-and-Theming.md)** - dialogs, the VS-Code-Dark+-style theme, icons, and shared
-  Avalonia conventions.
-
-## Repository layout
-
-```
-AutoDev/
-├── AutoDev.slnx                             Solution file, references Client/ and Tests/
-├── Docs/                                    This repo's own architecture/feature docs
-├── Client/                                  The AutoDev app itself
-│   ├── AutoDev.csproj, app.manifest           Project file & Windows PE manifest
-│   ├── Assets/                                 App icon
-│   └── src/
-│       ├── Program.cs, App.axaml(.cs), MainWindow.axaml(.cs), ViewLocator.cs   Composition root & shell
-│       ├── Core/                Platform-agnostic domain/service layer (no Avalonia dependency)
-│       │   ├── Models/           Plain data records (WorkspaceInfo, GitTarget, BranchSummary, ScriptRunRecord, ...)
-│       │   ├── Services/         GitService, WorkspaceVersioningService, FileTreeService, WorkspaceScriptRunnerService, ...
-│       │   └── Serialization/    System.Text.Json source-gen context
-│       ├── AiCli/                Provider-agnostic AI session/usage/auth abstractions (IAiSessionClient, ...)
-│       │   └── Models/            Shared stream-event/data types both providers below translate into
-│       ├── ClaudeCli/            Subprocess bridge to the `claude` CLI (auth, usage, session streaming)
-│       │   ├── Models/             Claude's own stream-json event/data types
-│       │   └── Serialization/      Hand-written JSON converters for the stream-json protocol
-│       ├── CodexCli/             Subprocess bridge to the `codex` CLI (one process per turn, unlike Claude's)
-│       ├── ViewModels/           CommunityToolkit.Mvvm view models, mirrors Views/ 1:1
-│       │   ├── Content/            Edit/Generate/History/Output/Command tab VMs + WorkspaceContentViewModel
-│       │   ├── Sidebar/            Files/Version sidebar sections, file search
-│       │   ├── Dialogs/            Modal dialog VMs (Input, Confirm, Create Tag)
-│       │   └── Infrastructure/     IDialogService/IUiDispatcher abstractions (kept Avalonia-free)
-│       ├── Views/                 Avalonia .axaml views, one per ViewModel, same folder layout
-│       ├── Infrastructure/        Avalonia-specific implementations of the above abstractions
-│       ├── Converters/             XAML value converters
-│       └── Styles/                 Theme resource dictionaries (colors, icons, control styles)
-└── Tests/                                   Tests.csproj - xUnit tests for Client's components
-```
+| File | Covers |
+|---|---|
+| `Docs/Api.md` | The application's primary surface and end-to-end flow, from opening a workspace through committing a change. |
+| `Docs/Usage.md` | Walkthroughs: a first AI-driven change, running a script, resolving a conflict, applying a template. |
+| `Docs/Architecture.md` | Process bootstrap, dependency injection, the MVVM view/view-model split, per-workspace-tab composition, and the top-level shell. |
+| `Docs/Project.md` | This repo's own tooling/workflow: `Scripts/`, publishing, CI. |
+| `Docs/Components/` | One file per subsystem - version control, workspaces/files, the editor, AI integration, running scripts, UI/theming. |
 
 ## Conventions worth knowing before reading the rest
 
+See `AGENTS.md` for the full coding-convention rulebook. A few points specific to how this app is
+put together:
+
 - **MVVM throughout**, via `CommunityToolkit.Mvvm` (`[ObservableProperty]`, `[RelayCommand]`).
   Views are resolved from view models purely by name (`AutoDev.ViewModels.Foo.BarViewModel` →
-  `AutoDev.Views.Foo.BarView`) - see [Architecture](Docs/Architecture.md).
+  `AutoDev.Views.Foo.BarView`).
 - **Explicit, manual DI registration** in `App.axaml.cs` (`Microsoft.Extensions.DependencyInjection`,
   all singletons) - there is no reflection-based auto-registration, despite the interface/
   implementation naming always lining up (`IThing` → `Thing`).
@@ -198,4 +173,4 @@ AutoDev/
   workspace is opened.
 - **Git is the source of truth** for almost everything - branch/tag identity, task run gating,
   read-only edit state - rather than a separate app-level database. AutoDev invents no naming
-  convention of its own on top; see [Version Control](Docs/VersionControl.md).
+  convention of its own on top.

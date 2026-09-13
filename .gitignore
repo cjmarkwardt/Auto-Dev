@@ -1,13 +1,3 @@
-# Build outputs
-bin/
-obj/
-
-# IDE
-.vs/
-.idea/
-*.user
-*.suo
-
 # AutoDev's own per-workspace runtime state - generated locally whenever this repo is opened as a
 # workspace in AutoDev itself (session ids, drafts, generate-request history under .autodev/local/).
 .autodev/
@@ -15,6 +5,35 @@ obj/
 # Claude Code's own local session/tool state for this repo.
 .claude/
 
-# OS cruft
+bin/
+obj/
+TestResults/
+
+# Local publish output (see Scripts/Publish.cs / .github/workflows/build.yml).
+publish/
+
+# Coverage badge: ReportGenerator writes every color/metric variant here, but only the one
+# badge referenced from README.md is meant to be committed.
+.github/badges/*
+!.github/badges/badge_linecoverage.svg
+
+# .NET
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nupkg
+*.snupkg
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+
+# OS
 .DS_Store
 Thumbs.db

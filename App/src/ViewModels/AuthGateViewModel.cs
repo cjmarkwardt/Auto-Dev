@@ -1,0 +1,90 @@
+using System.Collections.ObjectModel;
+using AutoDev.AiCli;
+using AutoDev.Core.Services;
+using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace AutoDev.ViewModels;
+
+/// <summary>
+/// Blocks the app until it's actually usable: `git` on PATH is a hard, no-sign-in-required prerequisite
+/// checked first (GitMissing) - every AI provider gate below is pointless if AutoDev can't run a single git
+/// command without crashing (see IGitService.IsInstalled). Past that, it checks every provider's own
+/// IAiAuthService: if one is already installed and signed in, that provider is assumed (preferring the
+/// persisted choice - see IAiProviderSelectionService - if it's among the signed-in ones) and the rest of the
+/// gate never shows at all. Otherwise it shows either "neither is installed" (NeitherInstalled) or a login row
+/// per installed-but-signed-out provider (LoginRows) - one, or both, depending what's actually on this machine.
+/// </summary>
+public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authServices, IAiProviderSelectionService providerSelection, IGitService gitService) : ViewModelBase
+{
+    private readonly IAiAuthService[] _authServices = [.. authServices];
+
+    [ObservableProperty]
+    private bool _isChecking = true;
+
+    [ObservableProperty]
+    private bool _gitMissing;
+
+    [ObservableProperty]
+    private bool _neitherInstalled;
+
+    public ObservableCollection<ProviderLoginRowViewModel> LoginRows { get; } = [];
+
+    public event Action? Authenticated;
+
+    public async Task CheckInitialStatusAsync()
+    {
+        IsChecking = true;
+
+        GitMissing = !gitService.IsInstalled;
+        if (GitMissing)
+        {
+            IsChecking = false;
+            return;
+        }
+
+        Dictionary<AiProvider, (bool Installed, bool LoggedIn)> statusByProvider = new Dictionary<AiProvider, (bool Installed, bool LoggedIn)>();
+        foreach (IAiAuthService authService in _authServices)
+        {
+            bool installed = authService.IsInstalled;
+            bool loggedIn = installed && (await authService.GetStatusAsync()).LoggedIn;
+            statusByProvider[authService.Provider] = (installed, loggedIn);
+        }
+
+        // Prefer the already-persisted provider choice if it's one of the signed-in ones, so switching
+        // machines/CLIs doesn't silently flip which provider a returning user lands on.
+        AiProvider? signedInProvider = statusByProvider.TryGetValue(providerSelection.CurrentProvider, out (bool Installed, bool LoggedIn) current) && current.LoggedIn
+            ? providerSelection.CurrentProvider
+            : statusByProvider.Where(kv => kv.Value.LoggedIn).Select(kv => (AiProvider?)kv.Key).FirstOrDefault();
+
+        if (signedInProvider is { } provider)
+        {
+            await providerSelection.SetProviderAsync(provider);
+            IsChecking = false;
+            Authenticated?.Invoke();
+            return;
+        }
+
+        NeitherInstalled = statusByProvider.Values.All(status => !status.Installed);
+
+        LoginRows.Clear();
+        foreach (IAiAuthService authService in _authServices)
+        {
+            if (!statusByProvider[authService.Provider].Installed)
+            {
+                continue;
+            }
+
+            ProviderLoginRowViewModel row = new ProviderLoginRowViewModel(authService);
+            row.Authenticated += () => OnRowAuthenticated(authService.Provider);
+            LoginRows.Add(row);
+        }
+
+        IsChecking = false;
+    }
+
+    private async void OnRowAuthenticated(AiProvider provider)
+    {
+        await providerSelection.SetProviderAsync(provider);
+        Authenticated?.Invoke();
+    }
+}

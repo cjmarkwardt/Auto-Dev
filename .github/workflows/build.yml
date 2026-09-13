@@ -1,0 +1,112 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to publish (e.g. 1.2.3)"
+        required: true
+
+# Avoids redundant runs piling up on the same ref, and cancels superseded PR runs since those are safe to
+# throw away mid-run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+
+      # RestoreLockedMode fails fast if packages.lock.json (also what the setup-dotnet cache key above is
+      # keyed on) doesn't match what the project references, instead of silently re-resolving and drifting.
+      - name: Build
+        run: dotnet build -p:RestoreLockedMode=true
+
+      # Only checks - never fixes or commits. Run Scripts/Verify.cs locally to apply formatting fixes
+      # and the coverage badge, and push the result, before committing and before dispatching a publish.
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes
+
+      - name: Test
+        run: dotnet test Tests/Tests.csproj --configuration Debug
+
+  publish:
+    needs: build-and-test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # Dispatching this workflow already requires write access, but publishing is significant enough to
+      # gate further: only proceed if whoever dispatched it has Admin permission on the repo. Org owners
+      # always show up as Admin here too, so this alone covers both repo Admins and org Owners.
+      - name: Ensure publisher has admin access
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission" --jq .permission)
+          if [ "$PERMISSION" != "admin" ]; then
+            echo "::error::${{ github.actor }} has '$PERMISSION' permission, not 'admin'. Only repo Admins/org Owners may publish."
+            exit 1
+          fi
+
+      # workflow_dispatch can be run against any branch/tag that contains this workflow file - without this
+      # check dispatching from a non-main ref would silently publish code that was never reviewed on main.
+      - name: Ensure publish runs from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Publish must be dispatched from main (got '${{ github.ref }}')."
+          exit 1
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+
+      # App/App.csproj carries no <Version> of its own - the version always comes from the "version" input to
+      # this workflow, and this step fails the run rather than falling back to any default if it's missing
+      # or malformed. The matching GitHub Release/tag is expected to already exist - Scripts/Publish.cs
+      # creates it locally (as an Admin, since a tag ruleset blocks GITHUB_TOKEN from creating one here).
+      - name: Determine release version
+        id: version
+        env:
+          # Passed through env instead of interpolated directly into the script below - this input is
+          # arbitrary free text, and GitHub expressions are substituted textually before the shell runs, so
+          # interpolating it inline would let a crafted "version" break out of the string and inject commands.
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          VERSION="$VERSION_INPUT"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::Version '$VERSION' is not a valid version (expected e.g. 1.2.3)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish executables
+        run: |
+          dotnet publish App/App.csproj --configuration Release --runtime win-x64 --output publish/win-x64 -p:RestoreLockedMode=true -p:Version=${{ steps.version.outputs.version }}
+          dotnet publish App/App.csproj --configuration Release --runtime linux-x64 --output publish/linux-x64 -p:RestoreLockedMode=true -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.version.outputs.version }}" "publish/win-x64/AutoDev.exe" "publish/linux-x64/AutoDev"
