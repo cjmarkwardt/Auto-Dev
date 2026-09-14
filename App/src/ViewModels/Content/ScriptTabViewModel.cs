@@ -8,10 +8,18 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace AutoDev.ViewModels.Content;
 
-/// <summary>One dropdown entry - a script that is currently running or has run at least once before (see ScriptTabViewModel.LoadAsync). IsRunning drives the same "●" indicator the Files sidebar row uses.</summary>
-public sealed partial class ScriptEntry(string id, string name) : ViewModelBase
+/// <summary>
+/// One dropdown entry - either a standalone script (IsTask false, Children empty) that is currently running or
+/// has run at least once before, or a task (IsTask true) whose Children are its own one-sub-tab-per-script list
+/// (see ScriptTabViewModel.LoadAsync/SelectTask). IsRunning drives the same "●" indicator the Files sidebar row
+/// uses - for a task entry it covers the task's whole run, start to finish across every batch (see
+/// IWorkspaceScriptRunner.TaskRunStarted/TaskRunCompleted), not just whichever child happens to be selected.
+/// </summary>
+public sealed partial class ScriptEntry(string id, string name, bool isTask = false) : ViewModelBase
 {
     public string Id { get; } = id;
+
+    public bool IsTask { get; } = isTask;
 
     [ObservableProperty]
     private string name = name;
@@ -19,16 +27,29 @@ public sealed partial class ScriptEntry(string id, string name) : ViewModelBase
     [ObservableProperty]
     private bool isRunning;
 
+    /// <summary>Whether this is the currently-viewed sub-tab within its own parent task - unused for a top-level entry. Set explicitly by ScriptTabViewModel (see SetSelectedChild) rather than inferred by reference-comparison in the View, per AGENTS.md's "prefer an explicit, always-available state over relying on a control's own selection".</summary>
+    [ObservableProperty]
+    private bool isSelected;
+
+    /// <summary>Populated only for a task entry - one child per script it runs, in file order. Empty for a plain script entry.</summary>
+    public ObservableCollection<ScriptEntry> Children { get; } = [];
+
+    /// <summary>Which of Children is currently being viewed - remembered per task so switching the dropdown away and back preserves the last-viewed sub-tab. Unused for a plain script entry.</summary>
+    [ObservableProperty]
+    private ScriptEntry? selectedChild;
+
     public void UpdateFrom(string name) => Name = name;
 }
 
 /// <summary>
-/// Read-only view of a .cs script's `dotnet run --file` output, switchable via a dropdown between every
-/// script that is currently running or has run at least once before (see LoadAsync/Entries) - the last run of
-/// a script not currently running stays visible until that script is re-run. Subscribes to the workspace's
-/// one IWorkspaceScriptRunner instance for its whole lifetime, so history for every script stays reachable
-/// regardless of which one is currently selected for viewing (only one script total ever runs at a time
-/// though - see IWorkspaceScriptRunner.RunNowAsync).
+/// Read-only view of a .cs script's (or a .task file's group of scripts') `dotnet run --file` output,
+/// switchable via a dropdown between every script/task that is currently running or has run at least once
+/// before (see LoadAsync/Entries) - the last run of one not currently running stays visible until it's re-run.
+/// A task's own scripts are never listed as their own top-level dropdown entries (see ScriptRunRecord.TaskId) -
+/// they're only reachable as sub-tabs under their task's entry (see ScriptEntry.Children). Subscribes to the
+/// workspace's one IWorkspaceScriptRunner instance for its whole lifetime, so history for every script/task
+/// stays reachable regardless of which one is currently selected for viewing (only one script or task total
+/// ever runs at a time though - see IWorkspaceScriptRunner.RunNowAsync/RunTaskNowAsync).
 /// </summary>
 public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
 {
@@ -52,6 +73,8 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
 
         this.scriptRunner.ScriptRunStarted += OnAnyRunStarted;
         this.scriptRunner.ScriptRunCompleted += OnAnyRunCompleted;
+        this.scriptRunner.TaskRunStarted += OnAnyTaskStarted;
+        this.scriptRunner.TaskRunCompleted += OnAnyTaskCompleted;
     }
 
     public ObservableCollection<ScriptEntry> Entries { get; } = [];
@@ -98,10 +121,12 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     public bool ShowStopped => !IsRunning && HasResult && LastRunFailed && LastRunWasStopped;
     public bool ShowFailed => !IsRunning && HasResult && LastRunFailed && !LastRunWasStopped;
 
+    /// <summary>The entry whose own Running/Succeeded/output state the header/body below is currently displaying - the selected task's own SelectedChild if it's a task, or SelectedEntry itself otherwise.</summary>
+    private ScriptEntry? EffectiveEntry => SelectedEntry is { IsTask: true } task ? task.SelectedChild : SelectedEntry;
+
     partial void OnIsRunningChanged(bool value)
     {
         RaiseStateChanged();
-        StopCommand.NotifyCanExecuteChanged();
         SendInputCommand.NotifyCanExecuteChanged();
     }
 
@@ -117,13 +142,24 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(ShowFailed));
     }
 
-    /// <summary>Called once when a workspace tab is opened - seeds the dropdown from persisted run history (plus anything already running), so scripts run in a previous session still show up, not just ones touched this session. There's no central script registry to enumerate (scripts are just .cs files wherever the user put them) - LoadRunScriptRefsAsync derives the list from run history instead, so a script that's never been run doesn't appear until it is.</summary>
+    /// <summary>Called once when a workspace tab is opened - seeds the dropdown from persisted run history (plus anything already running), so scripts/tasks run in a previous session still show up, not just ones touched this session. There's no central script/task registry to enumerate (scripts and tasks are just files wherever the user put them) - LoadRunScriptRefsAsync/LoadRunTaskRefsAsync derive the list from run history instead, so one that's never been run doesn't appear until it is.</summary>
     public async Task LoadAsync()
     {
         IReadOnlyList<ScriptRef> scripts = await metadataStore.LoadRunScriptRefsAsync(workspacePath);
         foreach (ScriptRef script in scripts)
         {
             GetOrCreateEntry(script.Path, script.Name).IsRunning = scriptRunner.IsRunning(script.Path);
+        }
+
+        IReadOnlyList<TaskRunRecord> tasks = await metadataStore.LoadRunTaskRefsAsync(workspacePath);
+        foreach (TaskRunRecord task in tasks)
+        {
+            ScriptEntry taskEntry = GetOrCreateTaskEntry(task.FilePath, task.FileName, task.Scripts);
+            taskEntry.IsRunning = scriptRunner.IsTaskRunning(task.FilePath);
+            foreach (ScriptEntry child in taskEntry.Children)
+            {
+                child.IsRunning = scriptRunner.IsRunning(child.Id);
+            }
         }
     }
 
@@ -132,6 +168,19 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     {
         ScriptEntry entry = GetOrCreateEntry(id, name);
         entry.IsRunning = scriptRunner.IsRunning(id);
+        SelectedEntry = entry;
+    }
+
+    /// <summary>Raised by the sidebar's "Run"/"View" action for a .task file - adds/refreshes the task's own dropdown entry (never one per script - see ScriptEntry.Children) and selects it.</summary>
+    public void SelectTask(string id, string name, IReadOnlyList<ScriptRef> scripts)
+    {
+        ScriptEntry entry = GetOrCreateTaskEntry(id, name, scripts);
+        entry.IsRunning = scriptRunner.IsTaskRunning(id);
+        foreach (ScriptEntry child in entry.Children)
+        {
+            child.IsRunning = scriptRunner.IsRunning(child.Id);
+        }
+
         SelectedEntry = entry;
     }
 
@@ -149,11 +198,104 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         return entry;
     }
 
+    private ScriptEntry GetOrCreateTaskEntry(string id, string name, IReadOnlyList<ScriptRef> scripts)
+    {
+        ScriptEntry? existing = Entries.FirstOrDefault(e => e.Id == id);
+        ScriptEntry entry;
+        if (existing is not null)
+        {
+            existing.UpdateFrom(name);
+            entry = existing;
+        }
+        else
+        {
+            entry = new ScriptEntry(id, name, isTask: true);
+            Entries.Add(entry);
+        }
+
+        SyncTaskChildren(entry, scripts);
+        return entry;
+    }
+
+    /// <summary>
+    /// Reconciles a task entry's own Children against its current script list - a fast path when it's
+    /// unchanged since last time (the common case: re-running/re-viewing the same task repeatedly), which
+    /// preserves each child's own identity/selection instead of rebuilding, and a slow path (the task file's own
+    /// script list actually changed) that rebuilds from scratch, carrying the previous selection over by id if
+    /// it still exists.
+    /// </summary>
+    private static void SyncTaskChildren(ScriptEntry taskEntry, IReadOnlyList<ScriptRef> scripts)
+    {
+        if (taskEntry.Children.Select(c => c.Id).SequenceEqual(scripts.Select(s => s.Path)))
+        {
+            for (int i = 0; i < scripts.Count; i++)
+            {
+                taskEntry.Children[i].UpdateFrom(scripts[i].Name);
+            }
+
+            return;
+        }
+
+        string? previousSelectionId = taskEntry.SelectedChild?.Id;
+        taskEntry.Children.Clear();
+        foreach (ScriptRef script in scripts)
+        {
+            taskEntry.Children.Add(new ScriptEntry(script.Path, script.Name));
+        }
+
+        ScriptEntry? restoredSelection = taskEntry.Children.FirstOrDefault(c => c.Id == previousSelectionId) ?? taskEntry.Children.FirstOrDefault();
+        SetSelectedChild(taskEntry, restoredSelection);
+    }
+
+    private static void SetSelectedChild(ScriptEntry task, ScriptEntry? child)
+    {
+        if (task.SelectedChild is { } previous)
+        {
+            previous.IsSelected = false;
+        }
+
+        task.SelectedChild = child;
+        if (child is not null)
+        {
+            child.IsSelected = true;
+        }
+    }
+
     partial void OnSelectedEntryChanged(ScriptEntry? value)
+    {
+        if (value is { IsTask: true } task)
+        {
+            ScriptEntry? child = task.SelectedChild ?? task.Children.FirstOrDefault();
+            SetSelectedChild(task, child);
+            AttachOrLoad(child);
+        }
+        else
+        {
+            AttachOrLoad(value);
+        }
+
+        StopCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Raised by the sub-tab strip shown while SelectedEntry is a task - switches which of its scripts is currently displayed, without affecting the task's own run (Stop still applies to the whole task regardless of which sub-tab is showing - see CanStop).</summary>
+    [RelayCommand]
+    private void SelectChildTab(ScriptEntry child)
+    {
+        if (SelectedEntry is not { IsTask: true } task || task.SelectedChild == child)
+        {
+            return;
+        }
+
+        SetSelectedChild(task, child);
+        AttachOrLoad(child);
+    }
+
+    /// <summary>Attaches to entry's own live run if it's currently in flight, or loads its most recent historical run otherwise - shared by both a top-level selection change and a sub-tab switch, since either one just changes which single script's own output is currently being displayed.</summary>
+    private void AttachOrLoad(ScriptEntry? entry)
     {
         DetachLiveRun();
 
-        if (value is null)
+        if (entry is null)
         {
             HasScript = false;
             IsRunning = false;
@@ -161,10 +303,10 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        ScriptName = value.Name;
+        ScriptName = entry.Name;
         HasScript = true;
 
-        if (scriptRunner.GetLiveRun(value.Id) is { } liveRun)
+        if (scriptRunner.GetLiveRun(entry.Id) is { } liveRun)
         {
             IsRunning = true;
             HasResult = true;
@@ -173,7 +315,7 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         }
 
         IsRunning = false;
-        _ = LoadMostRecentRunAsync(value.Id);
+        _ = LoadMostRecentRunAsync(entry.Id);
     }
 
     private async Task LoadMostRecentRunAsync(string scriptId)
@@ -185,7 +327,7 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         // starts it, all before this load's await returns): without the second check, this stale historical
         // load would land after OnAnyRunStarted's reset and overwrite the fresh display with the *previous*
         // run's leftover text, which every following progress line would then get appended after.
-        if (SelectedEntry?.Id != scriptId || scriptRunner.IsRunning(scriptId))
+        if (EffectiveEntry?.Id != scriptId || scriptRunner.IsRunning(scriptId))
         {
             return;
         }
@@ -205,15 +347,47 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private bool CanStop() => IsRunning && SelectedEntry is not null;
+    /// <summary>SelectedEntry.IsRunning alone (not the header's own IsRunning) - so Stop stays available for a whole task while it's still in progress even if the specific sub-tab currently being viewed has already finished (see ScriptEntry.IsRunning's own doc comment).</summary>
+    private bool CanStop() => SelectedEntry?.IsRunning == true;
 
-    /// <summary>Forcefully stops the currently-viewed script's run - see IWorkspaceScriptRunner.StopRun.</summary>
+    /// <summary>Forcefully stops the currently-selected script's run, or every script in the currently-selected task - see IWorkspaceScriptRunner.StopRun/StopTask.</summary>
     [RelayCommand(CanExecute = nameof(CanStop))]
     private void Stop()
     {
-        if (SelectedEntry is { } entry)
+        if (SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        if (entry.IsTask)
+        {
+            scriptRunner.StopTask(entry.Id);
+        }
+        else
         {
             scriptRunner.StopRun(entry.Id);
+        }
+    }
+
+    private bool CanRemoveEntry(ScriptEntry? entry) => entry is { IsRunning: false };
+
+    /// <summary>Removes a script or task from the dropdown entirely and deletes its persisted run history, so it doesn't reappear the next time this workspace tab is opened (see LoadAsync) - disabled while it's currently running (Stop it first). Clears SelectedEntry if the removed entry was the one being viewed.</summary>
+    [RelayCommand(CanExecute = nameof(CanRemoveEntry))]
+    private void RemoveEntry(ScriptEntry entry)
+    {
+        Entries.Remove(entry);
+        if (SelectedEntry == entry)
+        {
+            SelectedEntry = null;
+        }
+
+        if (entry.IsTask)
+        {
+            metadataStore.DeleteTaskRuns(workspacePath, entry.Id);
+        }
+        else
+        {
+            metadataStore.DeleteScriptRuns(workspacePath, entry.Id);
         }
     }
 
@@ -249,21 +423,35 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
 
     private void OnAnyRunStarted(ScriptRef script) => dispatcher.Post(() =>
     {
-        ScriptEntry entry = GetOrCreateEntry(script.Path, script.Name);
-        entry.IsRunning = true;
-        SelectedEntry ??= entry; // nothing viewed yet this session - default to the first script that starts running
+        ScriptEntry? entry;
+        if (script.TaskId is { } taskId)
+        {
+            entry = Entries.FirstOrDefault(e => e.Id == taskId)?.Children.FirstOrDefault(c => c.Id == script.Path);
+            if (entry is null)
+            {
+                return; // this task's entry isn't tracked here yet - its own OnAnyTaskStarted has nothing to seed children from either
+            }
+        }
+        else
+        {
+            entry = GetOrCreateEntry(script.Path, script.Name);
+            SelectedEntry ??= entry; // nothing viewed yet this session - default to the first script that starts running
+        }
 
-        if (SelectedEntry?.Id != script.Path)
+        entry.IsRunning = true;
+        StopCommand.NotifyCanExecuteChanged();
+
+        if (EffectiveEntry?.Id != script.Path)
         {
             return;
         }
 
-        // A run of the currently-viewed script just started - clear whatever the previous run left displayed
-        // right now, unconditionally, rather than waiting for output to arrive to infer a new run began.
-        // Re-running the same script that's already selected doesn't change SelectedEntry (same reference, so
-        // OnSelectedEntryChanged never re-fires), so this is the only reliable place left to reset for that
-        // case - without it, a re-run's output was appearing appended after the previous run's leftover text
-        // instead of replacing it.
+        // A run of the currently-displayed script just started - clear whatever the previous run left
+        // displayed right now, unconditionally, rather than waiting for output to arrive to infer a new run
+        // began. Re-running the same script that's already selected doesn't change SelectedEntry (same
+        // reference, so OnSelectedEntryChanged never re-fires), so this is the only reliable place left to
+        // reset for that case - without it, a re-run's output was appearing appended after the previous run's
+        // leftover text instead of replacing it.
         DetachLiveRun();
         IsRunning = true;
         HasResult = true;
@@ -280,13 +468,17 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
 
     private void OnAnyRunCompleted(ScriptRunRecord record) => dispatcher.Post(() =>
     {
-        ScriptEntry? entry = Entries.FirstOrDefault(e => e.Id == record.FilePath);
+        ScriptEntry? entry = record.TaskId is { } taskId
+            ? Entries.FirstOrDefault(e => e.Id == taskId)?.Children.FirstOrDefault(c => c.Id == record.FilePath)
+            : Entries.FirstOrDefault(e => e.Id == record.FilePath);
+
         if (entry is not null)
         {
             entry.IsRunning = false;
+            StopCommand.NotifyCanExecuteChanged();
         }
 
-        if (SelectedEntry?.Id != record.FilePath)
+        if (EffectiveEntry?.Id != record.FilePath)
         {
             return;
         }
@@ -300,6 +492,27 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         LastRunWasStopped = record.WasStopped;
         ExitCode = record.ExitCode;
         OutputText = record.Output;
+    });
+
+    private void OnAnyTaskStarted(TaskRef task) => dispatcher.Post(() =>
+    {
+        if (Entries.FirstOrDefault(e => e.Id == task.Path) is not { IsTask: true } entry)
+        {
+            return; // SelectTask always runs first (see FilesSectionViewModel.RunTaskAsync) - nothing to mark here otherwise
+        }
+
+        entry.IsRunning = true;
+        SelectedEntry ??= entry;
+        StopCommand.NotifyCanExecuteChanged();
+    });
+
+    private void OnAnyTaskCompleted(TaskRunRecord record) => dispatcher.Post(() =>
+    {
+        if (Entries.FirstOrDefault(e => e.Id == record.FilePath) is { IsTask: true } entry)
+        {
+            entry.IsRunning = false;
+            StopCommand.NotifyCanExecuteChanged();
+        }
     });
 
     private void AttachLiveRun(LiveScriptRun liveRun)
@@ -317,7 +530,7 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         liveRun.PropertyChanged += liveRunHandler;
     }
 
-    /// <summary>Unsubscribes from the live LiveScriptRun's PropertyChanged, if one is currently attached - a no-op otherwise. Called whenever the viewed script's live run is no longer relevant to this view model (selection changed, a new run started, or the run finished), so a still-running script's continued progress doesn't keep posting into a display that's since moved on.</summary>
+    /// <summary>Unsubscribes from the live LiveScriptRun's PropertyChanged, if one is currently attached - a no-op otherwise. Called whenever the displayed script's live run is no longer relevant to this view model (selection/sub-tab changed, a new run started, or the run finished), so a still-running script's continued progress doesn't keep posting into a display that's since moved on.</summary>
     private void DetachLiveRun()
     {
         if (liveRun is not null && liveRunHandler is not null)
@@ -334,6 +547,8 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     {
         scriptRunner.ScriptRunStarted -= OnAnyRunStarted;
         scriptRunner.ScriptRunCompleted -= OnAnyRunCompleted;
+        scriptRunner.TaskRunStarted -= OnAnyTaskStarted;
+        scriptRunner.TaskRunCompleted -= OnAnyTaskCompleted;
         DetachLiveRun();
     }
 }

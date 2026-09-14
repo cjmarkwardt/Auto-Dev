@@ -26,6 +26,11 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
             Content.Script.SelectScript(script.Path, script.Name);
             Content.SelectedTabIndex = WorkspaceContentViewModel.ScriptTabIndex;
         };
+        Files.TaskOutputRequested += task =>
+        {
+            Content.Script.SelectTask(task.Path, task.Name, task.Scripts);
+            Content.SelectedTabIndex = WorkspaceContentViewModel.ScriptTabIndex;
+        };
         Files.SetCommandContextRequested += path => Content.Command.SetWorkingDirectory(path);
         FileSearch.FileChosen += path => Files.SelectPath(path); // also opens it in the Edit tab, via Files.FileSelected above
         // Deliberately bypasses Files.SelectPath (which would also raise FileSelected -> Content.OpenFileAsync(path)

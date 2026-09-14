@@ -60,8 +60,14 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
     /// <summary>Whether this is a .cs file - shown with ScriptFileIconGeometry instead of the plain file icon, and offered Run/Stop/View alongside the normal file context menu (runs it as a single-file app via `dotnet run --file`). See FilesSectionViewModel.</summary>
     public bool IsScriptFile => !IsDirectory && Path.GetExtension(FullPath).Equals(".cs", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>A file row gets exactly one icon - FolderIconGeometry, ScriptFileIconGeometry, or (this) the plain FileIconGeometry - never more than one at once.</summary>
-    public bool IsPlainFile => !IsDirectory && !IsScriptFile;
+    /// <summary>Whether this is a .task file - a group of .cs scripts run together (see TaskFileParser), shown with TaskFileIconGeometry and offered the same Run/Stop/View context menu as a .cs file. See FilesSectionViewModel.</summary>
+    public bool IsTaskFile => !IsDirectory && Path.GetExtension(FullPath).Equals(".task", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether Run/Stop/View apply to this file at all - a .cs file or a .task file, run via IWorkspaceScriptRunner.RunNowAsync/RunTaskNowAsync respectively.</summary>
+    public bool IsRunnableFile => IsScriptFile || IsTaskFile;
+
+    /// <summary>A file row gets exactly one icon - FolderIconGeometry, ScriptFileIconGeometry, TaskFileIconGeometry, or (this) the plain FileIconGeometry - never more than one at once.</summary>
+    public bool IsPlainFile => !IsDirectory && !IsRunnableFile;
 
     public ObservableCollection<FileTreeNodeViewModel> Children { get; } = [];
 
@@ -71,7 +77,7 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
     [ObservableProperty]
     private bool isSelected;
 
-    /// <summary>Whether this .cs file currently has a run in flight - drives the Run/Stop context-menu enablement. Maintained by FilesSectionViewModel from the script runner's ScriptRunStarted/ScriptRunCompleted events, re-applied after every Refresh() since nodes get rebuilt.</summary>
+    /// <summary>Whether this .cs file or .task file currently has a run in flight - drives the Run/Stop context-menu enablement. Maintained by FilesSectionViewModel from the script/task runner events (ScriptRunStarted/ScriptRunCompleted, TaskRunStarted/TaskRunCompleted), re-applied after every Refresh() since nodes get rebuilt. For a .task file this spans its whole run, start to finish across every batch - not just whichever child script happens to be running at any one moment.</summary>
     [ObservableProperty]
     private bool isScriptRunning;
 
@@ -219,5 +225,8 @@ public sealed partial class FileTreeNodeViewModel : ViewModelBase
         OnPropertyChanged(nameof(Name));
         OnPropertyChanged(nameof(FullPath));
         OnPropertyChanged(nameof(IsScriptFile));
+        OnPropertyChanged(nameof(IsTaskFile));
+        OnPropertyChanged(nameof(IsRunnableFile));
+        OnPropertyChanged(nameof(IsPlainFile));
     }
 }

@@ -232,4 +232,152 @@ public sealed class WorkspaceScriptRunnerServiceTests : IDisposable
 
         Assert.NotNull(observedDuringRun);
     }
+
+    [Fact]
+    public async Task RunTaskNowAsync_SingleBatch_RunsEveryScriptConcurrentlyAndPersistsSuccessfulRecord()
+    {
+        Mock<IWorkspaceMetadataStore> metadataStore = new();
+        TaskRunRecord? persisted = null;
+        metadataStore
+            .Setup(store => store.AppendScriptRunAsync(workspacePath, It.IsAny<ScriptRunRecord>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        metadataStore
+            .Setup(store => store.AppendTaskRunAsync(workspacePath, It.IsAny<TaskRunRecord>(), It.IsAny<CancellationToken>()))
+            .Callback<string, TaskRunRecord, CancellationToken>((_, record, _) => persisted = record)
+            .Returns(Task.CompletedTask);
+
+        using WorkspaceScriptRunnerService runner = CreateRunner(metadataStore);
+        string pathA = WriteScriptFile("a.cs", "Console.WriteLine(\"a\");");
+        string pathB = WriteScriptFile("b.cs", "Console.WriteLine(\"b\");");
+
+        List<string> order = [];
+        runner.TaskRunStarted += _ => order.Add("task-started");
+        runner.TaskRunCompleted += _ => order.Add("task-completed");
+
+        await runner.RunTaskNowAsync(
+            new TaskRef("group.task", "group"),
+            [[new ScriptRef(pathA, "a"), new ScriptRef(pathB, "b")]]);
+
+        Assert.Equal(["task-started", "task-completed"], order);
+        Assert.NotNull(persisted);
+        Assert.True(persisted!.Success);
+        Assert.False(persisted.WasStopped);
+        Assert.Equal([pathA, pathB], persisted.Scripts.Select(s => s.Path));
+        Assert.False(runner.IsTaskRunning("group.task"));
+    }
+
+    [Fact]
+    public async Task RunTaskNowAsync_ScriptFailsInFirstBatch_SkipsSecondBatchAndPersistsUnsuccessfulRecord()
+    {
+        Mock<IWorkspaceMetadataStore> metadataStore = new();
+        TaskRunRecord? persisted = null;
+        metadataStore
+            .Setup(store => store.AppendScriptRunAsync(workspacePath, It.IsAny<ScriptRunRecord>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        metadataStore
+            .Setup(store => store.AppendTaskRunAsync(workspacePath, It.IsAny<TaskRunRecord>(), It.IsAny<CancellationToken>()))
+            .Callback<string, TaskRunRecord, CancellationToken>((_, record, _) => persisted = record)
+            .Returns(Task.CompletedTask);
+
+        using WorkspaceScriptRunnerService runner = CreateRunner(metadataStore);
+        string failing = WriteScriptFile("fail.cs", "Environment.Exit(1);");
+        string neverRun = WriteScriptFile("second.cs", "Console.WriteLine(\"should not run\");");
+
+        await runner.RunTaskNowAsync(
+            new TaskRef("group.task", "group"),
+            [[new ScriptRef(failing, "fail")], [new ScriptRef(neverRun, "second")]]);
+
+        Assert.NotNull(persisted);
+        Assert.False(persisted!.Success);
+        Assert.False(persisted.WasStopped);
+        Assert.False(runner.IsRunning(neverRun));
+        metadataStore.Verify(store => store.AppendScriptRunAsync(workspacePath, It.Is<ScriptRunRecord>(r => r.FilePath == neverRun), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StopTask_CancelsEveryRunningChildScript_PersistsStoppedTaskRecord()
+    {
+        Mock<IWorkspaceMetadataStore> metadataStore = new();
+        TaskRunRecord? persisted = null;
+        List<ScriptRunRecord> persistedScripts = [];
+        TaskCompletionSource taskStartedSignal = new();
+
+        // Mirrors the real WorkspaceMetadataStore's own cancellation-sensitivity (JsonSerializer.SerializeAsync
+        // throws immediately given an already-cancelled token) - a plain unconditional Returns(Task.CompletedTask)
+        // here would never reproduce the regression this test guards against: StopTask cancelling the very same
+        // token this call was scoped against, silently skipping ScriptRunCompleted for every child and leaving
+        // HasRunningScripts/IsRunning stuck forever (see RunAndTrackAsync's own doc comment).
+        metadataStore
+            .Setup(store => store.AppendScriptRunAsync(workspacePath, It.IsAny<ScriptRunRecord>(), It.IsAny<CancellationToken>()))
+            .Returns<string, ScriptRunRecord, CancellationToken>((_, record, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                persistedScripts.Add(record);
+                return Task.CompletedTask;
+            });
+        metadataStore
+            .Setup(store => store.AppendTaskRunAsync(workspacePath, It.IsAny<TaskRunRecord>(), It.IsAny<CancellationToken>()))
+            .Callback<string, TaskRunRecord, CancellationToken>((_, record, _) => persisted = record)
+            .Returns(Task.CompletedTask);
+
+        using WorkspaceScriptRunnerService runner = CreateRunner(metadataStore);
+        string pathA = WriteScriptFile("sleeper-a.cs", "Console.WriteLine(\"running a\");\nawait Task.Delay(TimeSpan.FromSeconds(30));");
+        string pathB = WriteScriptFile("sleeper-b.cs", "Console.WriteLine(\"running b\");\nawait Task.Delay(TimeSpan.FromSeconds(30));");
+
+        List<ScriptRunRecord> completedScripts = [];
+        runner.TaskRunStarted += _ => taskStartedSignal.TrySetResult();
+        runner.ScriptRunCompleted += completedScripts.Add;
+        Task runTask = runner.RunTaskNowAsync(
+            new TaskRef("group.task", "group"),
+            [[new ScriptRef(pathA, "sleeper-a"), new ScriptRef(pathB, "sleeper-b")]]);
+
+        await taskStartedSignal.Task;
+        while (runner.GetLiveRun(pathA) is not { OutputText.Length: > 0 } || runner.GetLiveRun(pathB) is not { OutputText.Length: > 0 })
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.True(runner.StopTask("group.task"));
+        await runTask;
+
+        Assert.NotNull(persisted);
+        Assert.False(persisted!.Success);
+        Assert.True(persisted.WasStopped);
+        Assert.False(runner.IsRunning(pathA));
+        Assert.False(runner.IsRunning(pathB));
+        Assert.False(runner.IsTaskRunning("group.task"));
+
+        // Both children must still persist their own record and fire ScriptRunCompleted, marked WasStopped -
+        // not silently dropped by the token reuse this test guards against.
+        Assert.Equal(2, completedScripts.Count);
+        Assert.Equal(2, persistedScripts.Count);
+        Assert.All(completedScripts, record => Assert.True(record.WasStopped));
+        Assert.All(completedScripts, record => Assert.False(record.Success));
+    }
+
+    [Fact]
+    public async Task RunTaskNowAsync_WhileAnotherScriptIsRunning_IsNoOp()
+    {
+        Mock<IWorkspaceMetadataStore> metadataStore = new();
+        metadataStore
+            .Setup(store => store.AppendScriptRunAsync(workspacePath, It.IsAny<ScriptRunRecord>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        using WorkspaceScriptRunnerService runner = CreateRunner(metadataStore);
+        string sleeper = WriteScriptFile("sleeper.cs", "await Task.Delay(TimeSpan.FromSeconds(30));");
+        string other = WriteScriptFile("other.cs", "Console.WriteLine(\"should not run\");");
+
+        TaskCompletionSource runStartedSignal = new();
+        runner.ScriptRunStarted += _ => runStartedSignal.TrySetResult();
+        Task runTask = runner.RunNowAsync(new ScriptRef(sleeper, "sleeper"));
+        await runStartedSignal.Task;
+
+        await runner.RunTaskNowAsync(new TaskRef("group.task", "group"), [[new ScriptRef(other, "other")]]);
+
+        Assert.False(runner.IsTaskRunning("group.task"));
+        Assert.False(runner.IsRunning(other));
+
+        runner.StopRun(sleeper);
+        await runTask;
+    }
 }

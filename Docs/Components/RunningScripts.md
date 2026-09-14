@@ -3,7 +3,9 @@
 Alongside AI-driven changes, AutoDev can run a `.cs` file directly as a single-file app - `.cs`
 files are shown in the file tree with a distinct runnable-file icon and offered `Run`/`Stop`/`View`
 instead of (well, alongside) the normal file context menu; double-clicking one runs it the same way
-Run does (Stop cancels it mid-run; View reopens its live/last output).
+Run does (Stop cancels it mid-run; View reopens its live/last output). A `.task` file gets the exact
+same `Run`/`Stop`/`View` treatment for running a *group* of `.cs` scripts together - see its own
+section below.
 
 ## Execution (`dotnet run --file`)
 
@@ -71,16 +73,19 @@ One `WorkspaceScriptRunnerService` per workspace (via `IScriptRunnerServiceFacto
 per-workspace isolation `IWorkspaceFactory` gives every service that needs its own instance per
 open workspace). It's purely a manual-trigger tracker/broadcaster - no polling loop:
 
-- Only one `.cs` file total ever runs at a time per workspace - `RunNowAsync` guards on a single
-  `Interlocked`-driven flag (`_runInProgress`), not a per-path one, so starting a second `.cs` file
-  while any run (including this same file) is already in flight is a no-op; `_activeRuns` (a
-  `ConcurrentDictionary` used as a set) still tracks it by path underneath, purely so
-  `IsRunning(scriptId)`/`GetLiveRun(scriptId)` can answer "is *this* script running" for whichever
-  one is currently the sole active run, each with its own linked `CancellationTokenSource` so
-  `StopRun(scriptId)` only cancels that run's process.
+- Only one `.cs` file or `.task` file total ever runs at a time per workspace - `RunNowAsync`/
+  `RunTaskNowAsync` both guard on the same single `Interlocked`-driven flag (`runInProgress`), not a
+  per-path one, so starting a second one while any run (including this same file) is already in
+  flight is a no-op; `activeRuns` (a `ConcurrentDictionary` used as a set) still tracks each running
+  script by path underneath, purely so `IsRunning(scriptId)`/`GetLiveRun(scriptId)` can answer "is
+  *this* script running" for whichever one(s) are currently active, each with its own linked
+  `CancellationTokenSource` so `StopRun(scriptId)` only cancels that run's process. A running task's
+  own child scripts are the one exception to "one at a time" - see the `.task` files section below.
 - Two events surface everything: `ScriptRunStarted(ScriptRef)` (fires once the run's `LiveScriptRun`
   is already registered - see `RunAndTrackAsync`'s own comment on why that ordering matters for a
-  subscriber that immediately calls `GetLiveRun`) and `ScriptRunCompleted(ScriptRunRecord)`.
+  subscriber that immediately calls `GetLiveRun`) and `ScriptRunCompleted(ScriptRunRecord)`; a
+  running task also fires its own `TaskRunStarted(TaskRef)`/`TaskRunCompleted(TaskRunRecord)`
+  alongside these.
 - A `ScriptRunRecord` stopped by the user is marked `WasStopped` - purely AutoDev's own policy (a
   killed process has no exit code of its own to distinguish this) - tracked by recording that
   `StopRun` was actually called for that run before persisting its record. The Script tab uses this
@@ -99,7 +104,40 @@ reaches `WorkspaceContentViewModel` (forcing the Edit tab read-only, for *every*
 the one running) and `VersionSectionViewModel.IsInteractionBlocked` (disabling Commit/Merge/etc. and
 every History tab action) - manual editing, script running, and AI working are mutually exclusive
 states over one workspace's working tree, and only one of the three (with, for scripts, only one
-`.cs` file) is ever active at once.
+`.cs` file or `.task` file) is ever active at once.
+
+## `.task` files (`TaskFileParser`, `IWorkspaceScriptRunner.RunTaskNowAsync`)
+
+A `.task` file groups several `.cs` scripts to run together - unrelated to any older/other ".task"
+file format elsewhere. Format: one workspace-relative script path per line; a line containing only
+`-` is a wait marker, splitting the file into ordered batches (`TaskFileParser.ParseBatches`) -
+every script in the batches before a marker must exit successfully before the batches after it
+start. Blank lines are ignored, and a marker with nothing before/after it (leading, trailing, or
+doubled up) just produces no batch there rather than an empty wait.
+
+Running a task (`RunTaskNowAsync`) still only starts if nothing else is already using the working
+tree - the same single "one script or task at a time per workspace" gate `RunNowAsync` uses - but
+once it does, every script *within* one batch runs concurrently against each other, each via the
+exact same per-script machinery (`RunAndTrackAsync`) a standalone `.cs` run uses: its own
+`LiveScriptRun`, its own persisted `ScriptRunRecord` (tagged with the task's own path via
+`ScriptRunRecord.TaskId`), and its own `ScriptRunStarted`/`ScriptRunCompleted` events. The task
+moves on to its next batch only once every script in the current one has exited; it stops early -
+skipping every batch still to come - the moment any script in the current batch fails, persisting a
+`TaskRunRecord` (mirroring `ScriptRunRecord`, but for the group: overall `Success`/`WasStopped` plus
+the flattened, file-ordered list of scripts it ran) and firing `TaskRunCompleted`. Stopping a
+running task (`StopTask`) cancels one linked `CancellationTokenSource` every one of its currently
+active child scripts was itself linked against, killing all of them in one shot rather than looking
+each one up individually. That cancellation feeds `RunAndTrackAsync` as a second, separate token
+from the one scoping persistence (`ScriptRunCompleted`/`AppendScriptRunAsync`) - the kill signal
+must never also cancel the record-building/persisting/event-firing that follows a killed process,
+or a stopped child would silently never fire `ScriptRunCompleted` at all, leaving
+`FilesSectionViewModel.HasRunningScripts` and its own Script tab entry's `IsRunning` stuck true
+forever with no event left to ever clear them.
+
+A script tagged with `ScriptRunRecord.TaskId` is deliberately excluded from
+`IWorkspaceMetadataStore.LoadRunScriptRefsAsync`'s own top-level history seeding - it's only ever
+reached through its task's own Script tab entry (see below), never a separate top-level one of its
+own, even after the app restarts.
 
 ## Script tab vs. Command tab
 
@@ -107,19 +145,32 @@ Two different, purpose-built consoles:
 
 - **Script tab** (`ScriptTabViewModel`) - a dropdown-switchable viewer over the runner above, with
   an input box for talking back to a script that's still running (see above). `Entries` lists every
-  script that's currently running or has ever run (seeded from persisted history); for the selected
-  script, a single output panel shows its own Running/Succeeded/Stopped/Failed state and
-  live/historical output text. A live view attaches to the run's own `LiveScriptRun.OutputText`; a
-  historical (already finished) view is populated straight from its persisted
-  `ScriptRunRecord.Output` instead - either way the same `OutputText` property, so the Script tab's
-  own XAML doesn't need to care which. It can either watch a run live or browse the most recent
-  historical run for a script that isn't currently running. A dedicated Copy icon button
-  (`ScriptTabViewModel.CopyOutputCommand`) copies the whole of `OutputText` to the clipboard
-  unconditionally, rather than depending on the `SelectableTextBlock` displaying it: that control's
-  own built-in select-all-then-copy can end up with Copy disabled after enough live text updates
-  have gone by while it held a selection (a script's own output streaming in updates `OutputText` -
-  and so the control's bound `Text` - continuously while it runs), so a reliable, always-available
-  copy path can't depend on it.
+  script or task that is currently running or has ever run (seeded from persisted history, via
+  `LoadRunScriptRefsAsync`/`LoadRunTaskRefsAsync`); for the selected entry, a single output panel
+  shows its own Running/Succeeded/Stopped/Failed state and live/historical output text. A live view
+  attaches to the run's own `LiveScriptRun.OutputText`; a historical (already finished) view is
+  populated straight from its persisted `ScriptRunRecord.Output` instead - either way the same
+  `OutputText` property, so the Script tab's own XAML doesn't need to care which. It can either
+  watch a run live or browse the most recent historical run for a script that isn't currently
+  running. A dedicated Copy icon button (`ScriptTabViewModel.CopyOutputCommand`) copies the whole of
+  `OutputText` to the clipboard unconditionally, rather than depending on the `SelectableTextBlock`
+  displaying it: that control's own built-in select-all-then-copy can end up with Copy disabled
+  after enough live text updates have gone by while it held a selection (a script's own output
+  streaming in updates `OutputText` - and so the control's bound `Text` - continuously while it
+  runs), so a reliable, always-available copy path can't depend on it.
+  A task gets exactly one dropdown entry of its own (`ScriptEntry.IsTask`), never one per script -
+  selecting it shows a sub-tab strip (`ScriptEntry.Children`, one per script the task runs) above the
+  same output panel, switchable via `ScriptTabViewModel.SelectChildTabCommand`; each sub-tab's own
+  selection state (`ScriptEntry.IsSelected`) is set explicitly by the view model rather than left to
+  a control's own built-in selection, per this codebase's usual preference for an always-available,
+  explicit code path over relying on that behavior. Stop always applies to the *whole* task
+  (`IWorkspaceScriptRunner.StopTask`) regardless of which sub-tab happens to be showing - its
+  visibility is bound to the selected entry's own `IsRunning` (which for a task spans its entire run,
+  start to finish across every batch), not to whichever single sub-tab is currently displayed. Each
+  dropdown entry also has its own Remove button (`ScriptTabViewModel.RemoveEntryCommand`), hidden
+  while it's running (stop it first) - removes it from `Entries` and deletes its persisted run
+  history (`IWorkspaceMetadataStore.DeleteScriptRuns`/`DeleteTaskRuns`) so it doesn't reappear the
+  next time this workspace tab is opened.
 - **Command tab** (`CommandTabViewModel`) - a separate, general-purpose REPL-style shell console,
   entirely unrelated to `.cs` scripts. Runs arbitrary one-off command lines rooted at a chosen
   working directory (defaulting to the workspace root; see its own "Set Command Context"/home

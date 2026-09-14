@@ -11,6 +11,9 @@ public sealed class ScriptRunRecord
     /// <summary>The .cs file's name without extension, captured at run time so history/Output-tab display never needs to re-derive it from FilePath (e.g. after the file has since been renamed or deleted).</summary>
     public required string FileName { get; set; }
 
+    /// <summary>The owning .task file's own workspace-relative path, if this run happened as one of its scripts (see IWorkspaceScriptRunner.RunTaskNowAsync) - null for a standalone run. Excludes the script from IWorkspaceMetadataStore.LoadRunScriptRefsAsync's own top-level seeding, since a task's children are only ever reached through their task's own dropdown entry (see Docs/Components/RunningScripts.md), not a separate top-level one.</summary>
+    public string? TaskId { get; set; }
+
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset CompletedAt { get; set; }
 

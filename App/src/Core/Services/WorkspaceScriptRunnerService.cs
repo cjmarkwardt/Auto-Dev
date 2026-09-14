@@ -15,15 +15,22 @@ public sealed class WorkspaceScriptRunnerService(
     private readonly ConcurrentDictionary<string, LiveScriptRun> liveRuns = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> runCancellations = new();
     private readonly ConcurrentDictionary<string, byte> userStopped = new();
+    private readonly ConcurrentDictionary<string, byte> activeTasks = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> taskCancellations = new();
+    private readonly ConcurrentDictionary<string, byte> userStoppedTasks = new();
     private CancellationTokenSource? cts;
 
-    /// <summary>0 while idle, 1 while any .cs file in this workspace is running - guards RunNowAsync so only one script total ever runs at a time per workspace, regardless of which .cs file it is. Set/cleared with Interlocked rather than folded into _activeRuns.TryAdd itself, since that dictionary stays keyed by path (IsRunning(scriptId)/GetLiveRun still need to answer "is *this* script running") while this is a single, path-independent gate.</summary>
+    /// <summary>0 while idle, 1 while any .cs file or .task file in this workspace is running - guards RunNowAsync/RunTaskNowAsync so only one script or task total ever runs at a time per workspace. Set/cleared with Interlocked rather than folded into activeRuns/activeTasks.TryAdd itself, since those dictionaries stay keyed by path (IsRunning(scriptId)/GetLiveRun/IsTaskRunning still need to answer "is *this* one running") while this is a single, path-independent gate. A running task's own child scripts don't re-acquire this gate themselves - see RunTaskAndTrackAsync, which calls RunAndTrackAsync directly rather than through RunNowAsync.</summary>
     private int runInProgress;
 
     public event Action<ScriptRef>? ScriptRunStarted;
     public event Action<ScriptRunRecord>? ScriptRunCompleted;
+    public event Action<TaskRef>? TaskRunStarted;
+    public event Action<TaskRunRecord>? TaskRunCompleted;
 
     public bool IsRunning(string scriptId) => activeRuns.ContainsKey(scriptId);
+
+    public bool IsTaskRunning(string taskId) => activeTasks.ContainsKey(taskId);
 
     public bool StopRun(string scriptId)
     {
@@ -37,19 +44,31 @@ public sealed class WorkspaceScriptRunnerService(
         return true;
     }
 
+    /// <summary>Cancels the task's own linked token, which every one of its currently-running child scripts (see RunTaskAndTrackAsync) was itself linked against - stopping every one of them in one shot rather than looking each one up and calling StopRun individually.</summary>
+    public bool StopTask(string taskId)
+    {
+        if (!taskCancellations.TryGetValue(taskId, out CancellationTokenSource? cts))
+        {
+            return false;
+        }
+
+        userStoppedTasks[taskId] = 0;
+        cts.Cancel();
+        return true;
+    }
+
     public LiveScriptRun? GetLiveRun(string scriptId) => liveRuns.GetValueOrDefault(scriptId);
 
-    /// <summary>Scripts only ever run manually (see IWorkspaceScriptRunner) - the runner exists purely to track/broadcast the state of runs kicked off via RunNowAsync, so there's no background loop to start; kept only so the CancellationTokenSource every run links against exists before the first RunNowAsync call.</summary>
+    /// <summary>Scripts only ever run manually (see IWorkspaceScriptRunner) - the runner exists purely to track/broadcast the state of runs kicked off via RunNowAsync/RunTaskNowAsync, so there's no background loop to start; kept only so the CancellationTokenSource every run links against exists before the first RunNowAsync/RunTaskNowAsync call.</summary>
     public void Start() => cts ??= new CancellationTokenSource();
 
     public async Task RunNowAsync(ScriptRef script, CancellationToken cancellationToken = default)
     {
         if (Interlocked.CompareExchange(ref runInProgress, 1, 0) != 0)
         {
-            return; // another script (or this same one) is already running - only one script total runs at a time
+            return; // another script (or task) is already running - only one script or task total runs at a time
         }
 
-        activeRuns.TryAdd(script.Path, 0);
         try
         {
             await RunAndTrackAsync(script, cancellationToken);
@@ -60,7 +79,103 @@ public sealed class WorkspaceScriptRunnerService(
         }
     }
 
-    private async Task RunAndTrackAsync(ScriptRef script, CancellationToken cancellationToken)
+    public async Task RunTaskNowAsync(TaskRef task, IReadOnlyList<IReadOnlyList<ScriptRef>> batches, CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.CompareExchange(ref runInProgress, 1, 0) != 0)
+        {
+            return; // another script (or task) is already running - only one script or task total runs at a time
+        }
+
+        activeTasks.TryAdd(task.Path, 0);
+        try
+        {
+            await RunTaskAndTrackAsync(task, batches, cancellationToken);
+        }
+        finally
+        {
+            activeTasks.TryRemove(task.Path, out _);
+            Interlocked.Exchange(ref runInProgress, 0);
+        }
+    }
+
+    /// <summary>
+    /// Runs every batch in order, awaiting each one's own scripts (run concurrently via RunAndTrackAsync
+    /// directly, bypassing RunNowAsync's own gate since RunTaskNowAsync already holds it for the whole task)
+    /// before starting the next - stopping short, with every batch still to come skipped, the moment either any
+    /// script in the just-finished batch didn't succeed, or the task's own token was cancelled (see StopTask).
+    /// </summary>
+    private async Task RunTaskAndTrackAsync(TaskRef task, IReadOnlyList<IReadOnlyList<ScriptRef>> batches, CancellationToken cancellationToken)
+    {
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+
+        CancellationTokenSource taskCts = cts is not null
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token)
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        taskCancellations[task.Path] = taskCts;
+
+        TaskRunStarted?.Invoke(task);
+
+        bool success = true;
+        try
+        {
+            foreach (IReadOnlyList<ScriptRef> batch in batches)
+            {
+                if (taskCts.Token.IsCancellationRequested)
+                {
+                    success = false;
+                    break;
+                }
+
+                ScriptRunRecord[] records = await Task.WhenAll(batch.Select(
+                    script => RunAndTrackAsync(script with { TaskId = task.Path }, cancellationToken, taskCts.Token)));
+
+                if (records.Any(record => !record.Success))
+                {
+                    success = false;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            bool wasStopped = userStoppedTasks.ContainsKey(task.Path);
+            TaskRunRecord record = new TaskRunRecord
+            {
+                FilePath = task.Path,
+                FileName = task.Name,
+                StartedAt = startedAt,
+                CompletedAt = DateTimeOffset.UtcNow,
+                Success = success && !wasStopped,
+                WasStopped = wasStopped,
+                Scripts = [.. batches.SelectMany(batch => batch)],
+            };
+
+            try
+            {
+                await metadataStore.AppendTaskRunAsync(workspacePath, record, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to persist task run for {FilePath} in {WorkspacePath}", task.Path, workspacePath);
+            }
+
+            TaskRunCompleted?.Invoke(record);
+
+            taskCancellations.TryRemove(task.Path, out _);
+            userStoppedTasks.TryRemove(task.Path, out _);
+            taskCts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// cancellationToken scopes persistence only (mirroring RunNowAsync's caller-supplied token, which a task
+    /// stop never cancels) - taskCancellationToken (RunTaskAndTrackAsync's own taskCts.Token, default/never-
+    /// cancelled for a standalone run) is ORed into the kill signal alongside it, but deliberately excluded from
+    /// persistence: StopTask cancelling taskCts must kill the subprocess without also aborting this method's own
+    /// record-building/persisting/event-firing below, which would otherwise leave the script and its owning
+    /// task's HasRunningScripts/IsRunning state stuck forever with no ScriptRunCompleted ever having fired.
+    /// </summary>
+    private async Task<ScriptRunRecord> RunAndTrackAsync(ScriptRef script, CancellationToken cancellationToken, CancellationToken taskCancellationToken = default)
     {
         DateTimeOffset startedAt = DateTimeOffset.UtcNow;
 
@@ -69,9 +184,10 @@ public sealed class WorkspaceScriptRunnerService(
         // no way to ever persist a run record for it. Not a `using` here - StopRun needs to reach this
         // specific run's token from outside, for as long as the run is active.
         CancellationTokenSource linkedCts = cts is not null
-            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token)
-            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, taskCancellationToken, cts.Token)
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, taskCancellationToken);
         runCancellations[script.Path] = linkedCts;
+        activeRuns.TryAdd(script.Path, 0);
 
         // GetLiveRun(script.Path) must already resolve by the time a ScriptRunStarted subscriber (see
         // ScriptTabViewModel.OnAnyRunStarted) reacts to it, so this is registered before that event fires
@@ -82,87 +198,88 @@ public sealed class WorkspaceScriptRunnerService(
 
         ScriptRunStarted?.Invoke(script);
 
+        // No AutoDev-authored announcement or other commentary is ever appended to liveRun - it carries only
+        // the process's own real stdout/stderr (plus, from SendInputAsync, the local echo of whatever was
+        // typed back to it), so the Script tab reads exactly like a plain console window observing this one
+        // process, start to finish.
+        int exitCode = 0;
         try
         {
-            // No AutoDev-authored announcement or other commentary is ever appended to liveRun - it carries
-            // only the process's own real stdout/stderr (plus, from SendInputAsync, the local echo of
-            // whatever was typed back to it), so the Script tab reads exactly like a plain console window
-            // observing this one process, start to finish.
             string fullPath = Path.Combine(workspacePath, script.Path);
 
-            int exitCode = 0;
-            try
-            {
-                // --file (rather than passing the path as a bare positional argument) works unambiguously
-                // even when the workspace root already contains a project/solution file, which `dotnet run`
-                // would otherwise try to run instead - see Docs/RunningScripts.md.
-                Command command = Cli.Wrap("dotnet")
-                    .WithArguments(["run", "--file", fullPath])
-                    .WithWorkingDirectory(workspacePath)
-                    .WithStandardInputPipe(PipeSource.Create(async (stream, pipeCancellationToken) =>
+            // --file (rather than passing the path as a bare positional argument) works unambiguously even
+            // when the workspace root already contains a project/solution file, which `dotnet run` would
+            // otherwise try to run instead - see Docs/RunningScripts.md.
+            Command command = Cli.Wrap("dotnet")
+                .WithArguments(["run", "--file", fullPath])
+                .WithWorkingDirectory(workspacePath)
+                .WithStandardInputPipe(PipeSource.Create(async (stream, pipeCancellationToken) =>
+                {
+                    // Handed the process's own real stdin stream once it starts - captured here rather than
+                    // written to directly, so LiveScriptRun.SendInputAsync can write to it at any later point
+                    // the script actually needs input. CliWrap itself cancels pipeCancellationToken once the
+                    // process exits, at which point there's nothing further to hand off - awaiting it (rather
+                    // than returning immediately) is what keeps this pipe - and the process's own stdin - open
+                    // for that entire span instead of closing it the instant this delegate would otherwise
+                    // return.
+                    liveRun.AttachStandardInput(stream);
+                    try
                     {
-                        // Handed the process's own real stdin stream once it starts - captured here rather
-                        // than written to directly, so LiveScriptRun.SendInputAsync can write to it at any
-                        // later point the script actually needs input. CliWrap itself cancels
-                        // pipeCancellationToken once the process exits, at which point there's nothing further
-                        // to hand off - awaiting it (rather than returning immediately) is what keeps this
-                        // pipe - and the process's own stdin - open for that entire span instead of closing it
-                        // the instant this delegate would otherwise return.
-                        liveRun.AttachStandardInput(stream);
-                        try
-                        {
-                            await Task.Delay(Timeout.Infinite, pipeCancellationToken);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                        }
-                    }))
-                    .WithStandardOutputPipe(PipeTarget.Create((stream, ct) => PumpAsync(stream, liveRun, ct)))
-                    .WithStandardErrorPipe(PipeTarget.Create((stream, ct) => PumpAsync(stream, liveRun, ct)))
-                    .WithValidation(CommandResultValidation.None);
+                        await Task.Delay(Timeout.Infinite, pipeCancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                }))
+                .WithStandardOutputPipe(PipeTarget.Create((stream, ct) => PumpAsync(stream, liveRun, ct)))
+                .WithStandardErrorPipe(PipeTarget.Create((stream, ct) => PumpAsync(stream, liveRun, ct)))
+                .WithValidation(CommandResultValidation.None);
 
-                exitCode = (await command.ExecuteAsync(linkedCts.Token)).ExitCode;
-            }
-            catch (OperationCanceledException)
-            {
-                // Stopped mid-run (see StopRun) - the record below still gets built and persisted, marked
-                // WasStopped, rather than propagating out and skipping that entirely.
-            }
-
-            bool wasStopped = userStopped.ContainsKey(script.Path);
-            ScriptRunRecord record = new ScriptRunRecord
-            {
-                FilePath = script.Path,
-                FileName = script.Name,
-                StartedAt = startedAt,
-                CompletedAt = DateTimeOffset.UtcNow,
-                Success = !wasStopped && exitCode == 0,
-                WasStopped = wasStopped,
-                ExitCode = wasStopped ? null : exitCode,
-                Output = liveRun.OutputText,
-            };
-
-            await PersistCompletedRunAsync(record, cancellationToken);
+            exitCode = (await command.ExecuteAsync(linkedCts.Token)).ExitCode;
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopped mid-run (see StopRun/StopTask) - handled below via wasStopped, rather than propagating
+            // out and skipping the record/event/cleanup that follows.
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Script run failed for {FilePath} in {WorkspacePath}", script.Path, workspacePath);
         }
-        finally
-        {
-            liveRun.MarkFinished();
-            runCancellations.TryRemove(script.Path, out _);
-            userStopped.TryRemove(script.Path, out _);
-            linkedCts.Dispose();
-            liveRuns.TryRemove(script.Path, out _);
-            activeRuns.TryRemove(script.Path, out _);
-        }
-    }
 
-    private async Task PersistCompletedRunAsync(ScriptRunRecord record, CancellationToken cancellationToken)
-    {
-        await metadataStore.AppendScriptRunAsync(workspacePath, record, cancellationToken);
+        bool wasStopped = userStopped.ContainsKey(script.Path) || taskCancellationToken.IsCancellationRequested;
+        ScriptRunRecord record = new ScriptRunRecord
+        {
+            FilePath = script.Path,
+            FileName = script.Name,
+            TaskId = script.TaskId,
+            StartedAt = startedAt,
+            CompletedAt = DateTimeOffset.UtcNow,
+            Success = !wasStopped && exitCode == 0,
+            WasStopped = wasStopped,
+            ExitCode = wasStopped ? null : exitCode,
+            Output = liveRun.OutputText,
+        };
+
+        try
+        {
+            await metadataStore.AppendScriptRunAsync(workspacePath, record, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to persist script run for {FilePath} in {WorkspacePath}", script.Path, workspacePath);
+        }
+
         ScriptRunCompleted?.Invoke(record);
+
+        liveRun.MarkFinished();
+        runCancellations.TryRemove(script.Path, out _);
+        userStopped.TryRemove(script.Path, out _);
+        linkedCts.Dispose();
+        liveRuns.TryRemove(script.Path, out _);
+        activeRuns.TryRemove(script.Path, out _);
+
+        return record;
     }
 
     /// <summary>

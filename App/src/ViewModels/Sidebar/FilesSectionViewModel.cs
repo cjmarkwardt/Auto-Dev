@@ -29,9 +29,13 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     private readonly IWorkspaceScriptRunner scriptRunner;
     private readonly IWorkspaceVersioningService versioningService;
     private readonly EditTabViewModel edit;
+    private readonly TaskFileParser taskFileParser = new();
 
-    /// <summary>Workspace-relative paths (see RelativePathOf) of every .cs file currently running - maintained from the script runner's events and re-applied to nodes after every Refresh() (which can recreate node instances). See ApplyRunningState.</summary>
+    /// <summary>Workspace-relative paths (see RelativePathOf) of every .cs file currently running - maintained from the script runner's events and re-applied to nodes after every Refresh() (which can recreate node instances). See ApplyRunningState. Includes a currently-running task's own child scripts (see OnScriptRunStarted), so HasRunningScripts stays accurate for those too.</summary>
     private readonly HashSet<string> runningScriptPaths = [];
+
+    /// <summary>Workspace-relative paths of every .task file currently running - the task counterpart to runningScriptPaths. Kept separate (rather than folded into it) because a task's own "running" span covers every batch from start to finish, including the brief gaps between batches where no individual child script is actually running - see OnTaskRunStarted/OnTaskRunCompleted.</summary>
+    private readonly HashSet<string> runningTaskPaths = [];
 
     /// <summary>Null while no .fileignore exists at the workspace root, in which case every node's FileIgnoreOverride is also left null (falling back to its own git Status.Ignored) - see ReloadFileIgnore/ResolveFileIgnore.</summary>
     private FileIgnoreMatcher? fileIgnoreMatcher;
@@ -53,7 +57,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool isInteractionBlocked;
 
-    /// <summary>True while any .cs file in this workspace has a run in flight - mirrors _runningScriptPaths.Count > 0, kept in sync from OnScriptRunStarted/OnScriptRunCompleted. Forwarded to GenerateTabViewModel.HasRunningScripts by WorkspaceViewModel, since AI work should only ever start while nothing else is running against the same working tree.</summary>
+    /// <summary>True while any .cs file or .task file in this workspace has a run in flight - mirrors runningScriptPaths/runningTaskPaths both being non-empty, kept in sync from OnScriptRunStarted/OnScriptRunCompleted/OnTaskRunStarted/OnTaskRunCompleted. Forwarded to GenerateTabViewModel.HasRunningScripts by WorkspaceViewModel, since AI work should only ever start while nothing else is running against the same working tree.</summary>
     [ObservableProperty]
     private bool hasRunningScripts;
 
@@ -131,6 +135,8 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         watcher.Changed += OnWatcherChanged;
         this.scriptRunner.ScriptRunStarted += OnScriptRunStarted;
         this.scriptRunner.ScriptRunCompleted += OnScriptRunCompleted;
+        this.scriptRunner.TaskRunStarted += OnTaskRunStarted;
+        this.scriptRunner.TaskRunCompleted += OnTaskRunCompleted;
         this.scriptRunner.Start();
         ReloadFileIgnore();
         Refresh();
@@ -267,6 +273,9 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     /// <summary>Raised when a .cs file's Run or View is picked - the containing workspace tab activates the Script tab and switches its dropdown to this script.</summary>
     public event Action<(string Path, string Name)>? ScriptOutputRequested;
+
+    /// <summary>Raised when a .task file's Run or View is picked - the containing workspace tab activates the Script tab and switches its dropdown to this task, seeding one sub-tab per script (see LoadTaskAsync/TaskFileParser).</summary>
+    public event Action<(string Path, string Name, IReadOnlyList<ScriptRef> Scripts)>? TaskOutputRequested;
 
     /// <summary>Set by WorkspaceViewModel - flushes the Edit tab's debounced autosave before a run actually starts, so Run always uses whatever's currently shown there instead of a stale on-disk copy still mid-debounce.</summary>
     public Func<Task>? FlushPendingEditBeforeRun { get; set; }
@@ -432,27 +441,32 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     }
 
 
-    /// <summary>Re-stamps IsScriptRunning on whatever node currently represents each still-running script path - Refresh() can recreate node instances (SyncChildren), so a running script's freshly-inserted node would otherwise default back to not-running.</summary>
+    /// <summary>Re-stamps IsScriptRunning on whatever node currently represents each still-running script or task path - Refresh() can recreate node instances (SyncChildren), so a running script's freshly-inserted node would otherwise default back to not-running.</summary>
     private void ReapplyRunningStates()
     {
         foreach (string path in runningScriptPaths)
         {
-            ApplyRunningState(RootNodes, path, running: true);
+            ApplyRunningState(RootNodes, path, running: true, isTask: false);
+        }
+
+        foreach (string path in runningTaskPaths)
+        {
+            ApplyRunningState(RootNodes, path, running: true, isTask: true);
         }
     }
 
-    private void ApplyRunningState(IEnumerable<FileTreeNodeViewModel> nodes, string scriptPath, bool running)
+    private void ApplyRunningState(IEnumerable<FileTreeNodeViewModel> nodes, string path, bool running, bool isTask)
     {
         foreach (FileTreeNodeViewModel node in nodes)
         {
-            if (node.IsScriptFile && RelativePathOf(node) == scriptPath)
+            if ((isTask ? node.IsTaskFile : node.IsScriptFile) && RelativePathOf(node) == path)
             {
                 node.IsScriptRunning = running;
             }
 
             if (node.IsDirectory)
             {
-                ApplyRunningState(node.Children, scriptPath, running);
+                ApplyRunningState(node.Children, path, running, isTask);
             }
         }
     }
@@ -647,18 +661,25 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// A script can only start while nothing else is already using the working tree: not this same script, not
-    /// a different one (only one script total runs at a time per workspace - see IWorkspaceScriptRunner.RunNowAsync),
-    /// and not a busy version action or an in-flight AI turn (IsInteractionBlocked).
+    /// A script or task can only start while nothing else is already using the working tree: not this same
+    /// script/task, not a different one (only one script or task total runs at a time per workspace - see
+    /// IWorkspaceScriptRunner.RunNowAsync/RunTaskNowAsync), and not a busy version action or an in-flight AI
+    /// turn (IsInteractionBlocked).
     /// </summary>
-    private bool CanRunScript(FileTreeNodeViewModel? node) => node is { IsScriptFile: true, IsScriptRunning: false } && !HasRunningScripts && !IsInteractionBlocked;
+    private bool CanRunScript(FileTreeNodeViewModel? node) => node is { IsRunnableFile: true, IsScriptRunning: false } && !HasRunningScripts && !IsInteractionBlocked;
 
-    private bool CanStopScript(FileTreeNodeViewModel? node) => node is { IsScriptFile: true, IsScriptRunning: true };
+    private bool CanStopScript(FileTreeNodeViewModel? node) => node is { IsRunnableFile: true, IsScriptRunning: true };
 
     /// <summary>AllowConcurrentExecutions is required: RunScriptCommand is one shared IAsyncRelayCommand instance across every row (bound via CommandParameter), and CommunityToolkit's default only allows one execution of a given async command in flight at a time regardless of parameter - without this, running script B while script A's run was still in flight would silently no-op instead of starting B.</summary>
     [RelayCommand(CanExecute = nameof(CanRunScript), AllowConcurrentExecutions = true)]
     private async Task RunScriptAsync(FileTreeNodeViewModel node)
     {
+        if (node.IsTaskFile)
+        {
+            await RunTaskAsync(node);
+            return;
+        }
+
         string scriptPath = RelativePathOf(node);
         string scriptName = Path.GetFileNameWithoutExtension(node.Name);
         ScriptOutputRequested?.Invoke((scriptPath, scriptName));
@@ -679,11 +700,71 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         await scriptRunner.RunNowAsync(new ScriptRef(scriptPath, scriptName));
     }
 
+    private async Task RunTaskAsync(FileTreeNodeViewModel node)
+    {
+        (string taskPath, string taskName, IReadOnlyList<IReadOnlyList<ScriptRef>> batches) = await LoadTaskAsync(node);
+        TaskOutputRequested?.Invoke((taskPath, taskName, [.. batches.SelectMany(batch => batch)]));
+
+        if (node.IsScriptRunning)
+        {
+            return; // already running (e.g. started elsewhere) - View was still worth raising above
+        }
+
+        if (FlushPendingEditBeforeRun is not null)
+        {
+            await FlushPendingEditBeforeRun();
+        }
+
+        await scriptRunner.RunTaskNowAsync(new TaskRef(taskPath, taskName), batches);
+    }
+
+    /// <summary>Reads and parses a .task file (see TaskFileParser) into the batches RunTaskNowAsync needs - a best-effort read, since View also needs this for a task that's never been run (an unreadable file just previews as empty rather than failing outright).</summary>
+    private async Task<(string Path, string Name, IReadOnlyList<IReadOnlyList<ScriptRef>> Batches)> LoadTaskAsync(FileTreeNodeViewModel node)
+    {
+        string taskPath = RelativePathOf(node);
+        string taskName = Path.GetFileNameWithoutExtension(node.Name);
+
+        string content;
+        try
+        {
+            content = await fileTreeService.ReadFileAsync(node.FullPath);
+        }
+        catch (IOException)
+        {
+            content = "";
+        }
+
+        IReadOnlyList<IReadOnlyList<ScriptRef>> batches = [.. taskFileParser.ParseBatches(content)
+            .Select(batch => (IReadOnlyList<ScriptRef>)[.. batch.Select(path => new ScriptRef(path, Path.GetFileNameWithoutExtension(path)))])];
+
+        return (taskPath, taskName, batches);
+    }
+
     [RelayCommand(CanExecute = nameof(CanStopScript))]
-    private void StopScript(FileTreeNodeViewModel node) => scriptRunner.StopRun(RelativePathOf(node));
+    private void StopScript(FileTreeNodeViewModel node)
+    {
+        if (node.IsTaskFile)
+        {
+            scriptRunner.StopTask(RelativePathOf(node));
+        }
+        else
+        {
+            scriptRunner.StopRun(RelativePathOf(node));
+        }
+    }
 
     [RelayCommand]
-    private void ViewScript(FileTreeNodeViewModel node) => ScriptOutputRequested?.Invoke((RelativePathOf(node), Path.GetFileNameWithoutExtension(node.Name)));
+    private async Task ViewScriptAsync(FileTreeNodeViewModel node)
+    {
+        if (node.IsTaskFile)
+        {
+            (string taskPath, string taskName, IReadOnlyList<IReadOnlyList<ScriptRef>> batches) = await LoadTaskAsync(node);
+            TaskOutputRequested?.Invoke((taskPath, taskName, [.. batches.SelectMany(batch => batch)]));
+            return;
+        }
+
+        ScriptOutputRequested?.Invoke((RelativePathOf(node), Path.GetFileNameWithoutExtension(node.Name)));
+    }
 
     /// <summary>
     /// Moves file/folder paths dragged in from outside the app (e.g. the OS's own file manager - see
@@ -841,19 +922,38 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     private void OnScriptRunStarted(ScriptRef script) => dispatcher.Post(() =>
     {
         runningScriptPaths.Add(script.Path);
-        ApplyRunningState(RootNodes, script.Path, running: true);
+        ApplyRunningState(RootNodes, script.Path, running: true, isTask: false);
         RunScriptCommand.NotifyCanExecuteChanged();
         StopScriptCommand.NotifyCanExecuteChanged();
-        HasRunningScripts = runningScriptPaths.Count > 0;
+        HasRunningScripts = runningScriptPaths.Count > 0 || runningTaskPaths.Count > 0;
     });
 
     private void OnScriptRunCompleted(ScriptRunRecord record) => dispatcher.Post(() =>
     {
         runningScriptPaths.Remove(record.FilePath);
-        ApplyRunningState(RootNodes, record.FilePath, running: false);
+        ApplyRunningState(RootNodes, record.FilePath, running: false, isTask: false);
         RunScriptCommand.NotifyCanExecuteChanged();
         StopScriptCommand.NotifyCanExecuteChanged();
-        HasRunningScripts = runningScriptPaths.Count > 0;
+        HasRunningScripts = runningScriptPaths.Count > 0 || runningTaskPaths.Count > 0;
+    });
+
+    /// <summary>Marks the .task file's own node running for its whole duration, start to finish across every batch - unlike runningScriptPaths (driven by each individual child script), this stays set through the brief gaps between batches where no child is actually running yet, so HasRunningScripts doesn't spuriously flip false between them.</summary>
+    private void OnTaskRunStarted(TaskRef task) => dispatcher.Post(() =>
+    {
+        runningTaskPaths.Add(task.Path);
+        ApplyRunningState(RootNodes, task.Path, running: true, isTask: true);
+        RunScriptCommand.NotifyCanExecuteChanged();
+        StopScriptCommand.NotifyCanExecuteChanged();
+        HasRunningScripts = runningScriptPaths.Count > 0 || runningTaskPaths.Count > 0;
+    });
+
+    private void OnTaskRunCompleted(TaskRunRecord record) => dispatcher.Post(() =>
+    {
+        runningTaskPaths.Remove(record.FilePath);
+        ApplyRunningState(RootNodes, record.FilePath, running: false, isTask: true);
+        RunScriptCommand.NotifyCanExecuteChanged();
+        StopScriptCommand.NotifyCanExecuteChanged();
+        HasRunningScripts = runningScriptPaths.Count > 0 || runningTaskPaths.Count > 0;
     });
 
     public void Dispose()
@@ -862,6 +962,8 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         watcher.Dispose();
         scriptRunner.ScriptRunStarted -= OnScriptRunStarted;
         scriptRunner.ScriptRunCompleted -= OnScriptRunCompleted;
+        scriptRunner.TaskRunStarted -= OnTaskRunStarted;
+        scriptRunner.TaskRunCompleted -= OnTaskRunCompleted;
         scriptRunner.Dispose();
         gitStatusRefreshThrottleCts?.Cancel();
     }

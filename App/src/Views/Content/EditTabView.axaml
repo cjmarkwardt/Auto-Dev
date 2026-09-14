@@ -182,11 +182,12 @@
                  old/new gutter numbers (each blank on whichever side that line doesn't exist on). Read-only by
                  construction - there's no editable control here at all, unlike the plain text editor above,
                  whose own IsReadOnly binding this mode doesn't need or use. -->
-            <ScrollViewer IsVisible="{Binding IsDiff}" Background="{DynamicResource EditorBackgroundBrush}">
+            <ScrollViewer IsVisible="{Binding IsDiff}" Background="{DynamicResource EditorBackgroundBrush}"
+                          HorizontalScrollBarVisibility="Auto">
                 <ItemsControl ItemsSource="{Binding DiffLines}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="vm:DiffLine">
-                            <Grid ColumnDefinitions="44,44,Auto,*" Classes.diffAdded="{Binding Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Added}"
+                            <Grid ColumnDefinitions="44,44,Auto,Auto" Classes.diffAdded="{Binding Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Added}"
                                   Classes.diffRemoved="{Binding Kind, Converter={x:Static aconv:EnumEqualsConverter.Instance}, ConverterParameter=Removed}">
                                 <TextBlock Grid.Column="0" Text="{Binding OldLineNumber}" FontFamily="Cascadia Code,Consolas,DejaVu Sans Mono,Liberation Mono,monospace"
                                            FontSize="12" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" Padding="0,0,8,0" />

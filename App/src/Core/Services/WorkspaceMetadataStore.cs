@@ -12,6 +12,7 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
     private static readonly string generateDraftsFileName = "generate-drafts.json";
     private static readonly string generateRequestsFileName = "generate-requests.json";
     private static readonly string scriptRunsDirName = "script-runs";
+    private static readonly string taskRunsDirName = "task-runs";
 
     public void EnsureInitialized(string workspacePath)
     {
@@ -31,7 +32,7 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
     public async Task<List<ScriptRunRecord>> LoadScriptRunsAsync(string workspacePath, string scriptPath, CancellationToken cancellationToken = default)
     {
         string dir = Path.Combine(LocalDir(workspacePath), scriptRunsDirName, SanitizeScriptFolder(scriptPath));
-        List<ScriptRunRecord> records = await LoadRunRecordsInFolderAsync(dir, cancellationToken);
+        List<ScriptRunRecord> records = await LoadRecordsInFolderAsync<ScriptRunRecord>(dir, cancellationToken);
         // Filters by exact FilePath match as a safeguard against a (practically impossible) sanitize collision
         // between two different paths landing in the same folder.
         return [.. records.Where(r => r.FilePath == scriptPath).OrderByDescending(r => r.StartedAt)];
@@ -48,8 +49,10 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
         Dictionary<string, ScriptRef> refs = new Dictionary<string, ScriptRef>();
         foreach (string folder in Directory.EnumerateDirectories(root))
         {
-            List<ScriptRunRecord> records = await LoadRunRecordsInFolderAsync(folder, cancellationToken);
-            ScriptRunRecord? newest = records.OrderByDescending(r => r.StartedAt).FirstOrDefault();
+            List<ScriptRunRecord> records = await LoadRecordsInFolderAsync<ScriptRunRecord>(folder, cancellationToken);
+            // Only a standalone (TaskId null) run counts - a script that has only ever run as part of a task
+            // is reached exclusively through that task's own dropdown entry, never a top-level one of its own.
+            ScriptRunRecord? newest = records.Where(r => r.TaskId is null).OrderByDescending(r => r.StartedAt).FirstOrDefault();
             if (newest is not null)
             {
                 refs[newest.FilePath] = new ScriptRef(newest.FilePath, newest.FileName);
@@ -59,20 +62,76 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
         return [.. refs.Values];
     }
 
-    private static async Task<List<ScriptRunRecord>> LoadRunRecordsInFolderAsync(string dir, CancellationToken cancellationToken)
+    public void DeleteScriptRuns(string workspacePath, string scriptPath)
+    {
+        string dir = Path.Combine(LocalDir(workspacePath), scriptRunsDirName, SanitizeScriptFolder(scriptPath));
+        if (Directory.Exists(dir))
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    public async Task AppendTaskRunAsync(string workspacePath, TaskRunRecord record, CancellationToken cancellationToken = default)
+    {
+        string dir = Path.Combine(LocalDir(workspacePath), taskRunsDirName, SanitizeScriptFolder(record.FilePath));
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, $"{record.Id}.json");
+        await using FileStream stream = File.Create(path);
+        await JsonSerializer.SerializeAsync(stream, record, AppJson.Options, cancellationToken);
+    }
+
+    public async Task<List<TaskRunRecord>> LoadTaskRunsAsync(string workspacePath, string taskPath, CancellationToken cancellationToken = default)
+    {
+        string dir = Path.Combine(LocalDir(workspacePath), taskRunsDirName, SanitizeScriptFolder(taskPath));
+        List<TaskRunRecord> records = await LoadRecordsInFolderAsync<TaskRunRecord>(dir, cancellationToken);
+        return [.. records.Where(r => r.FilePath == taskPath).OrderByDescending(r => r.StartedAt)];
+    }
+
+    public async Task<IReadOnlyList<TaskRunRecord>> LoadRunTaskRefsAsync(string workspacePath, CancellationToken cancellationToken = default)
+    {
+        string root = Path.Combine(LocalDir(workspacePath), taskRunsDirName);
+        if (!Directory.Exists(root))
+        {
+            return [];
+        }
+
+        Dictionary<string, TaskRunRecord> refs = new Dictionary<string, TaskRunRecord>();
+        foreach (string folder in Directory.EnumerateDirectories(root))
+        {
+            List<TaskRunRecord> records = await LoadRecordsInFolderAsync<TaskRunRecord>(folder, cancellationToken);
+            TaskRunRecord? newest = records.OrderByDescending(r => r.StartedAt).FirstOrDefault();
+            if (newest is not null)
+            {
+                refs[newest.FilePath] = newest;
+            }
+        }
+
+        return [.. refs.Values];
+    }
+
+    public void DeleteTaskRuns(string workspacePath, string taskPath)
+    {
+        string dir = Path.Combine(LocalDir(workspacePath), taskRunsDirName, SanitizeScriptFolder(taskPath));
+        if (Directory.Exists(dir))
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static async Task<List<TRecord>> LoadRecordsInFolderAsync<TRecord>(string dir, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(dir))
         {
             return [];
         }
 
-        List<ScriptRunRecord> records = new List<ScriptRunRecord>();
+        List<TRecord> records = new List<TRecord>();
         foreach (string file in Directory.EnumerateFiles(dir, "*.json"))
         {
             try
             {
                 await using FileStream stream = File.OpenRead(file);
-                ScriptRunRecord? record = await JsonSerializer.DeserializeAsync<ScriptRunRecord>(stream, AppJson.Options, cancellationToken);
+                TRecord? record = await JsonSerializer.DeserializeAsync<TRecord>(stream, AppJson.Options, cancellationToken);
                 if (record is not null)
                 {
                     records.Add(record);
@@ -87,7 +146,7 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
         return records;
     }
 
-    /// <summary>Turns a .cs file's workspace-relative path into a filesystem-safe directory name for its run-history folder - replaces path separators and anything outside [A-Za-z0-9._-] with '_'. Opaque but deterministic; the original path is still recorded inside each ScriptRunRecord, so nothing depends on reversing this.</summary>
+    /// <summary>Turns a .cs or .task file's workspace-relative path into a filesystem-safe directory name for its run-history folder - replaces path separators and anything outside [A-Za-z0-9._-] with '_'. Opaque but deterministic; the original path is still recorded inside each record, so nothing depends on reversing this.</summary>
     private static string SanitizeScriptFolder(string scriptPath)
     {
         IEnumerable<char> chars = scriptPath.Select(c => c is '/' or '\\' ? '_' : (char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '_'));

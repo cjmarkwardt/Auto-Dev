@@ -18,8 +18,20 @@ public interface IWorkspaceMetadataStore
     Task AppendScriptRunAsync(string workspacePath, ScriptRunRecord record, CancellationToken cancellationToken = default);
     Task<List<ScriptRunRecord>> LoadScriptRunsAsync(string workspacePath, string scriptPath, CancellationToken cancellationToken = default);
 
-    /// <summary>Every script with at least one run recorded, newest-run-first - lets the Script tab re-seed its dropdown on load without a central script registry to enumerate.</summary>
+    /// <summary>Every standalone script (TaskId null) with at least one run recorded, newest-run-first - lets the Script tab re-seed its top-level dropdown on load without a central script registry to enumerate. Excludes a script that has only ever run as part of a task - see ScriptRunRecord.TaskId.</summary>
     Task<IReadOnlyList<ScriptRef>> LoadRunScriptRefsAsync(string workspacePath, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes every persisted run for a script - used when removing its entry from the Script tab dropdown (see ScriptTabViewModel.RemoveEntry) so it doesn't reappear on the next LoadRunScriptRefsAsync seed. A no-op if none exist.</summary>
+    void DeleteScriptRuns(string workspacePath, string scriptPath);
+
+    Task AppendTaskRunAsync(string workspacePath, TaskRunRecord record, CancellationToken cancellationToken = default);
+    Task<List<TaskRunRecord>> LoadTaskRunsAsync(string workspacePath, string taskPath, CancellationToken cancellationToken = default);
+
+    /// <summary>Every .task file with at least one run recorded, each as its own newest TaskRunRecord (carrying the script list needed to rebuild its sub-tabs) - the task counterpart to LoadRunScriptRefsAsync.</summary>
+    Task<IReadOnlyList<TaskRunRecord>> LoadRunTaskRefsAsync(string workspacePath, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes every persisted run for a .task file - the task counterpart to DeleteScriptRuns.</summary>
+    void DeleteTaskRuns(string workspacePath, string taskPath);
 
     /// <summary>Generate conversations are keyed by feature branch name - each feature gets its own independent session, resumed when you switch back to it.</summary>
     Task<string?> LoadGenerateSessionIdAsync(string workspacePath, string sessionKey, CancellationToken cancellationToken = default);

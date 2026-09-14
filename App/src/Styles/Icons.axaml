@@ -6,6 +6,10 @@
          Files section's tree (see FileTreeNodeViewModel.IsScriptFile) as runnable, in place of the plain file
          icon every other file gets. -->
     <Geometry x:Key="ScriptFileIconGeometry">M4,1 L10,1 L13,4 L13,15 L4,15 Z M10,1 L10,4 L13,4 M6.5,7.5 L6.5,11.5 L10,9.5 Z</Geometry>
+    <!-- FileIconGeometry's dog-eared-corner shape plus two small stacked play triangles - marks a .task file in
+         the Files section's tree (see FileTreeNodeViewModel.IsTaskFile) as a group of runnable scripts, in
+         place of ScriptFileIconGeometry's single triangle for one .cs file. -->
+    <Geometry x:Key="TaskFileIconGeometry">M4,1 L10,1 L13,4 L13,15 L4,15 Z M10,1 L10,4 L13,4 M6,6 L6,8.5 L8.5,7.25 Z M6,9.5 L6,12 L8.5,10.75 Z</Geometry>
     <!-- Bounding box deliberately pinned to a 12x12 square (matching this icon's own Path Width/Height in
          FilesSectionView.axaml's tree rows) so Stretch="Uniform" doesn't distort it - the original shape's
          bounding box was 14 wide x 9 tall, rendering visibly shorter than FileIconGeometry's own box-filling

@@ -3,6 +3,21 @@
              xmlns:vm="using:AutoDev.ViewModels.Content"
              x:Class="AutoDev.Views.Content.ScriptTabView"
              x:DataType="vm:ScriptTabViewModel">
+    <UserControl.Styles>
+        <!-- One sub-tab per script in the currently-selected task (see the ItemsControl below) - a plain
+             Button per AGENTS.md's "prefer a dedicated RelayCommand over a control's own built-in selection"
+             rule, with IsSelected (set explicitly by ScriptTabViewModel, not inferred from a control's own
+             SelectedItem) driving which one currently reads as active. -->
+        <Style Selector="Button.scriptSubTab">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="Button.scriptSubTab.active">
+            <Setter Property="Background" Value="{DynamicResource SelectionBackgroundBrush}" />
+        </Style>
+    </UserControl.Styles>
     <DockPanel>
         <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}"
                 BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1"
@@ -11,14 +26,55 @@
                       HorizontalAlignment="Stretch" PlaceholderText="Select a script…">
                 <ComboBox.ItemTemplate>
                     <DataTemplate DataType="vm:ScriptEntry">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}"
-                                       VerticalAlignment="Center" IsVisible="{Binding IsRunning}" />
-                            <TextBlock Text="{Binding Name}" FontSize="12" />
-                        </StackPanel>
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Grid.Column="0" Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}"
+                                       VerticalAlignment="Center" Margin="0,0,6,0" IsVisible="{Binding IsRunning}" />
+                            <!-- Id is the workspace-relative path (see ScriptEntry) - shown here in full,
+                                 rather than Name (just the filename), so two same-named scripts in different
+                                 folders read as distinct entries. -->
+                            <TextBlock Grid.Column="1" Text="{Binding Id}" FontSize="12" VerticalAlignment="Center" />
+                            <!-- Hidden (not just disabled) while running - RemoveEntryCommand refuses a
+                                 running entry anyway (see ScriptTabViewModel.CanRemoveEntry), but stopping it
+                                 first is the point: an in-flight run has nowhere else to be viewed/stopped
+                                 from once its entry is gone. -->
+                            <Button Grid.Column="2" Classes="iconButton" ToolTip.Tip="Remove"
+                                    Margin="6,0,0,0" IsVisible="{Binding !IsRunning}"
+                                    Command="{Binding $parent[UserControl].((vm:ScriptTabViewModel)DataContext).RemoveEntryCommand}"
+                                    CommandParameter="{Binding}">
+                                <Path Classes="lineIcon" Data="{StaticResource CloseIconGeometry}" Width="9" Height="9" />
+                            </Button>
+                        </Grid>
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
+        </Border>
+
+        <!-- Only shown while the selected dropdown entry is a task (see ScriptEntry.IsTask/Children) - one
+             sub-tab per script it runs, letting each be viewed independently while Stop (below) still applies
+             to the whole task regardless of which one is currently showing. -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1"
+                Padding="6,4" IsVisible="{Binding SelectedEntry.IsTask}">
+            <ItemsControl ItemsSource="{Binding SelectedEntry.Children}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="2" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:ScriptEntry">
+                        <Button Classes="scriptSubTab" Classes.active="{Binding IsSelected}"
+                                Command="{Binding $parent[UserControl].((vm:ScriptTabViewModel)DataContext).SelectChildTabCommand}"
+                                CommandParameter="{Binding}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="●" FontSize="8" Foreground="{DynamicResource AccentBrush}"
+                                           VerticalAlignment="Center" IsVisible="{Binding IsRunning}" />
+                                <TextBlock Text="{Binding Name}" FontSize="12" />
+                            </StackPanel>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
         </Border>
 
         <Border DockPanel.Dock="Top" Background="{DynamicResource HeaderBackgroundBrush}" Padding="10,4"
@@ -41,8 +97,12 @@
                     <Button Classes="iconButton" ToolTip.Tip="Copy Output" Command="{Binding CopyOutputCommand}">
                         <Path Classes="lineIcon" Data="{StaticResource CopyIconGeometry}" Width="13" Height="13" />
                     </Button>
+                    <!-- Bound to SelectedEntry.IsRunning (not ShowRunning, which tracks only the currently
+                         displayed sub-tab) so Stop stays visible for a whole task while it's still in
+                         progress even if the specific script currently being viewed has already finished -
+                         see ScriptTabViewModel.CanStop's own doc comment. -->
                     <Button Classes="sidebarAction" Content="Stop" Command="{Binding StopCommand}"
-                            IsVisible="{Binding ShowRunning}" ToolTip.Tip="Forcefully stop this script" />
+                            IsVisible="{Binding SelectedEntry.IsRunning}" ToolTip.Tip="Forcefully stop this script" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -65,7 +125,7 @@
              child (LastChildFill) - these two are mutually-exclusive alternates for the same body area, so
              they're grouped in their own Grid where every child gets the full remaining space to center in. -->
         <Grid>
-            <TextBlock Text="No script selected. Pick one from the dropdown above, or right-click a .cs file in the sidebar and choose View."
+            <TextBlock Text="No script selected. Pick one from the dropdown above, or right-click a .cs or .task file in the sidebar and choose View."
                        IsVisible="{Binding !HasScript}" TextWrapping="Wrap" TextAlignment="Center" Margin="24,0"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        Foreground="{DynamicResource TextMutedBrush}" FontSize="13" />
