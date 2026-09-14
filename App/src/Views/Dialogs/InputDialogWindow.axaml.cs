@@ -6,7 +6,7 @@ namespace AutoDev.Views.Dialogs;
 
 public partial class InputDialogWindow : Window
 {
-    private bool _closeAllowed;
+    private bool closeAllowed;
 
     public InputDialogWindow()
     {
@@ -22,7 +22,7 @@ public partial class InputDialogWindow : Window
         {
             vm.RequestClose += confirmed =>
             {
-                _closeAllowed = true;
+                closeAllowed = true;
                 Close(confirmed ? vm.Value : null);
             };
         }
@@ -34,7 +34,7 @@ public partial class InputDialogWindow : Window
     // the native close button, Escape, and Alt+F4 so a value can't be skipped by dismissing the window instead.
     private void OnClosing(object? sender, WindowClosingEventArgs e)
     {
-        if (!_closeAllowed && DataContext is InputDialogViewModel { RequireValue: true })
+        if (!closeAllowed && DataContext is InputDialogViewModel { RequireValue: true })
         {
             e.Cancel = true;
         }

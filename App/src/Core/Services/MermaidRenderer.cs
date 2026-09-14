@@ -22,7 +22,7 @@ public static class MermaidRenderer
     /// background. Spelling out literal hex values for every role sidesteps needing color-mix() support at
     /// all.
     /// </summary>
-    private static readonly Mermaider.Models.RenderOptions DarkOptions = new()
+    private static readonly Mermaider.Models.RenderOptions darkOptions = new()
     {
         Bg = "#2D2D2D",
         Fg = "#CCCCCC",
@@ -42,14 +42,14 @@ public static class MermaidRenderer
     /// rasterization, PNG encode, disk cache) ever seeing a failure to blame it on. Capped conservatively
     /// under the lowest common GPU limit rather than the source diagram's own literal size.
     /// </summary>
-    private const int MaxDimension = 8000;
+    private static readonly int maxDimension = 8000;
 
     /// <summary>Renders Mermaid source to PNG bytes, or null if Mermaider/Svg.Skia fails to parse/render it (e.g. an unsupported diagram type) - callers should leave the original fenced block untouched on null rather than show a broken image.</summary>
     public static byte[]? TryRender(string mermaidSource)
     {
         try
         {
-            string svgText = Mermaider.MermaidRenderer.RenderSvg(mermaidSource, DarkOptions);
+            string svgText = Mermaider.MermaidRenderer.RenderSvg(mermaidSource, darkOptions);
 
             using SKSvg svg = new SKSvg();
             if (svg.FromSvg(svgText) is null || svg.Picture is null)
@@ -59,7 +59,7 @@ public static class MermaidRenderer
 
             SKRect bounds = svg.Picture.CullRect;
             float largestDimension = Math.Max(bounds.Width, bounds.Height);
-            float scale = largestDimension > MaxDimension ? MaxDimension / largestDimension : 1f;
+            float scale = largestDimension > maxDimension ? maxDimension / largestDimension : 1f;
 
             using MemoryStream stream = new MemoryStream();
             svg.Picture.ToImage(stream, SKColors.Transparent, SKEncodedImageFormat.Png, 100, scale, scale,

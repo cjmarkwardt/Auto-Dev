@@ -13,41 +13,41 @@ public enum FileSearchMode
 /// <summary>F1 quick-open/content-search overlay: FileName mode fuzzy-searches every file in the workspace by name; Content mode searches file contents instead - see ToggleMode. Ignore-filtering matches the Files section's own tree exactly, including its "Show Ignored Files" toggle - see LoadFilesAsync.</summary>
 public sealed partial class FileSearchViewModel : ViewModelBase
 {
-    private const int MaxResults = 50;
-    private const int MaxContentResults = 200;
-    private static readonly TimeSpan ContentSearchDebounce = TimeSpan.FromMilliseconds(200);
+    private static readonly int maxResults = 50;
+    private static readonly int maxContentResults = 200;
+    private static readonly TimeSpan contentSearchDebounce = TimeSpan.FromMilliseconds(200);
 
-    private readonly string _workspacePath;
-    private readonly IGitService _gitService;
-    private readonly FilesSectionViewModel _files;
-    private List<string> _allFiles = [];
+    private readonly string workspacePath;
+    private readonly IGitService gitService;
+    private readonly FilesSectionViewModel files;
+    private List<string> allFiles = [];
 
     /// <summary>Bumped on every Open() and checked after the ignore-filter's await - guards against a slower-finishing call from an earlier Open() (e.g. F1 pressed, closed, pressed again quickly) overwriting a newer one's results.</summary>
-    private int _openToken;
+    private int openToken;
 
-    private CancellationTokenSource? _contentSearchCts;
+    private CancellationTokenSource? contentSearchCts;
 
     public FileSearchViewModel(string workspacePath, IGitService gitService, FilesSectionViewModel files)
     {
-        _workspacePath = workspacePath;
-        _gitService = gitService;
-        _files = files;
+        this.workspacePath = workspacePath;
+        this.gitService = gitService;
+        this.files = files;
     }
 
     [ObservableProperty]
-    private bool _isOpen;
+    private bool isOpen;
 
     [ObservableProperty]
-    private string _query = "";
+    private string query = "";
 
     [ObservableProperty]
-    private FileSearchMode _mode = FileSearchMode.FileName;
+    private FileSearchMode mode = FileSearchMode.FileName;
 
     [ObservableProperty]
-    private FileSearchResultViewModel? _selectedResult;
+    private FileSearchResultViewModel? selectedResult;
 
     [ObservableProperty]
-    private ContentSearchResultViewModel? _selectedContentResult;
+    private ContentSearchResultViewModel? selectedContentResult;
 
     public ObservableCollection<FileSearchResultViewModel> Results { get; } = [];
     public ObservableCollection<ContentSearchResultViewModel> ContentResults { get; } = [];
@@ -75,7 +75,7 @@ public sealed partial class FileSearchViewModel : ViewModelBase
         SelectedResult = null;
         SelectedContentResult = null;
         IsOpen = true;
-        _ = LoadFilesAsync(++_openToken);
+        _ = LoadFilesAsync(++openToken);
     }
 
     /// <summary>F1 pressed again while already open - flips between filename and content search, keeping the overlay open with a cleared query.</summary>
@@ -91,10 +91,10 @@ public sealed partial class FileSearchViewModel : ViewModelBase
 
     private async Task LoadFilesAsync(int token)
     {
-        List<string> candidates = EnumerateFiles(_workspacePath);
+        List<string> candidates = EnumerateFiles(workspacePath);
 
         List<string> filtered;
-        if (_files.ShowIgnoredFiles)
+        if (files.ShowIgnoredFiles)
         {
             // Matches the Files section's own tree exactly - with its "Show Ignored Files" toggle on,
             // everything shows there (dimmed but present, see FileTreeNodeViewModel.IsIgnored), so search
@@ -103,7 +103,7 @@ public sealed partial class FileSearchViewModel : ViewModelBase
             // re-evaluated - the same moment the file list itself gets rebuilt from scratch.
             filtered = candidates;
         }
-        else if (FileIgnoreMatcher.LoadForWorkspace(_workspacePath) is { } fileIgnoreMatcher)
+        else if (FileIgnoreMatcher.LoadForWorkspace(workspacePath) is { } fileIgnoreMatcher)
         {
             // .fileignore, when present, takes over from .gitignore entirely for what this app itself
             // considers visible - same as the Files section's own tree (see
@@ -111,20 +111,20 @@ public sealed partial class FileSearchViewModel : ViewModelBase
             // is discoverable here again, and one .fileignore hides that .gitignore wouldn't have is excluded
             // from search too, not just dimmed in the tree, since the whole point of .fileignore is
             // controlling what this app surfaces at all.
-            filtered = [.. candidates.Where(f => !fileIgnoreMatcher.IsMatch(Path.GetRelativePath(_workspacePath, f), isDirectory: false))];
+            filtered = [.. candidates.Where(f => !fileIgnoreMatcher.IsMatch(Path.GetRelativePath(workspacePath, f), isDirectory: false))];
         }
         else
         {
-            IReadOnlySet<string> ignored = await _gitService.GetIgnoredPathsAsync(_workspacePath, candidates);
+            IReadOnlySet<string> ignored = await gitService.GetIgnoredPathsAsync(workspacePath, candidates);
             filtered = ignored.Count == 0 ? candidates : [.. candidates.Where(f => !ignored.Contains(f))];
         }
 
-        if (token != _openToken)
+        if (token != openToken)
         {
             return; // superseded by a newer Open() call
         }
 
-        _allFiles = filtered;
+        allFiles = filtered;
         UpdateResults();
     }
 
@@ -146,17 +146,17 @@ public sealed partial class FileSearchViewModel : ViewModelBase
     {
         Results.Clear();
 
-        IEnumerable<(string Path, string Relative, int Score)> ranked = _allFiles
+        IEnumerable<(string Path, string Relative, int Score)> ranked = allFiles
             .Select(path =>
             {
-                string relative = Path.GetRelativePath(_workspacePath, path).Replace(Path.DirectorySeparatorChar, '/');
+                string relative = Path.GetRelativePath(workspacePath, path).Replace(Path.DirectorySeparatorChar, '/');
                 string fileName = Path.GetFileName(path);
                 return (Path: path, Relative: relative, Score: Score(relative, fileName, Query));
             })
             .Where(x => Query.Length == 0 || x.Score > 0)
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.Relative, StringComparer.OrdinalIgnoreCase)
-            .Take(MaxResults);
+            .Take(maxResults);
 
         foreach ((string? path, string? relative, int _) in ranked)
         {
@@ -168,7 +168,7 @@ public sealed partial class FileSearchViewModel : ViewModelBase
 
     private void ScheduleContentSearch()
     {
-        _contentSearchCts?.Cancel();
+        contentSearchCts?.Cancel();
         ContentResults.Clear();
         SelectedContentResult = null;
 
@@ -178,7 +178,7 @@ public sealed partial class FileSearchViewModel : ViewModelBase
         }
 
         CancellationTokenSource cts = new CancellationTokenSource();
-        _contentSearchCts = cts;
+        contentSearchCts = cts;
         _ = DebounceContentSearchAsync(Query, cts.Token);
     }
 
@@ -186,7 +186,7 @@ public sealed partial class FileSearchViewModel : ViewModelBase
     {
         try
         {
-            await Task.Delay(ContentSearchDebounce, cancellationToken);
+            await Task.Delay(contentSearchDebounce, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -200,14 +200,14 @@ public sealed partial class FileSearchViewModel : ViewModelBase
     {
         // _allFiles is the same ignore-filtered candidate list LoadFilesAsync already built on Open() -
         // content search only ever searches what filename search would also find.
-        List<string> candidates = _allFiles;
+        List<string> candidates = allFiles;
 
         List<ContentSearchResultViewModel> results = await Task.Run(() =>
         {
             List<ContentSearchResultViewModel> found = new List<ContentSearchResultViewModel>();
             foreach (string path in candidates)
             {
-                if (cancellationToken.IsCancellationRequested || found.Count >= MaxContentResults)
+                if (cancellationToken.IsCancellationRequested || found.Count >= maxContentResults)
                 {
                     break;
                 }
@@ -227,10 +227,10 @@ public sealed partial class FileSearchViewModel : ViewModelBase
                     continue; // unreadable (permissions, bad encoding, deleted mid-scan) - skip
                 }
 
-                string relative = Path.GetRelativePath(_workspacePath, path).Replace(Path.DirectorySeparatorChar, '/');
+                string relative = Path.GetRelativePath(workspacePath, path).Replace(Path.DirectorySeparatorChar, '/');
                 for (int i = 0; i < lines.Count; i++)
                 {
-                    if (found.Count >= MaxContentResults)
+                    if (found.Count >= maxContentResults)
                     {
                         break;
                     }

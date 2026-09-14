@@ -19,10 +19,10 @@ namespace AutoDev.ViewModels.Sidebar;
 public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
 {
     /// <summary>Safety cap on the rebase/merge-conflict auto-resolution loop, so a conflict Claude can't actually resolve doesn't spin forever - see ResolveConflictsAsync.</summary>
-    private const int MaxConflictResolutionAttempts = 3;
+    private static readonly int maxConflictResolutionAttempts = 3;
 
     /// <summary>How often the background remote sync (fetch/prune/non-current-branch reset - see WorkspaceVersioningService.SyncWithRemoteAsync, folded into every RefreshAsync) runs even with no user action.</summary>
-    private static readonly TimeSpan PeriodicSyncInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan periodicSyncInterval = TimeSpan.FromSeconds(60);
 
     private readonly IWorkspaceVersioningService versioningService;
     private readonly IDialogService dialogService;
@@ -51,7 +51,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         generate.TurnPaused += OnGenerateTurnPaused;
         generate.TurnResumed += OnGenerateTurnResumed;
 
-        periodicSyncTimer = new System.Timers.Timer(PeriodicSyncInterval) { AutoReset = true };
+        periodicSyncTimer = new System.Timers.Timer(periodicSyncInterval) { AutoReset = true };
         periodicSyncTimer.Elapsed += (_, _) =>
         {
             if (!IsInteractionBlocked)
@@ -67,32 +67,32 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Whatever IsAiWorking was the moment a hidden turn started (see OnGenerateHiddenTurnStarted/Finished) - null while no hidden turn is in flight. Restoring to this, rather than blindly clearing IsAiWorking, keeps the workspace locked afterward when the hidden turn was nested inside an already-locked flow.</summary>
-    private bool? _wasAiWorkingBeforeHiddenTurn;
+    private bool? wasAiWorkingBeforeHiddenTurn;
 
     [ObservableProperty]
-    private GitTarget? _target;
+    private GitTarget? target;
 
     [ObservableProperty]
-    private bool _hasPendingChanges;
+    private bool hasPendingChanges;
 
     [ObservableProperty]
-    private bool _isBusy;
+    private bool isBusy;
 
     /// <summary>True once the current busy action has failed (see MarkFailed) - the overlay swaps its Cancel button for Confirm and stops auto-closing once the action itself finishes, so the user always gets a chance to actually read GitOutputLog before it disappears. Reset at the start of every RunBusyAsync call.</summary>
     [ObservableProperty]
-    private bool _isBusyFailed;
+    private bool isBusyFailed;
 
     /// <summary>True from the moment a user submits a Generate message until the turn finishes - see OnGenerateNormalTurnStarted/Completed. Drives IsInteractionBlocked, which locks the sidebar sections and (via WorkspaceViewModel/WorkspaceContentViewModel) the Edit tab and History tab's controls.</summary>
     [ObservableProperty]
-    private bool _isAiWorking;
+    private bool isAiWorking;
 
     /// <summary>Set by WorkspaceViewModel from FilesSectionViewModel.HasRunningScripts - true while any .cs file in this workspace is running. Folded into IsInteractionBlocked so a running script locks Commit/Merge/etc. here and every History tab action exactly like a busy version action or an in-flight AI turn already does: manual editing, script running, and AI working are meant to be mutually exclusive states over the same working tree.</summary>
     [ObservableProperty]
-    private bool _hasRunningScripts;
+    private bool hasRunningScripts;
 
     /// <summary>True while the active Generate turn is paused (GenerateTabViewModel.TurnPaused/TurnResumed) - IsAiWorking stays true the whole time too (see OnGenerateNormalTurnStarted/Completed, deliberately not fired around a pause), so the workspace stays exactly as locked as it was while genuinely working; this only distinguishes the bottom status bar's own "AI is paused" text from "AI work in progress…" (see MainShellView.axaml).</summary>
     [ObservableProperty]
-    private bool _isAiPaused;
+    private bool isAiPaused;
 
     /// <summary>The current busy action's own live git command log (command lines plus their output) - see RunBusyAsync/GitCommandLogSink. Shown in the busy overlay; cleared at the start of every new action.</summary>
     public ObservableCollection<string> GitOutputLog { get; } = [];
@@ -165,14 +165,14 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
     /// <summary>Locks the workspace down for a hidden turn exactly like a visible one - see OnGenerateHiddenTurnFinished.</summary>
     private void OnGenerateHiddenTurnStarted()
     {
-        _wasAiWorkingBeforeHiddenTurn ??= IsAiWorking;
+        wasAiWorkingBeforeHiddenTurn ??= IsAiWorking;
         IsAiWorking = true;
     }
 
     private void OnGenerateHiddenTurnFinished()
     {
-        IsAiWorking = _wasAiWorkingBeforeHiddenTurn ?? false;
-        _wasAiWorkingBeforeHiddenTurn = null;
+        IsAiWorking = wasAiWorkingBeforeHiddenTurn ?? false;
+        wasAiWorkingBeforeHiddenTurn = null;
     }
 
     /// <summary>Called once when a workspace tab is opened - silently creates the repo (git init + the initial "main" branch) if one doesn't exist yet, then reads the current target and starts the periodic background sync.</summary>
@@ -414,7 +414,7 @@ public sealed partial class VersionSectionViewModel : ViewModelBase, IDisposable
         SwitchToGenerateRequested?.Invoke();
         try
         {
-            for (int attempt = 0; outcome == GitOperationOutcome.Conflicts && attempt < MaxConflictResolutionAttempts; attempt++)
+            for (int attempt = 0; outcome == GitOperationOutcome.Conflicts && attempt < maxConflictResolutionAttempts; attempt++)
             {
                 IReadOnlyList<string> conflictedFiles = await versioningService.GetConflictedFilesAsync(cancellationToken);
                 string instruction = buildInstruction(conflictedFiles);

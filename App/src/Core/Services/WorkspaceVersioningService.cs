@@ -4,7 +4,7 @@ namespace AutoDev.Core.Services;
 
 public sealed class WorkspaceVersioningService(string workspacePath, IGitService git) : IWorkspaceVersioningService
 {
-    private const string LocalExcludePattern = ".autodev/local/";
+    private static readonly string localExcludePattern = ".autodev/local/";
 
     public async Task<bool> IsRepoInitializedAsync(CancellationToken cancellationToken = default)
     {
@@ -52,13 +52,13 @@ public sealed class WorkspaceVersioningService(string workspacePath, IGitService
         }
 
         string existing = File.Exists(excludePath) ? await File.ReadAllTextAsync(excludePath, cancellationToken) : "";
-        if (existing.Split('\n').Any(line => line.Trim() == LocalExcludePattern))
+        if (existing.Split('\n').Any(line => line.Trim() == localExcludePattern))
         {
             return;
         }
 
         string separator = existing.Length > 0 && !existing.EndsWith('\n') ? "\n" : "";
-        await File.AppendAllTextAsync(excludePath, $"{separator}{LocalExcludePattern}\n", cancellationToken);
+        await File.AppendAllTextAsync(excludePath, $"{separator}{localExcludePattern}\n", cancellationToken);
     }
 
     public async Task<GitTarget?> GetCurrentTargetAsync(CancellationToken cancellationToken = default)

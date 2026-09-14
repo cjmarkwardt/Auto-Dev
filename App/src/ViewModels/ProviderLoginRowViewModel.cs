@@ -12,18 +12,18 @@ namespace AutoDev.ViewModels;
 /// </summary>
 public sealed partial class ProviderLoginRowViewModel(IAiAuthService authService) : ViewModelBase
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan PollTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan pollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan pollTimeout = TimeSpan.FromMinutes(5);
 
     public AiProvider Provider => authService.Provider;
 
     public string LoginButtonLabel => $"Sign in with {authService.Provider.DisplayName()}";
 
     [ObservableProperty]
-    private bool _isBusy;
+    private bool isBusy;
 
     [ObservableProperty]
-    private string _statusMessage = "";
+    private string statusMessage = "";
 
     public event Action? Authenticated;
 
@@ -34,10 +34,10 @@ public sealed partial class ProviderLoginRowViewModel(IAiAuthService authService
         StatusMessage = "Opening browser to sign in…";
         _ = authService.LoginAsync();
 
-        DateTimeOffset deadline = DateTimeOffset.UtcNow + PollTimeout;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + pollTimeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
-            await Task.Delay(PollInterval);
+            await Task.Delay(pollInterval);
             AiAuthStatus status = await authService.GetStatusAsync();
             if (status.LoggedIn)
             {

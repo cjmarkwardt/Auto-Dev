@@ -12,22 +12,22 @@ namespace AutoDev.Views;
 
 public partial class WorkspaceView : UserControl
 {
-    private readonly TextBox? _searchBox;
-    private readonly ScrollViewer? _gitLogScroll;
-    private readonly SelectableTextBlock? _gitLogText;
+    private readonly TextBox? searchBox;
+    private readonly ScrollViewer? gitLogScroll;
+    private readonly SelectableTextBlock? gitLogText;
 
     /// <summary>The FileSearchViewModel OnFileSearchPropertyChanged is currently subscribed to, if any - tracked so both OnDataContextChanged and DetachedFromVisualTree can unsubscribe it. Without unsubscribing on detach, a dropped instance's subscription to this workspace's own long-lived FileSearchViewModel/VersionSectionViewModel would otherwise keep it permanently reachable.</summary>
-    private FileSearchViewModel? _subscribedFileSearch;
+    private FileSearchViewModel? subscribedFileSearch;
 
     /// <summary>The VersionSectionViewModel OnGitOutputLogChanged/OnVersionPropertyChanged are currently subscribed to, if any - same leak-prevention reasoning as _subscribedFileSearch.</summary>
-    private VersionSectionViewModel? _subscribedVersion;
+    private VersionSectionViewModel? subscribedVersion;
 
     public WorkspaceView()
     {
         InitializeComponent();
-        _searchBox = this.FindControl<TextBox>("SearchBox");
-        _gitLogScroll = this.FindControl<ScrollViewer>("GitLogScroll");
-        _gitLogText = this.FindControl<SelectableTextBlock>("GitLogText");
+        searchBox = this.FindControl<TextBox>("SearchBox");
+        gitLogScroll = this.FindControl<ScrollViewer>("GitLogScroll");
+        gitLogText = this.FindControl<SelectableTextBlock>("GitLogText");
         DataContextChanged += OnDataContextChanged;
         DetachedFromVisualTree += (_, _) => Unsubscribe();
     }
@@ -41,33 +41,33 @@ public partial class WorkspaceView : UserControl
         if (Vm is { } vm)
         {
             vm.FileSearch.PropertyChanged += OnFileSearchPropertyChanged;
-            _subscribedFileSearch = vm.FileSearch;
+            subscribedFileSearch = vm.FileSearch;
 
             vm.Version.GitOutputLog.CollectionChanged += OnGitOutputLogChanged;
             vm.Version.PropertyChanged += OnVersionPropertyChanged;
-            _subscribedVersion = vm.Version;
+            subscribedVersion = vm.Version;
         }
     }
 
     private void Unsubscribe()
     {
-        if (_subscribedFileSearch is not null)
+        if (subscribedFileSearch is not null)
         {
-            _subscribedFileSearch.PropertyChanged -= OnFileSearchPropertyChanged;
-            _subscribedFileSearch = null;
+            subscribedFileSearch.PropertyChanged -= OnFileSearchPropertyChanged;
+            subscribedFileSearch = null;
         }
 
-        if (_subscribedVersion is not null)
+        if (subscribedVersion is not null)
         {
-            _subscribedVersion.GitOutputLog.CollectionChanged -= OnGitOutputLogChanged;
-            _subscribedVersion.PropertyChanged -= OnVersionPropertyChanged;
-            _subscribedVersion = null;
+            subscribedVersion.GitOutputLog.CollectionChanged -= OnGitOutputLogChanged;
+            subscribedVersion.PropertyChanged -= OnVersionPropertyChanged;
+            subscribedVersion = null;
         }
     }
 
     /// <summary>Keeps the busy overlay's live git command log scrolled to its newest line as more arrive.</summary>
     private void OnGitOutputLogChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
-        Dispatcher.UIThread.Post(() => _gitLogScroll?.ScrollToEnd(), DispatcherPriority.Background);
+        Dispatcher.UIThread.Post(() => gitLogScroll?.ScrollToEnd(), DispatcherPriority.Background);
 
     /// <summary>
     /// Focuses the busy overlay's own git log text the moment it appears (IsBusy flips true) - Avalonia never
@@ -81,7 +81,7 @@ public partial class WorkspaceView : UserControl
     {
         if (e.PropertyName == nameof(VersionSectionViewModel.IsBusy) && sender is VersionSectionViewModel { IsBusy: true })
         {
-            Dispatcher.UIThread.Post(() => _gitLogText?.Focus(), DispatcherPriority.Background);
+            Dispatcher.UIThread.Post(() => gitLogText?.Focus(), DispatcherPriority.Background);
         }
     }
 
@@ -92,8 +92,8 @@ public partial class WorkspaceView : UserControl
         {
             Dispatcher.UIThread.Post(() =>
             {
-                _searchBox?.Focus();
-                _searchBox?.SelectAll();
+                searchBox?.Focus();
+                searchBox?.SelectAll();
             }, DispatcherPriority.Background);
         }
     }
@@ -105,17 +105,17 @@ public partial class WorkspaceView : UserControl
     /// Ctrl+C keybinding, which needs the control to actually have focus).</summary>
     private void OnCopyGitLogClick(object? sender, RoutedEventArgs e)
     {
-        if (_gitLogText is null)
+        if (gitLogText is null)
         {
             return;
         }
 
-        if (string.IsNullOrEmpty(_gitLogText.SelectedText))
+        if (string.IsNullOrEmpty(gitLogText.SelectedText))
         {
-            _gitLogText.SelectAll();
+            gitLogText.SelectAll();
         }
 
-        _gitLogText.Copy();
+        gitLogText.Copy();
     }
 
     private void OnBackdropPointerPressed(object? sender, PointerPressedEventArgs e) => Vm?.FileSearch.Close();

@@ -491,7 +491,7 @@ public sealed class GitService : IGitService
 
     public async Task<IReadOnlyDictionary<string, IReadOnlyList<GitTag>>> GetTagsByCommitAsync(string workspacePath, CancellationToken cancellationToken = default)
     {
-        const char sep = '\x1f';
+        char sep = '\x1f';
         BufferedCommandResult result = await RunAsync(workspacePath,
             ["for-each-ref", $"--format=%(objectname){sep}%(*objectname){sep}%(refname:short){sep}%(objecttype){sep}%(contents:subject)", "refs/tags"],
             cancellationToken);
@@ -638,7 +638,7 @@ public sealed class GitService : IGitService
 
     private static async Task<IReadOnlyList<GitCommit>> LogCommitsAsync(string workspacePath, string revisionRange, CancellationToken cancellationToken)
     {
-        const char sep = '\x1f';
+        char sep = '\x1f';
         BufferedCommandResult result = await RunAsync(workspacePath, ["log", revisionRange, $"--format=%H{sep}%cI{sep}%s", "--reverse"], cancellationToken);
 
         List<GitCommit> commits = new List<GitCommit>();

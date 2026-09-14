@@ -35,22 +35,75 @@ csharp_style_expression_bodied_accessors = true:suggestion
 csharp_style_prefer_primary_constructors = true:suggestion
 
 [*.{cs,csx}]
-# Private fields: plain camelCase, no leading underscore (e.g. `messageQueue`, not `_messageQueue`).
-dotnet_naming_rule.private_fields_camel_case.severity = warning
-dotnet_naming_rule.private_fields_camel_case.symbols = private_fields
-dotnet_naming_rule.private_fields_camel_case.style = camel_case
+# These naming rules mirror Microsoft's own documented C# identifier-naming conventions
+# (learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/identifier-names) exactly, with one
+# deliberate deviation: no underscore (or "s_"/"t_") prefixes anywhere, on private/internal fields or
+# otherwise - casing alone, not a prefix, is what identifies a field. Declaration order below doesn't
+# matter to Roslyn - overlapping rules are resolved by specificity (e.g. a required_modifiers match
+# beats a rule with none), not by which one appears first in this file.
 
-dotnet_naming_symbols.private_fields.applicable_kinds = field
-dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+# Interfaces: PascalCase with a leading "I" (e.g. IThing).
+dotnet_naming_rule.interfaces_pascal_case.severity = warning
+dotnet_naming_rule.interfaces_pascal_case.symbols = interfaces
+dotnet_naming_rule.interfaces_pascal_case.style = interface_style
+
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+
+dotnet_naming_style.interface_style.capitalization = pascal_case
+dotnet_naming_style.interface_style.required_prefix = I
+
+# Type parameters: PascalCase with a leading "T" (e.g. TKey, or bare T).
+dotnet_naming_rule.type_parameters_pascal_case.severity = warning
+dotnet_naming_rule.type_parameters_pascal_case.symbols = type_parameters
+dotnet_naming_rule.type_parameters_pascal_case.style = type_parameter_style
+
+dotnet_naming_symbols.type_parameters.applicable_kinds = type_parameter
+
+dotnet_naming_style.type_parameter_style.capitalization = pascal_case
+dotnet_naming_style.type_parameter_style.required_prefix = T
+
+# Constants - both fields and local constants, at any accessibility level (including private/
+# internal): PascalCase. Microsoft calls this out as a deliberate exception to keep constant naming
+# consistent regardless of access modifier, rather than have a private const look like an ordinary
+# private field. Doesn't extend to a merely `static readonly` field (e.g. a TimeSpan or Regex) -
+# only a true compile-time `const` counts. There's no separate "local constant" symbol kind in
+# Roslyn's naming-rule system - a const local is just `local` here, narrowed to only the const ones
+# by required_modifiers; a non-const local still falls to the plain camelCase rule below (Roslyn
+# resolves the conflict by rule specificity automatically, regardless of declaration order in this
+# file).
+dotnet_naming_rule.constants_pascal_case.severity = warning
+dotnet_naming_rule.constants_pascal_case.symbols = constants
+dotnet_naming_rule.constants_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.constants.applicable_kinds = field, local
+dotnet_naming_symbols.constants.applicable_accessibilities = *
+dotnet_naming_symbols.constants.required_modifiers = const
+
+# Private/internal non-constant fields: camelCase (e.g. `messageQueue`), no prefix.
+dotnet_naming_rule.private_internal_fields_camel_case.severity = warning
+dotnet_naming_rule.private_internal_fields_camel_case.symbols = private_internal_fields
+dotnet_naming_rule.private_internal_fields_camel_case.style = camel_case
+
+dotnet_naming_symbols.private_internal_fields.applicable_kinds = field
+dotnet_naming_symbols.private_internal_fields.applicable_accessibilities = private, internal
 
 dotnet_naming_style.camel_case.capitalization = camel_case
 
-# Public/internal members: PascalCase (e.g. `MessageQueue`).
-dotnet_naming_rule.public_members_pascal_case.severity = warning
-dotnet_naming_rule.public_members_pascal_case.symbols = public_members
-dotnet_naming_rule.public_members_pascal_case.style = pascal_case
+# Parameters and local variables: camelCase.
+dotnet_naming_rule.parameters_and_locals_camel_case.severity = warning
+dotnet_naming_rule.parameters_and_locals_camel_case.symbols = parameters_and_locals
+dotnet_naming_rule.parameters_and_locals_camel_case.style = camel_case
 
-dotnet_naming_symbols.public_members.applicable_kinds = class, struct, interface, enum, property, method, event, delegate
-dotnet_naming_symbols.public_members.applicable_accessibilities = public, internal, protected, protected_internal, private_protected
+dotnet_naming_symbols.parameters_and_locals.applicable_kinds = parameter, local
+
+# Everything else - types, and every remaining member kind (methods, properties, events, delegates,
+# local functions, and a field once const/private/internal are already ruled out, i.e. a public
+# field) - at any accessibility level: PascalCase.
+dotnet_naming_rule.everything_else_pascal_case.severity = warning
+dotnet_naming_rule.everything_else_pascal_case.symbols = everything_else
+dotnet_naming_rule.everything_else_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.everything_else.applicable_kinds = class, struct, enum, property, method, field, event, delegate, local_function
+dotnet_naming_symbols.everything_else.applicable_accessibilities = *
 
 dotnet_naming_style.pascal_case.capitalization = pascal_case

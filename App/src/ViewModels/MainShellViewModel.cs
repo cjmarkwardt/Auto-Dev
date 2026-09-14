@@ -9,16 +9,16 @@ namespace AutoDev.ViewModels;
 
 public sealed partial class MainShellViewModel : ViewModelBase
 {
-    private readonly IWorkspaceFactory _workspaceFactory;
-    private readonly IDialogService _dialogService;
-    private readonly ILogger<MainShellViewModel> _logger;
+    private readonly IWorkspaceFactory workspaceFactory;
+    private readonly IDialogService dialogService;
+    private readonly ILogger<MainShellViewModel> logger;
 
     public MainShellViewModel(HeaderViewModel header, IWorkspaceFactory workspaceFactory, IDialogService dialogService, ILogger<MainShellViewModel> logger)
     {
         Header = header;
-        _workspaceFactory = workspaceFactory;
-        _dialogService = dialogService;
-        _logger = logger;
+        this.workspaceFactory = workspaceFactory;
+        this.dialogService = dialogService;
+        this.logger = logger;
         Header.WorkspaceOpened += OnWorkspaceOpened;
     }
 
@@ -26,7 +26,7 @@ public sealed partial class MainShellViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(WindowTitle))]
-    private WorkspaceViewModel? _workspace;
+    private WorkspaceViewModel? workspace;
 
     /// <summary>Bound to MainWindow's own Title - what window managers/task switchers show for this process, distinct from the title bar's own in-app workspace-name display.</summary>
     public string WindowTitle => Workspace?.Title ?? "AutoDev";
@@ -48,7 +48,7 @@ public sealed partial class MainShellViewModel : ViewModelBase
     [RelayCommand]
     private async Task OpenTemplatesAsync()
     {
-        if (await _dialogService.ShowTemplatesDialogAsync(canApply: Workspace is not null) is { } applied && Workspace is not null)
+        if (await dialogService.ShowTemplatesDialogAsync(canApply: Workspace is not null) is { } applied && Workspace is not null)
         {
             await Workspace.ApplyTemplateAsync(applied.Name, applied.Content);
         }
@@ -69,11 +69,11 @@ public sealed partial class MainShellViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to fully dispose workspace {WorkspacePath} while replacing it", existing.Workspace.FullPath);
+                logger.LogWarning(ex, "Failed to fully dispose workspace {WorkspacePath} while replacing it", existing.Workspace.FullPath);
             }
         }
 
-        WorkspaceViewModel opened = _workspaceFactory.Create(workspace);
+        WorkspaceViewModel opened = workspaceFactory.Create(workspace);
         Workspace = opened;
         await opened.InitializeAsync();
     }
@@ -91,7 +91,7 @@ public sealed partial class MainShellViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to fully dispose workspace {WorkspacePath} during shutdown", workspace.Workspace.FullPath);
+            logger.LogWarning(ex, "Failed to fully dispose workspace {WorkspacePath} during shutdown", workspace.Workspace.FullPath);
         }
     }
 }

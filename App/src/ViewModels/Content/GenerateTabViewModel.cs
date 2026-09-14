@@ -17,10 +17,10 @@ namespace AutoDev.ViewModels.Content;
 
 public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposable
 {
-    private static readonly TimeSpan DraftAutoSaveDebounce = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan draftAutoSaveDebounce = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Only the last 10 requests are ever kept, per session - see Requests/SendAsync's eviction and IWorkspaceMetadataStore.SaveGenerateRequestsAsync.</summary>
-    private const int MaxRequests = 10;
+    private static readonly int maxRequests = 10;
 
     /// <summary>
     /// How long a request can go with no event at all from the CLI subprocess (not even an intermediate tool
@@ -32,28 +32,28 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// bounded time instead of sitting stuck indefinitely (one prior incident sat "Working" for over an hour)
     /// - it doesn't matter *why* nothing arrived, only that nothing did.
     /// </summary>
-    private static readonly TimeSpan StallTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan stallTimeout = TimeSpan.FromMinutes(5);
 
-    private static readonly TimeSpan StallCheckInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan stallCheckInterval = TimeSpan.FromSeconds(15);
 
-    private readonly string _workspacePath;
-    private readonly IAiSessionClientFactory _sessionClientFactory;
-    private readonly IAiProviderSelectionService _providerSelection;
-    private readonly IWorkspaceMetadataStore _metadataStore;
-    private readonly IUsageAggregatorService _usageAggregator;
-    private readonly ISoundService _soundService;
-    private readonly IUiDispatcher _dispatcher;
-    private readonly ILogger<GenerateTabViewModel> _logger;
+    private readonly string workspacePath;
+    private readonly IAiSessionClientFactory sessionClientFactory;
+    private readonly IAiProviderSelectionService providerSelection;
+    private readonly IWorkspaceMetadataStore metadataStore;
+    private readonly IUsageAggregatorService usageAggregator;
+    private readonly ISoundService soundService;
+    private readonly IUiDispatcher dispatcher;
+    private readonly ILogger<GenerateTabViewModel> logger;
 
-    private IAiSessionClient? _client;
-    private string? _resumeSessionId;
-    private string? _currentSessionKey;
-    private TaskCompletionSource<bool>? _pendingAutomatedTurn;
-    private CancellationTokenSource? _draftDebounceCts;
+    private IAiSessionClient? client;
+    private string? resumeSessionId;
+    private string? currentSessionKey;
+    private TaskCompletionSource<bool>? pendingAutomatedTurn;
+    private CancellationTokenSource? draftDebounceCts;
 
     /// <summary>True during a hidden automated turn (see RunAutomatedTurnAsync's visible: false path) - its assistant text is captured into _hiddenTurnText, never into an active request.</summary>
-    private bool _hiddenTurnActive;
-    private readonly StringBuilder _hiddenTurnText = new();
+    private bool hiddenTurnActive;
+    private readonly StringBuilder hiddenTurnText = new();
 
     /// <summary>
     /// True during a visible-but-automated turn (RunAutomatedTurnAsync's visible: true path - the
@@ -71,11 +71,11 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// react to) purely so the View's panel and OnVisibleAutomatedTurnActiveChanged below can bind/react to it.
     /// </summary>
     [ObservableProperty]
-    private bool _visibleAutomatedTurnActive;
-    private readonly StringBuilder _visibleAutomatedTurnText = new();
+    private bool visibleAutomatedTurnActive;
+    private readonly StringBuilder visibleAutomatedTurnText = new();
 
     /// <summary>What AutomatedTurnStatusText shows while IsSending - set per-call by RunAutomatedTurnAsync's own statusLabel parameter, since this generic panel is shared by every kind of visible automated turn (conflict resolution, template scaffolding, ...), not just conflict resolution.</summary>
-    private string _visibleAutomatedTurnLabel = "Working…";
+    private string visibleAutomatedTurnLabel = "Working…";
 
     partial void OnVisibleAutomatedTurnActiveChanged(bool value)
     {
@@ -88,7 +88,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     }
 
     /// <summary>The request currently being worked on, if any - set only by SendAsync's real (non-automated) turn path, cleared once its ResultEvent/Cancel arrives. Never touched by automated turns (hidden or visible) - see _hiddenTurnActive/_visibleAutomatedTurnActive.</summary>
-    private GenerateRequestViewModel? _activeRequest;
+    private GenerateRequestViewModel? activeRequest;
 
     /// <summary>
     /// Count of messages sent for the active request (the initial send, plus one per interjection) that
@@ -99,7 +99,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// ding firing before the workspace is actually done and ready for a new request. Only ever
     /// incremented/decremented alongside _activeRequest - irrelevant to automated turns.
     /// </summary>
-    private int _pendingTurnCount;
+    private int pendingTurnCount;
 
     /// <summary>
     /// True once the user has clicked Cancel on the active request and its "please stop and revert" message
@@ -108,7 +108,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// actually finishes responding to that request; also reset at the start of every new real turn
     /// (SendAsync) and in FinalizeActiveRequestAsync, so it can never leak into a later, unrelated turn.
     /// </summary>
-    private bool _cancelRequested;
+    private bool cancelRequested;
 
     /// <summary>
     /// Accumulates the active request's assistant text as it streams in - see CaptureActiveRequestOutput,
@@ -119,7 +119,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// (should-never-happen) case. A cancel/timeout finish instead uses _lastActiveRequestSegment, not this -
     /// see its own doc comment for why.
     /// </summary>
-    private readonly StringBuilder _activeRequestOutputBuffer = new();
+    private readonly StringBuilder activeRequestOutputBuffer = new();
 
     /// <summary>
     /// The single most recent text block captured for the active request (overwritten, not appended - see
@@ -130,17 +130,17 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// tool call) alongside whatever final summary the assistant managed to produce before being cut off,
     /// which read as a wall of stale play-by-play rather than the one thing the user actually wants to see.
     /// </summary>
-    private string _lastActiveRequestSegment = "";
+    private string lastActiveRequestSegment = "";
 
     /// <summary>Stamped at turn-start and on every single event Handle() receives thereafter (any event proves the pipe/process is still alive, not just a ResultEvent) - see StallWatchdogElapsedAsync.</summary>
-    private DateTimeOffset _lastEventReceivedAt;
+    private DateTimeOffset lastEventReceivedAt;
 
-    private readonly System.Timers.Timer _stallWatchdogTimer;
+    private readonly System.Timers.Timer stallWatchdogTimer;
 
     /// <summary>Ticks GenerateRequestViewModel.ElapsedDisplay for whichever request is active, once a second, so the elapsed time shown next to the current action keeps counting up live rather than only refreshing whenever some other event happens to arrive.</summary>
-    private static readonly TimeSpan ElapsedDisplayTickInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan elapsedDisplayTickInterval = TimeSpan.FromSeconds(1);
 
-    private readonly System.Timers.Timer _elapsedDisplayTimer;
+    private readonly System.Timers.Timer elapsedDisplayTimer;
 
     public GenerateTabViewModel(
         string workspacePath,
@@ -152,35 +152,35 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         IUiDispatcher dispatcher,
         ILogger<GenerateTabViewModel> logger)
     {
-        _workspacePath = workspacePath;
-        _sessionClientFactory = sessionClientFactory;
-        _providerSelection = providerSelection;
-        _metadataStore = metadataStore;
-        _usageAggregator = usageAggregator;
-        _soundService = soundService;
-        _dispatcher = dispatcher;
-        _logger = logger;
+        this.workspacePath = workspacePath;
+        this.sessionClientFactory = sessionClientFactory;
+        this.providerSelection = providerSelection;
+        this.metadataStore = metadataStore;
+        this.usageAggregator = usageAggregator;
+        this.soundService = soundService;
+        this.dispatcher = dispatcher;
+        this.logger = logger;
         Attachments.CollectionChanged += OnAttachmentsChanged;
         FileAttachments.CollectionChanged += OnAttachmentsChanged;
         Requests.CollectionChanged += OnRequestsChanged;
-        _providerSelection.ProviderChanged += OnProviderChanged;
+        this.providerSelection.ProviderChanged += OnProviderChanged;
 
         ResetModelAndEffortForProvider();
 
-        _stallWatchdogTimer = new System.Timers.Timer(StallCheckInterval) { AutoReset = true };
-        _stallWatchdogTimer.Elapsed += (_, _) => _dispatcher.Post(() => _ = StallWatchdogElapsedAsync());
-        _stallWatchdogTimer.Start();
+        stallWatchdogTimer = new System.Timers.Timer(stallCheckInterval) { AutoReset = true };
+        stallWatchdogTimer.Elapsed += (_, _) => this.dispatcher.Post(() => _ = StallWatchdogElapsedAsync());
+        stallWatchdogTimer.Start();
 
-        _elapsedDisplayTimer = new System.Timers.Timer(ElapsedDisplayTickInterval) { AutoReset = true };
-        _elapsedDisplayTimer.Elapsed += (_, _) => _dispatcher.Post(() => _activeRequest?.RefreshElapsedDisplay());
-        _elapsedDisplayTimer.Start();
+        elapsedDisplayTimer = new System.Timers.Timer(elapsedDisplayTickInterval) { AutoReset = true };
+        elapsedDisplayTimer.Elapsed += (_, _) => this.dispatcher.Post(() => activeRequest?.RefreshElapsedDisplay());
+        elapsedDisplayTimer.Start();
     }
 
     /// <summary>The last up-to-5 requests for the current session, oldest first - see SwitchSessionAsync (loaded from disk) and SendAsync (created/evicted live).</summary>
     public ObservableCollection<GenerateRequestViewModel> Requests { get; } = [];
 
     [ObservableProperty]
-    private int _displayedIndex = -1;
+    private int displayedIndex = -1;
 
     public GenerateRequestViewModel? DisplayedRequest => DisplayedIndex >= 0 && DisplayedIndex < Requests.Count ? Requests[DisplayedIndex] : null;
 
@@ -264,7 +264,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to decode a pasted/dropped image file");
+            logger.LogWarning(ex, "Failed to decode a pasted/dropped image file");
         }
     }
 
@@ -274,7 +274,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         string display;
         try
         {
-            display = Path.GetRelativePath(_workspacePath, path);
+            display = Path.GetRelativePath(workspacePath, path);
             if (display.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(display))
             {
                 display = path;
@@ -289,14 +289,14 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     }
 
     [ObservableProperty]
-    private string _inputText = "";
+    private string inputText = "";
 
     [ObservableProperty]
-    private bool _isSending;
+    private bool isSending;
 
     /// <summary>Generate is only usable while targeting a feature, or a version with direct mode on - see WorkspaceContentViewModel.ApplyTargetStateAsync, which drives this via SwitchSessionAsync.</summary>
     [ObservableProperty]
-    private bool _isEditable;
+    private bool isEditable;
 
     /// <summary>
     /// Set by WorkspaceViewModel from VersionSectionViewModel.IsBusy - true while a plain (non-AI) version
@@ -307,7 +307,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// own menu and History's switch rows for the mirror-image case (an in-progress AI turn).
     /// </summary>
     [ObservableProperty]
-    private bool _isVersionActionBusy;
+    private bool isVersionActionBusy;
 
     partial void OnIsVersionActionBusyChanged(bool value) => SendCommand.NotifyCanExecuteChanged();
 
@@ -319,53 +319,53 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// Send, per this feature's own explicit "disable input" requirement.
     /// </summary>
     [ObservableProperty]
-    private bool _hasRunningScripts;
+    private bool hasRunningScripts;
 
     /// <summary>A request whose own ResultEvent already arrived while HasRunningScripts was still true - held back from its own final status/the ding until OnHasRunningScriptsChanged sees it clear. See the ResultEvent handler in Handle().</summary>
-    private GenerateRequestViewModel? _pendingScriptCompletionRequest;
+    private GenerateRequestViewModel? pendingScriptCompletionRequest;
 
     /// <summary>The status _pendingScriptCompletionRequest should actually finalize as (Completed, or Cancelled if the user had asked Claude to stop and revert - see CancelAsync) - captured alongside it rather than re-read from _cancelRequested later, since that field could otherwise already belong to a different, newer turn by the time the running script finally finishes.</summary>
-    private GenerateRequestStatus _pendingScriptCompletionStatus = GenerateRequestStatus.Completed;
+    private GenerateRequestStatus pendingScriptCompletionStatus = GenerateRequestStatus.Completed;
 
     partial void OnHasRunningScriptsChanged(bool value)
     {
         SendCommand.NotifyCanExecuteChanged();
 
-        if (!value && _pendingScriptCompletionRequest is { } request)
+        if (!value && pendingScriptCompletionRequest is { } request)
         {
-            _pendingScriptCompletionRequest = null;
-            request.Status = _pendingScriptCompletionStatus;
+            pendingScriptCompletionRequest = null;
+            request.Status = pendingScriptCompletionStatus;
             _ = PersistCurrentRequestsAsync();
-            _soundService.PlayDing();
+            soundService.PlayDing();
         }
     }
 
     /// <summary>The resizable input row's height, bound two-way from GenerateTabView.axaml's RowDefinition - persisted only in-memory for this tab's lifetime (see WorkspaceContentViewModel.EditColumnWidth's identical reasoning).</summary>
     [ObservableProperty]
-    private GridLength _inputRowHeight = new(140);
+    private GridLength inputRowHeight = new(140);
 
     /// <summary>Claude's own CLI model aliases, matching what `claude --model` accepts.</summary>
-    private readonly IReadOnlyList<string> _claudeModels = ["sonnet", "opus", "haiku"];
+    private readonly IReadOnlyList<string> claudeModels = ["sonnet", "opus", "haiku"];
 
     /// <summary>Codex's own model catalog slugs (see `codex debug models`) - restricted to the general-purpose, non-hidden entries.</summary>
-    private readonly IReadOnlyList<string> _codexModels = ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"];
+    private readonly IReadOnlyList<string> codexModels = ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"];
 
     /// <summary>"default" omits the effort flag entirely, leaving the CLI's own default in place; the rest map straight to `claude --effort`/`codex -c model_reasoning_effort`. "max"/"ultra" are Claude-only (not every Codex model supports them) - see AvailableEfforts.</summary>
-    private readonly IReadOnlyList<string> _claudeEfforts = ["default", "low", "medium", "high", "xhigh", "max"];
+    private readonly IReadOnlyList<string> claudeEfforts = ["default", "low", "medium", "high", "xhigh", "max"];
 
-    private readonly IReadOnlyList<string> _codexEfforts = ["default", "low", "medium", "high", "xhigh"];
-
-    [ObservableProperty]
-    private IReadOnlyList<string> _availableModels = [];
+    private readonly IReadOnlyList<string> codexEfforts = ["default", "low", "medium", "high", "xhigh"];
 
     [ObservableProperty]
-    private IReadOnlyList<string> _availableEfforts = [];
+    private IReadOnlyList<string> availableModels = [];
 
     [ObservableProperty]
-    private string _selectedModel = "";
+    private IReadOnlyList<string> availableEfforts = [];
 
     [ObservableProperty]
-    private string _selectedEffort = "default";
+    private string selectedModel = "";
+
+    [ObservableProperty]
+    private string selectedEffort = "default";
 
     partial void OnIsSendingChanged(bool value)
     {
@@ -395,13 +395,13 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// SelectedEffort reset to their defaults, which harmlessly re-triggers RestartClientForSettingsChange
     /// via the partial hooks above - _client is already null below by the time that happens.
     /// </summary>
-    private void OnProviderChanged(AiProvider provider) => _dispatcher.Post(() =>
+    private void OnProviderChanged(AiProvider provider) => dispatcher.Post(() =>
     {
-        if (_client is not null)
+        if (client is not null)
         {
-            IAiSessionClient client = _client;
-            _client = null;
-            _resumeSessionId = null;
+            IAiSessionClient client = this.client;
+            this.client = null;
+            resumeSessionId = null;
             _ = client.DisposeAsync().AsTask();
         }
 
@@ -410,23 +410,23 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     private void ResetModelAndEffortForProvider()
     {
-        (AvailableModels, AvailableEfforts) = _providerSelection.CurrentProvider == AiProvider.Codex
-            ? (_codexModels, _codexEfforts)
-            : (_claudeModels, _claudeEfforts);
+        (AvailableModels, AvailableEfforts) = providerSelection.CurrentProvider == AiProvider.Codex
+            ? (codexModels, codexEfforts)
+            : (claudeModels, claudeEfforts);
         SelectedModel = AvailableModels[0];
         SelectedEffort = "default";
     }
 
     private void RestartClientForSettingsChange()
     {
-        if (_client is null)
+        if (this.client is null)
         {
             return;
         }
 
-        _resumeSessionId = _client.SessionId;
-        IAiSessionClient client = _client;
-        _client = null;
+        resumeSessionId = this.client.SessionId;
+        IAiSessionClient client = this.client;
+        this.client = null;
         _ = client.DisposeAsync().AsTask();
     }
 
@@ -461,13 +461,13 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     public event Action? HiddenTurnFinished;
 
     /// <summary>The most recent plain-text reply of a visible automated turn (RunAutomatedTurnAsync's visible: true path - e.g. conflict-resolution) - used to inspect what Claude actually said/did, and (see CaptureVisibleAutomatedTurnText's own OnPropertyChanged) live-bound by GenerateTabView's conflict-resolution panel.</summary>
-    public string? LastAssistantText => _visibleAutomatedTurnText.Length > 0 ? _visibleAutomatedTurnText.ToString() : null;
+    public string? LastAssistantText => visibleAutomatedTurnText.Length > 0 ? visibleAutomatedTurnText.ToString() : null;
 
     /// <summary>GenerateTabView's visible-automated-turn panel's own status line - _visibleAutomatedTurnLabel (set per-call by RunAutomatedTurnAsync) while genuinely running, "Paused" while VisibleAutomatedTurnActive but IsSending has dropped (see PauseAsync). Notified alongside both OnVisibleAutomatedTurnActiveChanged and OnIsSendingChanged.</summary>
-    public string AutomatedTurnStatusText => IsSending ? _visibleAutomatedTurnLabel : "Paused";
+    public string AutomatedTurnStatusText => IsSending ? visibleAutomatedTurnLabel : "Paused";
 
     /// <summary>The plain-text reply of the most recent hidden turn (see RunAutomatedTurnAsync's visible: false path), if any - see HiddenTurnStarted.</summary>
-    public string? LastHiddenTurnText => _hiddenTurnText.Length > 0 ? _hiddenTurnText.ToString() : null;
+    public string? LastHiddenTurnText => hiddenTurnText.Length > 0 ? hiddenTurnText.ToString() : null;
 
     /// <summary>
     /// Called whenever the workspace's editable target changes (including the first time, right after the
@@ -479,7 +479,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// </summary>
     public async Task SwitchSessionAsync(string? sessionKey)
     {
-        if (sessionKey == _currentSessionKey)
+        if (sessionKey == currentSessionKey)
         {
             return;
         }
@@ -493,7 +493,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // manually switching, or even a git-state re-sync racing a live turn) vanished from
         // generate-requests.json entirely: not late, not shown as Cancelled, just gone, while the underlying
         // subprocess kept running orphaned in the background. See FinalizeActiveRequestAsync.
-        bool hadActiveRequest = _activeRequest is not null;
+        bool hadActiveRequest = activeRequest is not null;
         await FinalizeActiveRequestAsync(GenerateRequestStatus.Cancelled);
         if (hadActiveRequest)
         {
@@ -503,19 +503,19 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             NormalTurnCompleted?.Invoke(false);
         }
 
-        if (_client is not null)
+        if (client is not null)
         {
-            await _client.DisposeAsync();
-            _client = null;
+            await client.DisposeAsync();
+            client = null;
         }
 
-        _currentSessionKey = sessionKey;
+        currentSessionKey = sessionKey;
         IsEditable = sessionKey is not null;
-        _resumeSessionId = null;
+        resumeSessionId = null;
         IsSending = false;
         Requests.Clear();
-        _activeRequest = null;
-        _pendingTurnCount = 0;
+        activeRequest = null;
+        pendingTurnCount = 0;
         DisplayedIndex = -1;
         Attachments.Clear();
         FileAttachments.Clear();
@@ -525,16 +525,16 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // own independent conversation - switching away and back restores whatever was left typed, and
         // switching to a session with nothing saved starts blank rather than carrying over the previous
         // session's in-progress text.
-        InputText = sessionKey is not null ? await _metadataStore.LoadGenerateDraftAsync(_workspacePath, sessionKey) ?? "" : "";
+        InputText = sessionKey is not null ? await metadataStore.LoadGenerateDraftAsync(workspacePath, sessionKey) ?? "" : "";
 
         if (sessionKey is null)
         {
             return;
         }
 
-        _resumeSessionId = DecodeResumeSessionId(await _metadataStore.LoadGenerateSessionIdAsync(_workspacePath, sessionKey));
+        resumeSessionId = DecodeResumeSessionId(await metadataStore.LoadGenerateSessionIdAsync(workspacePath, sessionKey));
 
-        List<GenerateRequest> loaded = await _metadataStore.LoadGenerateRequestsAsync(_workspacePath, sessionKey);
+        List<GenerateRequest> loaded = await metadataStore.LoadGenerateRequestsAsync(workspacePath, sessionKey);
         foreach (GenerateRequest request in loaded)
         {
             if (request.Status == GenerateRequestStatus.Working)
@@ -553,7 +553,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
             if (requestVm.Status == GenerateRequestStatus.Paused)
             {
-                _activeRequest = requestVm;
+                activeRequest = requestVm;
             }
         }
 
@@ -562,7 +562,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             DisplayedIndex = Requests.Count - 1;
         }
 
-        if (_activeRequest is not null)
+        if (activeRequest is not null)
         {
             // Re-locks the workspace exactly as if the turn were still actively working (see TurnPaused's own
             // doc comment) - VersionSectionViewModel's subscription to these is already in place by now
@@ -589,7 +589,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// the same live session (SendAsync's own isInterjection path has no request card to attach it to during
     /// either) could corrupt.
     /// </summary>
-    private bool CanSend() => !_hiddenTurnActive && !VisibleAutomatedTurnActive && !IsVersionActionBusy && !HasRunningScripts && (InputText.Trim().Length > 0 || Attachments.Count > 0 || FileAttachments.Count > 0) && _currentSessionKey is not null;
+    private bool CanSend() => !hiddenTurnActive && !VisibleAutomatedTurnActive && !IsVersionActionBusy && !HasRunningScripts && (InputText.Trim().Length > 0 || Attachments.Count > 0 || FileAttachments.Count > 0) && currentSessionKey is not null;
 
     partial void OnInputTextChanged(string value)
     {
@@ -600,14 +600,14 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// <summary>Debounced so every keystroke doesn't hit disk - mirrors EditTabViewModel's auto-save. Not started while no session is targeted (the input box itself is hidden then - see GenerateTabView's IsEditable-gated DockPanel).</summary>
     private void ScheduleDraftAutoSave()
     {
-        if (_currentSessionKey is null)
+        if (currentSessionKey is null)
         {
             return;
         }
 
-        _draftDebounceCts?.Cancel();
+        draftDebounceCts?.Cancel();
         CancellationTokenSource cts = new CancellationTokenSource();
-        _draftDebounceCts = cts;
+        draftDebounceCts = cts;
         _ = DebounceSaveDraftAsync(cts.Token);
     }
 
@@ -615,26 +615,26 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     {
         try
         {
-            await Task.Delay(DraftAutoSaveDebounce, cancellationToken);
+            await Task.Delay(draftAutoSaveDebounce, cancellationToken);
         }
         catch (OperationCanceledException)
         {
             return;
         }
 
-        if (_currentSessionKey is { } key)
+        if (currentSessionKey is { } key)
         {
-            await _metadataStore.SaveGenerateDraftAsync(_workspacePath, key, InputText);
+            await metadataStore.SaveGenerateDraftAsync(workspacePath, key, InputText);
         }
     }
 
     /// <summary>Persists whatever's currently typed immediately, bypassing the debounce - called before switching sessions and on dispose, so a draft is never lost to a debounce window that never got to fire.</summary>
     private async Task FlushPendingDraftSaveAsync()
     {
-        _draftDebounceCts?.Cancel();
-        if (_currentSessionKey is { } key)
+        draftDebounceCts?.Cancel();
+        if (currentSessionKey is { } key)
         {
-            await _metadataStore.SaveGenerateDraftAsync(_workspacePath, key, InputText);
+            await metadataStore.SaveGenerateDraftAsync(workspacePath, key, InputText);
         }
     }
 
@@ -672,10 +672,10 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
         if (isInterjection)
         {
-            if (_activeRequest is not null)
+            if (activeRequest is not null)
             {
-                _activeRequest.Input = $"{_activeRequest.Input}\n{textWithFileReferences}";
-                _pendingTurnCount++;
+                activeRequest.Input = $"{activeRequest.Input}\n{textWithFileReferences}";
+                pendingTurnCount++;
                 _ = PersistCurrentRequestsAsync();
                 DisplayedIndex = Requests.Count - 1;
             }
@@ -688,15 +688,15 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // Baseline for the stall watchdog (see StallWatchdogElapsedAsync) - stamped here rather than only
         // once the first event actually arrives, so a slow-to-start model response can't itself look like a
         // stall before anything has had a chance to come back yet.
-        _lastEventReceivedAt = DateTimeOffset.UtcNow;
+        lastEventReceivedAt = DateTimeOffset.UtcNow;
 
         if (images.Count > 0)
         {
-            await _client!.SendUserMessageAsync(outgoingText, images);
+            await client!.SendUserMessageAsync(outgoingText, images);
         }
         else
         {
-            await _client!.SendUserMessageAsync(outgoingText);
+            await client!.SendUserMessageAsync(outgoingText);
         }
     }
 
@@ -712,17 +712,17 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             CurrentActionStartedAt = DateTimeOffset.UtcNow,
         };
 
-        if (Requests.Count >= MaxRequests)
+        if (Requests.Count >= maxRequests)
         {
             Requests.RemoveAt(0);
         }
 
         Requests.Add(request);
-        _activeRequest = request;
-        _activeRequestOutputBuffer.Clear();
-        _lastActiveRequestSegment = "";
-        _pendingTurnCount = 1;
-        _cancelRequested = false;
+        activeRequest = request;
+        activeRequestOutputBuffer.Clear();
+        lastActiveRequestSegment = "";
+        pendingTurnCount = 1;
+        cancelRequested = false;
         DisplayedIndex = Requests.Count - 1;
         _ = PersistCurrentRequestsAsync();
 
@@ -744,8 +744,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     public async Task SubmitRequestAsync(string displayText, string outgoingText)
     {
         BeginNewNormalTurn(displayText);
-        _lastEventReceivedAt = DateTimeOffset.UtcNow;
-        await _client!.SendUserMessageAsync(outgoingText);
+        lastEventReceivedAt = DateTimeOffset.UtcNow;
+        await client!.SendUserMessageAsync(outgoingText);
     }
 
     /// <summary>
@@ -760,7 +760,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// - a merge-conflict-resolution turn must never be interruptible via Cancel/Stop, only Pause/Resume, so
     /// this stays true even if _activeRequest's own nullness here ever changed for an unrelated reason).
     /// </summary>
-    private bool CanCancel() => IsSending && _activeRequest is not null && !_cancelRequested && !VisibleAutomatedTurnActive;
+    private bool CanCancel() => IsSending && activeRequest is not null && !cancelRequested && !VisibleAutomatedTurnActive;
 
     /// <summary>
     /// Asks Claude to stop what it's doing and revert whatever it's changed so far this turn, rather than
@@ -775,33 +775,33 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     [RelayCommand(CanExecute = nameof(CanCancel))]
     private async Task CancelAsync()
     {
-        if (_activeRequest is null || _client is null)
+        if (activeRequest is null || client is null)
         {
             return;
         }
 
-        const string instruction = "Stop what you're currently doing and revert any changes you've made so far during this turn.";
+        string instruction = "Stop what you're currently doing and revert any changes you've made so far during this turn.";
 
-        _cancelRequested = true;
+        cancelRequested = true;
         CancelCommand.NotifyCanExecuteChanged();
-        _activeRequest.Input = $"{_activeRequest.Input}\n{instruction}";
-        _pendingTurnCount++;
+        activeRequest.Input = $"{activeRequest.Input}\n{instruction}";
+        pendingTurnCount++;
         _ = PersistCurrentRequestsAsync();
         DisplayedIndex = Requests.Count - 1;
 
-        _lastEventReceivedAt = DateTimeOffset.UtcNow;
-        await _client.SendUserMessageAsync(instruction);
+        lastEventReceivedAt = DateTimeOffset.UtcNow;
+        await client.SendUserMessageAsync(instruction);
     }
 
     /// <summary>Same gating as CanCancel, minus !_cancelRequested (stopping outright is always fine, even mid-cancel) - also true while the active request is Paused, since Stop is exactly as meaningful there (nothing to kill, but the paused turn still needs to be abandoned and the workspace unlocked). Explicitly excludes an automated turn (see CanCancel) - a merge-conflict-resolution turn can only ever be Paused/Resumed, never Stopped, so forcibly killing it and leaving the repository mid-conflict is never offered.</summary>
-    private bool CanStop() => !VisibleAutomatedTurnActive && _activeRequest is not null && (IsSending || _activeRequest.IsPaused);
+    private bool CanStop() => !VisibleAutomatedTurnActive && activeRequest is not null && (IsSending || activeRequest.IsPaused);
 
     /// <summary>Forcibly stops the active request's turn by killing the underlying Claude CLI subprocess outright (see ClaudeSessionClient.DisposeAsync's Kill fallback) if one is even running, rather than waiting for it to wind down on its own - the request is marked Cancelled with whatever partial output had streamed in so far, and a fresh subprocess starts on the next Send. This is what Cancel itself used to do before it became the "ask nicely" action above.</summary>
     [RelayCommand(CanExecute = nameof(CanStop))]
     private Task StopAsync() => KillActiveTurnAsync(GenerateRequestStatus.Cancelled, success: false);
 
     /// <summary>A genuine user-submitted turn (_activeRequest) or a visible automated conflict-resolution turn (VisibleAutomatedTurnActive) - either way, needs to be genuinely running right now (IsSending) to pause.</summary>
-    private bool CanPause() => IsSending && (_activeRequest is not null || VisibleAutomatedTurnActive);
+    private bool CanPause() => IsSending && (activeRequest is not null || VisibleAutomatedTurnActive);
 
     /// <summary>
     /// Immediately stops the AI's work (kills the subprocess, same as Stop) but keeps it resumable: captures
@@ -820,19 +820,19 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     [RelayCommand(CanExecute = nameof(CanPause))]
     private async Task PauseAsync()
     {
-        if (_activeRequest is null && !VisibleAutomatedTurnActive)
+        if (activeRequest is null && !VisibleAutomatedTurnActive)
         {
             return;
         }
 
-        if (_client is not null)
+        if (this.client is not null)
         {
-            _resumeSessionId = _client.SessionId;
+            resumeSessionId = this.client.SessionId;
             await PersistSessionIdAsync();
         }
 
-        IAiSessionClient? client = _client;
-        _client = null;
+        IAiSessionClient? client = this.client;
+        this.client = null;
         if (client is not null)
         {
             await client.DisposeAsync();
@@ -843,10 +843,10 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // flipping it the other way around left ResumeCommand's CanExecute cached false (read while Status
         // was still Working) even though IsPaused-bound bindings elsewhere (e.g. the button's own IsVisible)
         // already updated fine, since those re-evaluate live off the property instead of a point-in-time notify.
-        _cancelRequested = false;
-        if (_activeRequest is not null)
+        cancelRequested = false;
+        if (activeRequest is not null)
         {
-            _activeRequest.Status = GenerateRequestStatus.Paused;
+            activeRequest.Status = GenerateRequestStatus.Paused;
             await PersistCurrentRequestsAsync();
         }
 
@@ -856,7 +856,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     }
 
     /// <summary>A genuine user-submitted turn Paused, or an automated conflict-resolution turn currently sitting paused (VisibleAutomatedTurnActive stays true across a pause - see PauseAsync - so !IsSending is what actually distinguishes "paused" from "working" for that case).</summary>
-    private bool CanResume() => _activeRequest is { Status: GenerateRequestStatus.Paused } || (VisibleAutomatedTurnActive && !IsSending);
+    private bool CanResume() => activeRequest is { Status: GenerateRequestStatus.Paused } || (VisibleAutomatedTurnActive && !IsSending);
 
     /// <summary>
     /// Re-enters the working state and tells Claude to continue from where it left off, resuming the exact
@@ -870,16 +870,16 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     [RelayCommand(CanExecute = nameof(CanResume))]
     private async Task ResumeAsync()
     {
-        if (_activeRequest is null && !VisibleAutomatedTurnActive)
+        if (activeRequest is null && !VisibleAutomatedTurnActive)
         {
             return;
         }
 
-        if (_activeRequest is not null)
+        if (activeRequest is not null)
         {
-            _activeRequest.Status = GenerateRequestStatus.Working;
-            _activeRequest.CurrentActionStartedAt = DateTimeOffset.UtcNow;
-            _pendingTurnCount = 1;
+            activeRequest.Status = GenerateRequestStatus.Working;
+            activeRequest.CurrentActionStartedAt = DateTimeOffset.UtcNow;
+            pendingTurnCount = 1;
             await PersistCurrentRequestsAsync();
         }
 
@@ -887,8 +887,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         TurnResumed?.Invoke();
         EnsureClientStarted();
 
-        _lastEventReceivedAt = DateTimeOffset.UtcNow;
-        await _client!.SendUserMessageAsync("Continue from where you left off.");
+        lastEventReceivedAt = DateTimeOffset.UtcNow;
+        await client!.SendUserMessageAsync("Continue from where you left off.");
     }
 
     /// <summary>
@@ -902,7 +902,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// </summary>
     private async Task KillActiveTurnAsync(GenerateRequestStatus status, bool success)
     {
-        if (_activeRequest is null)
+        if (activeRequest is null)
         {
             return;
         }
@@ -912,8 +912,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
         // Detached before disposing so Handle()'s dead-client guard ignores any trailing buffered events
         // from the read loop as the killed subprocess winds down.
-        IAiSessionClient? client = _client;
-        _client = null;
+        IAiSessionClient? client = this.client;
+        this.client = null;
         if (client is not null)
         {
             await client.DisposeAsync();
@@ -922,7 +922,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         NormalTurnCompleted?.Invoke(success);
         if (status == GenerateRequestStatus.Completed)
         {
-            _soundService.PlayDing();
+            soundService.PlayDing();
         }
     }
 
@@ -943,8 +943,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             return;
         }
 
-        IAiSessionClient? client = _client;
-        _client = null;
+        IAiSessionClient? client = this.client;
+        this.client = null;
         if (client is not null)
         {
             await client.DisposeAsync();
@@ -953,8 +953,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         VisibleAutomatedTurnActive = false;
         IsSending = false;
 
-        _pendingAutomatedTurn?.TrySetResult(false);
-        _pendingAutomatedTurn = null;
+        pendingAutomatedTurn?.TrySetResult(false);
+        pendingAutomatedTurn = null;
     }
 
     /// <summary>
@@ -976,22 +976,22 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// </summary>
     private async Task StallWatchdogElapsedAsync()
     {
-        if (!IsSending || (_activeRequest is null && !VisibleAutomatedTurnActive))
+        if (!IsSending || (activeRequest is null && !VisibleAutomatedTurnActive))
         {
             return;
         }
 
-        TimeSpan silentFor = DateTimeOffset.UtcNow - _lastEventReceivedAt;
-        if (silentFor < StallTimeout)
+        TimeSpan silentFor = DateTimeOffset.UtcNow - lastEventReceivedAt;
+        if (silentFor < stallTimeout)
         {
             return;
         }
 
-        _logger.LogWarning(
+        logger.LogWarning(
             "Generate turn for {WorkspacePath} produced no events for {SilentFor} (>= {Timeout}) - treating as stalled and force-completing with whatever output had already streamed in.",
-            _workspacePath, silentFor, StallTimeout);
+            workspacePath, silentFor, stallTimeout);
 
-        if (_activeRequest is not null)
+        if (activeRequest is not null)
         {
             await KillActiveTurnAsync(GenerateRequestStatus.Completed, success: true);
         }
@@ -1012,13 +1012,13 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// </summary>
     private async Task FlushPendingScriptCompletionAsync()
     {
-        if (_pendingScriptCompletionRequest is not { } request)
+        if (pendingScriptCompletionRequest is not { } request)
         {
             return;
         }
 
-        _pendingScriptCompletionRequest = null;
-        request.Status = _pendingScriptCompletionStatus;
+        pendingScriptCompletionRequest = null;
+        request.Status = pendingScriptCompletionStatus;
         await PersistCurrentRequestsAsync();
     }
 
@@ -1037,19 +1037,19 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// </summary>
     private async Task FinalizeActiveRequestAsync(GenerateRequestStatus status)
     {
-        if (_activeRequest is null)
+        if (activeRequest is null)
         {
             return;
         }
 
-        GenerateRequestViewModel request = _activeRequest;
-        _activeRequest = null;
-        _pendingTurnCount = 0;
-        _cancelRequested = false;
+        GenerateRequestViewModel request = activeRequest;
+        activeRequest = null;
+        pendingTurnCount = 0;
+        cancelRequested = false;
 
-        if (_lastActiveRequestSegment.Length > 0)
+        if (lastActiveRequestSegment.Length > 0)
         {
-            request.Output = _lastActiveRequestSegment;
+            request.Output = lastActiveRequestSegment;
         }
 
         request.Status = status;
@@ -1058,12 +1058,12 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     private async Task PersistCurrentRequestsAsync()
     {
-        if (_currentSessionKey is not { } key)
+        if (currentSessionKey is not { } key)
         {
             return;
         }
 
-        await _metadataStore.SaveGenerateRequestsAsync(_workspacePath, key, [.. Requests.Select(r => r.ToModel())]);
+        await metadataStore.SaveGenerateRequestsAsync(workspacePath, key, [.. Requests.Select(r => r.ToModel())]);
     }
 
     /// <summary>
@@ -1082,18 +1082,18 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// <param name="statusLabel">Shown by AutomatedTurnStatusText for the duration of a visible turn - ignored when visible is false.</param>
     public async Task<bool> RunAutomatedTurnAsync(string instruction, bool visible = true, string statusLabel = "Resolving merge conflicts…", CancellationToken cancellationToken = default)
     {
-        _hiddenTurnActive = !visible;
+        hiddenTurnActive = !visible;
         VisibleAutomatedTurnActive = visible;
         if (visible)
         {
-            _visibleAutomatedTurnLabel = statusLabel;
-            _visibleAutomatedTurnText.Clear();
+            visibleAutomatedTurnLabel = statusLabel;
+            visibleAutomatedTurnText.Clear();
             OnPropertyChanged(nameof(LastAssistantText));
             OnPropertyChanged(nameof(AutomatedTurnStatusText));
         }
         else
         {
-            _hiddenTurnText.Clear();
+            hiddenTurnText.Clear();
             HiddenTurnStarted?.Invoke();
         }
 
@@ -1102,13 +1102,13 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         EnsureClientStarted();
 
         TaskCompletionSource<bool> tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingAutomatedTurn = tcs;
+        pendingAutomatedTurn = tcs;
 
         await using CancellationTokenRegistration registration = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
 
         try
         {
-            await _client!.SendUserMessageAsync(instruction, cancellationToken);
+            await client!.SendUserMessageAsync(instruction, cancellationToken);
             return await tcs.Task;
         }
         finally
@@ -1122,14 +1122,14 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     private void EnsureClientStarted()
     {
-        if (_client is not null)
+        if (client is not null)
         {
             return;
         }
 
-        _client = _sessionClientFactory.Create(_providerSelection.CurrentProvider, _workspacePath, SelectedModel, SelectedEffort == "default" ? null : SelectedEffort);
-        _client.Start(_resumeSessionId);
-        _ = Task.Run(() => ReadLoopAsync(_client));
+        client = sessionClientFactory.Create(providerSelection.CurrentProvider, workspacePath, SelectedModel, SelectedEffort == "default" ? null : SelectedEffort);
+        client.Start(resumeSessionId);
+        _ = Task.Run(() => ReadLoopAsync(client));
     }
 
     /// <summary>
@@ -1144,12 +1144,12 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             await foreach (AiStreamEvent evt in client.ReadAllEventsAsync())
             {
                 AiStreamEvent captured = evt;
-                _dispatcher.Post(() => Handle(captured));
+                dispatcher.Post(() => Handle(captured));
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Generate tab read loop failed for {WorkspacePath}", _workspacePath);
+            logger.LogError(ex, "Generate tab read loop failed for {WorkspacePath}", workspacePath);
         }
 
         // The stream can end without the turn in flight (if any) ever getting its own ResultEvent to finish
@@ -1162,9 +1162,9 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // null out _client before disposing, then a later Send can assign a brand new one before this dead
         // loop's own tail gets scheduled - finalizing against that new, legitimately-in-flight turn instead
         // of the one this loop actually belonged to would wrongly cancel it.
-        _dispatcher.Post(() =>
+        dispatcher.Post(() =>
         {
-            if (ReferenceEquals(_client, client))
+            if (ReferenceEquals(this.client, client))
             {
                 _ = FinalizeAbandonedTurnAsync();
             }
@@ -1174,7 +1174,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     /// <summary>See ReadLoopAsync's tail call - a safe no-op if there's nothing to finalize (the common case: the stream ended because a ResultEvent already completed the turn normally, which clears _activeRequest/_pendingAutomatedTurn/IsSending itself).</summary>
     private async Task FinalizeAbandonedTurnAsync()
     {
-        bool hadActiveRequest = _activeRequest is not null;
+        bool hadActiveRequest = activeRequest is not null;
         await FinalizeActiveRequestAsync(GenerateRequestStatus.Cancelled);
         if (hadActiveRequest)
         {
@@ -1183,9 +1183,9 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
         // RunAutomatedTurnAsync's own finally block raises HiddenTurnFinished (for the hidden case) once
         // this TrySetResult lets its `await tcs.Task` return - no need to raise it a second time here.
-        _pendingAutomatedTurn?.TrySetResult(false);
-        _pendingAutomatedTurn = null;
-        _hiddenTurnActive = false;
+        pendingAutomatedTurn?.TrySetResult(false);
+        pendingAutomatedTurn = null;
+        hiddenTurnActive = false;
         VisibleAutomatedTurnActive = false;
 
         IsSending = false;
@@ -1196,9 +1196,9 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // Proves the subprocess/pipe is genuinely still alive - reset regardless of event kind or which
         // branch below (if any) ends up handling it, so the stall watchdog's clock only ever measures real
         // silence, never how long a specific event type takes to show up.
-        _lastEventReceivedAt = DateTimeOffset.UtcNow;
+        lastEventReceivedAt = DateTimeOffset.UtcNow;
 
-        if (_client is null)
+        if (client is null)
         {
             return; // SwitchSessionAsync/RestartClientForSettingsChange already killed/detached this session - ignore any trailing buffered events from the dead process's read loop
         }
@@ -1206,7 +1206,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         switch (evt)
         {
             case AssistantMessageEvent assistant:
-                if (_hiddenTurnActive)
+                if (hiddenTurnActive)
                 {
                     CaptureHiddenAssistantText(assistant);
                 }
@@ -1214,7 +1214,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 {
                     CaptureVisibleAutomatedTurnText(assistant);
                 }
-                else if (_activeRequest is not null)
+                else if (activeRequest is not null)
                 {
                     CaptureActiveRequestOutput(assistant);
                     CaptureActiveRequestToolUse(assistant);
@@ -1223,14 +1223,14 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 break;
 
             case ResultEvent result:
-                bool wasAutomatedTurn = _pendingAutomatedTurn is not null;
+                bool wasAutomatedTurn = pendingAutomatedTurn is not null;
 
-                _usageAggregator.ReportUsage(_client!.SessionId, result.CumulativeUsage);
+                usageAggregator.ReportUsage(client!.SessionId, result.CumulativeUsage);
 
                 _ = PersistSessionIdAsync();
-                _pendingAutomatedTurn?.TrySetResult(!result.IsError);
-                _pendingAutomatedTurn = null;
-                _hiddenTurnActive = false;
+                pendingAutomatedTurn?.TrySetResult(!result.IsError);
+                pendingAutomatedTurn = null;
+                hiddenTurnActive = false;
                 VisibleAutomatedTurnActive = false;
 
                 if (wasAutomatedTurn)
@@ -1239,7 +1239,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                     break;
                 }
 
-                if (_activeRequest is null)
+                if (activeRequest is null)
                 {
                     // Not a genuine user-submitted request's own reply at all - e.g. a stray message sent
                     // (via the shared live session) while no request was actually active, such as during a
@@ -1255,8 +1255,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 // comment. An interjection still outstanding means Claude is about to keep working on this
                 // same workspace, so IsSending stays true and neither the request nor the ding/
                 // NormalTurnCompleted side effects fire yet.
-                _pendingTurnCount = Math.Max(0, _pendingTurnCount - 1);
-                if (_pendingTurnCount > 0)
+                pendingTurnCount = Math.Max(0, pendingTurnCount - 1);
+                if (pendingTurnCount > 0)
                 {
                     break;
                 }
@@ -1267,16 +1267,16 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 // in intermediate narration (e.g. "let me check that" before a tool call) alongside the real
                 // final reply - Result is exactly the clean final text; the buffer stays as a fallback only
                 // for the (should-never-happen) case a completed turn's Result is null.
-                GenerateRequestViewModel request = _activeRequest;
-                _activeRequest = null;
-                request.Output = result.Result ?? _activeRequestOutputBuffer.ToString();
+                GenerateRequestViewModel request = activeRequest;
+                activeRequest = null;
+                request.Output = result.Result ?? activeRequestOutputBuffer.ToString();
 
                 // Cancelled (not Completed) if the user had asked Claude to stop and revert (CancelAsync) and
                 // this is that request's own reply finally landing - captured now, not read again later,
                 // since _cancelRequested could belong to a different turn by the time a deferred
                 // (HasRunningScripts) completion below actually resolves.
-                GenerateRequestStatus finalStatus = _cancelRequested ? GenerateRequestStatus.Cancelled : GenerateRequestStatus.Completed;
-                _cancelRequested = false;
+                GenerateRequestStatus finalStatus = cancelRequested ? GenerateRequestStatus.Cancelled : GenerateRequestStatus.Completed;
+                cancelRequested = false;
 
                 if (HasRunningScripts)
                 {
@@ -1289,8 +1289,8 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                     // above (already fired): that governs the app-wide "AI is working" lock, and gating it on
                     // a script run with no bounded runtime would just reintroduce the "stuck in Working" bug
                     // for a different reason - only this one request's own displayed status/ding waits.
-                    _pendingScriptCompletionRequest = request;
-                    _pendingScriptCompletionStatus = finalStatus;
+                    pendingScriptCompletionRequest = request;
+                    pendingScriptCompletionStatus = finalStatus;
                 }
                 else
                 {
@@ -1299,9 +1299,9 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
                 }
 
                 NormalTurnCompleted?.Invoke(!result.IsError);
-                if (_pendingScriptCompletionRequest is null)
+                if (pendingScriptCompletionRequest is null)
                 {
-                    _soundService.PlayDing();
+                    soundService.PlayDing();
                 }
 
                 break;
@@ -1312,7 +1312,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     {
         foreach (TextContentBlock block in assistant.Content.OfType<TextContentBlock>())
         {
-            _hiddenTurnText.Append(block.Text);
+            hiddenTurnText.Append(block.Text);
         }
     }
 
@@ -1320,7 +1320,7 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     {
         foreach (TextContentBlock block in assistant.Content.OfType<TextContentBlock>())
         {
-            _visibleAutomatedTurnText.Append(block.Text);
+            visibleAutomatedTurnText.Append(block.Text);
         }
 
         // Live-updates GenerateTabView's conflict-resolution panel as Claude's reply streams in, the same way
@@ -1335,23 +1335,23 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
             // Separate text blocks are usually separate thoughts (e.g. a note before a tool call, then a
             // distinct final reply after it) - a blank line between them reads far better than running them
             // together with no separator at all.
-            if (_activeRequestOutputBuffer.Length > 0)
+            if (activeRequestOutputBuffer.Length > 0)
             {
-                _activeRequestOutputBuffer.Append("\n\n");
+                activeRequestOutputBuffer.Append("\n\n");
             }
 
-            _activeRequestOutputBuffer.Append(block.Text);
+            activeRequestOutputBuffer.Append(block.Text);
 
             // Overwritten (not appended) - see _lastActiveRequestSegment's own doc comment.
-            _lastActiveRequestSegment = block.Text;
+            lastActiveRequestSegment = block.Text;
 
             // Live-updates the output section with Claude's latest words as they arrive, replacing whatever
             // was shown before - rather than leaving it empty the whole turn and only ever showing something
             // once it's fully done (and even then, often just the CLI's own short wrap-up summary rather than
             // whatever richer content Claude had already actually said).
-            if (_activeRequest is not null)
+            if (activeRequest is not null)
             {
-                _activeRequest.Output = block.Text;
+                activeRequest.Output = block.Text;
             }
         }
     }
@@ -1359,14 +1359,14 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
     private void CaptureActiveRequestToolUse(AssistantMessageEvent assistant)
     {
         ToolUseContentBlock? lastToolUse = assistant.ToolUses.LastOrDefault();
-        if (lastToolUse is not null && _activeRequest is not null)
+        if (lastToolUse is not null && activeRequest is not null)
         {
-            _activeRequest.CurrentAction = DescribeToolUse(lastToolUse);
+            activeRequest.CurrentAction = DescribeToolUse(lastToolUse);
 
             // Stamped unconditionally, even if the described text is identical to the previous action (e.g.
             // two separate reads of the same file) - each tool-use capture is a genuinely new span of work,
             // and CurrentAction's own change notification wouldn't fire for a repeated value.
-            _activeRequest.CurrentActionStartedAt = DateTimeOffset.UtcNow;
+            activeRequest.CurrentActionStartedAt = DateTimeOffset.UtcNow;
         }
     }
 
@@ -1401,13 +1401,13 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
 
     private async Task PersistSessionIdAsync()
     {
-        if (_client is null || _currentSessionKey is null)
+        if (client is null || currentSessionKey is null)
         {
             return;
         }
 
-        string encoded = $"{_providerSelection.CurrentProvider}:{_client.SessionId}";
-        await _metadataStore.SaveGenerateSessionIdAsync(_workspacePath, _currentSessionKey, encoded);
+        string encoded = $"{providerSelection.CurrentProvider}:{client.SessionId}";
+        await metadataStore.SaveGenerateSessionIdAsync(workspacePath, currentSessionKey, encoded);
     }
 
     /// <summary>
@@ -1429,22 +1429,22 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         int separatorIndex = persisted.IndexOf(':');
         if (separatorIndex < 0)
         {
-            return _providerSelection.CurrentProvider == AiProvider.Claude ? persisted : null;
+            return providerSelection.CurrentProvider == AiProvider.Claude ? persisted : null;
         }
 
         string provider = persisted[..separatorIndex];
         string sessionId = persisted[(separatorIndex + 1)..];
-        return string.Equals(provider, _providerSelection.CurrentProvider.ToString(), StringComparison.Ordinal) ? sessionId : null;
+        return string.Equals(provider, providerSelection.CurrentProvider.ToString(), StringComparison.Ordinal) ? sessionId : null;
     }
 
     public async ValueTask DisposeAsync()
     {
-        _providerSelection.ProviderChanged -= OnProviderChanged;
+        providerSelection.ProviderChanged -= OnProviderChanged;
 
-        _stallWatchdogTimer.Stop();
-        _stallWatchdogTimer.Dispose();
-        _elapsedDisplayTimer.Stop();
-        _elapsedDisplayTimer.Dispose();
+        stallWatchdogTimer.Stop();
+        stallWatchdogTimer.Dispose();
+        elapsedDisplayTimer.Stop();
+        elapsedDisplayTimer.Dispose();
 
         await FlushPendingDraftSaveAsync();
         await FlushPendingScriptCompletionAsync();
@@ -1455,15 +1455,15 @@ public sealed partial class GenerateTabViewModel : ViewModelBase, IAsyncDisposab
         // Treated exactly like an explicit Pause rather than a Cancel, so Resume can pick the turn back up
         // next launch no matter how the app came to close while it was still working. A request already
         // Paused is left alone - it's already correctly persisted from the moment PauseAsync ran.
-        if (_activeRequest is { Status: GenerateRequestStatus.Working } workingRequest)
+        if (activeRequest is { Status: GenerateRequestStatus.Working } workingRequest)
         {
             workingRequest.Status = GenerateRequestStatus.Paused;
             await PersistCurrentRequestsAsync();
         }
 
-        if (_client is not null)
+        if (client is not null)
         {
-            await _client.DisposeAsync();
+            await client.DisposeAsync();
         }
     }
 }

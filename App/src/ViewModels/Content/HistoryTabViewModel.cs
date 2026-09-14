@@ -21,21 +21,21 @@ namespace AutoDev.ViewModels.Content;
 /// </summary>
 public sealed partial class HistoryTabViewModel : ViewModelBase
 {
-    private const int PageSize = 100;
+    private static readonly int pageSize = 100;
 
-    private readonly IWorkspaceVersioningService _versioningService;
-    private readonly VersionSectionViewModel _version;
-    private readonly IDialogService _dialogService;
-    private readonly EditTabViewModel _edit;
+    private readonly IWorkspaceVersioningService versioningService;
+    private readonly VersionSectionViewModel version;
+    private readonly IDialogService dialogService;
+    private readonly EditTabViewModel edit;
 
     public HistoryTabViewModel(IWorkspaceVersioningService versioningService, VersionSectionViewModel version, IDialogService dialogService, EditTabViewModel edit)
     {
-        _versioningService = versioningService;
-        _version = version;
-        _dialogService = dialogService;
-        _edit = edit;
-        _version.TargetChanged += target => { _ = LoadBranchesAsync(); };
-        _version.PropertyChanged += (_, e) =>
+        this.versioningService = versioningService;
+        this.version = version;
+        this.dialogService = dialogService;
+        this.edit = edit;
+        this.version.TargetChanged += target => { _ = LoadBranchesAsync(); };
+        this.version.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(VersionSectionViewModel.IsInteractionBlocked))
             {
@@ -46,7 +46,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     }
 
     /// <summary>Disables every mutating action in this tab while true - mirrors VersionSectionViewModel.IsInteractionBlocked, since every action here runs through _version.RunBusyAsync just like the old Version section's own buttons did.</summary>
-    public bool IsInteractionBlocked => _version.IsInteractionBlocked;
+    public bool IsInteractionBlocked => version.IsInteractionBlocked;
 
     /// <summary>Shared CanExecute for every action command below (Checkout/MergeIntoCurrent/RebaseCurrentOnto/Delete/DeleteTag) - browsing the timeline itself (paging, expanding a commit's changes, selecting a branch) is pure local view state and stays interactive regardless, matching the old Version-section-vs-timeline split.</summary>
     private bool CanMutate() => !IsInteractionBlocked;
@@ -61,7 +61,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
         DeleteTagCommand.NotifyCanExecuteChanged();
     }
 
-    private readonly List<BranchSummary> _branches = [];
+    private readonly List<BranchSummary> branches = [];
 
     /// <summary>The flat local-branch list (current branch first, then alphabetical - see IWorkspaceVersioningService.ListAllBranchesAsync) - rebuilt from scratch every time it changes, since the list is small and changes rarely enough that a full rebuild is simplest, at no real cost.</summary>
     public ObservableCollection<BranchRowViewModel> BranchRows { get; } = [];
@@ -69,19 +69,19 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     public ObservableCollection<TimelineEntryViewModel> TimelineEntries { get; } = [];
 
     [ObservableProperty]
-    private string? _selectedBranchName;
+    private string? selectedBranchName;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PreviousTimelinePageCommand))]
     [NotifyCanExecuteChangedFor(nameof(NextTimelinePageCommand))]
     [NotifyPropertyChangedFor(nameof(TimelinePageLabel))]
-    private int _timelinePageIndex;
+    private int timelinePageIndex;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PreviousTimelinePageCommand))]
     [NotifyCanExecuteChangedFor(nameof(NextTimelinePageCommand))]
     [NotifyPropertyChangedFor(nameof(TimelinePageLabel))]
-    private int _timelinePageCount = 1;
+    private int timelinePageCount = 1;
 
     public string TimelinePageLabel => $"Page {TimelinePageIndex + 1} of {TimelinePageCount}";
 
@@ -99,8 +99,8 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     /// rows. Each call captures its own token and only applies its results if no newer call has started
     /// since - a stale in-flight call's results are simply discarded rather than applied out of order.
     /// </summary>
-    private int _branchesLoadToken;
-    private int _timelineLoadToken;
+    private int branchesLoadToken;
+    private int timelineLoadToken;
 
     /// <summary>
     /// Called automatically every time the History tab becomes the active one (see
@@ -119,29 +119,29 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     /// </summary>
     public async Task RefreshFromRemoteAsync()
     {
-        await _version.RefreshAsync();
-        await _version.PullWithStashIfNeededAsync();
-        await _version.RefreshAsync();
+        await version.RefreshAsync();
+        await version.PullWithStashIfNeededAsync();
+        await version.RefreshAsync();
     }
 
     private bool CanFetch() => !IsInteractionBlocked;
 
     /// <summary>The History tab's own manual "Fetch" button - fetch with prune, same as the automatic per-tab-open refresh above, but never also pulls even with a clean working tree; a deliberate click means "check what's new," not "also apply it." Goes through the normal busy overlay like every other action here - RunBusyAsync's own trailing RefreshAsync fetches again regardless (a cheap, harmless no-op re-fetch when nothing changed), traded for this action's own intent staying explicit here rather than relying on that as a side effect.</summary>
     [RelayCommand(CanExecute = nameof(CanFetch))]
-    private Task FetchAsync() => _version.RunBusyAsync(ct => _versioningService.SyncWithRemoteAsync(ct));
+    private Task FetchAsync() => version.RunBusyAsync(ct => versioningService.SyncWithRemoteAsync(ct));
 
     /// <summary>Called each time the History tab is activated, and whenever the targeted branch changes elsewhere in the app, so it reflects the latest branch list.</summary>
     public async Task LoadBranchesAsync()
     {
-        int token = ++_branchesLoadToken;
-        IReadOnlyList<BranchSummary> branches = await _versioningService.ListAllBranchesAsync();
-        if (token != _branchesLoadToken)
+        int token = ++branchesLoadToken;
+        IReadOnlyList<BranchSummary> branches = await versioningService.ListAllBranchesAsync();
+        if (token != branchesLoadToken)
         {
             return; // a newer LoadBranchesAsync call started while this one was awaiting - let it win
         }
 
-        _branches.Clear();
-        _branches.AddRange(branches);
+        this.branches.Clear();
+        this.branches.AddRange(branches);
         RebuildBranchRows();
 
         HashSet<string> stillPresent = branches.Select(b => b.Name).ToHashSet();
@@ -159,7 +159,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     private void RebuildBranchRows()
     {
         BranchRows.Clear();
-        foreach (BranchSummary branch in _branches)
+        foreach (BranchSummary branch in branches)
         {
             BranchRows.Add(new BranchRowViewModel(branch) { IsSelected = branch.Name == SelectedBranchName });
         }
@@ -175,9 +175,9 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
 
     private async Task LoadTimelineAsync(string? branchName, int pageIndex)
     {
-        int token = ++_timelineLoadToken;
-        BranchTimelinePage? page = branchName is null ? null : await _versioningService.GetBranchTimelinePageAsync(branchName, pageIndex, PageSize);
-        if (token != _timelineLoadToken)
+        int token = ++timelineLoadToken;
+        BranchTimelinePage? page = branchName is null ? null : await versioningService.GetBranchTimelinePageAsync(branchName, pageIndex, pageSize);
+        if (token != timelineLoadToken)
         {
             return; // a newer LoadTimelineAsync call started while this one was awaiting - let it win
         }
@@ -242,7 +242,7 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
         entry.IsLoadingChanges = true;
         try
         {
-            IReadOnlyList<GitChange> changes = await _versioningService.GetCommitChangesAsync(hash);
+            IReadOnlyList<GitChange> changes = await versioningService.GetCommitChangesAsync(hash);
             if (!entry.IsExpanded)
             {
                 return; // collapsed again while this was in flight
@@ -268,9 +268,9 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
             return;
         }
 
-        FileDiffContent diff = await _versioningService.GetFileDiffAsync(hash, path);
-        await _edit.LoadDiffAsync(Path.GetFileName(path), diff);
-        _edit.RequestFocus();
+        FileDiffContent diff = await versioningService.GetFileDiffAsync(hash, path);
+        await edit.LoadDiffAsync(Path.GetFileName(path), diff);
+        edit.RequestFocus();
     }
 
     // --- Actions - see each row's ContextMenu in HistoryTabView.axaml for where these are actually offered. ---
@@ -279,25 +279,25 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task CheckoutAsync(string refName)
     {
-        bool hasPendingChanges = await _versioningService.HasUncommittedChangesAsync();
+        bool hasPendingChanges = await versioningService.HasUncommittedChangesAsync();
         string message = hasPendingChanges
             ? $"Check out '{refName}'? This will discard your pending changes."
             : $"Check out '{refName}'?";
-        if (!await _dialogService.ShowConfirmDialogAsync("Checkout", message, confirmLabel: hasPendingChanges ? "Discard and Checkout" : "Checkout", isDestructive: hasPendingChanges))
+        if (!await dialogService.ShowConfirmDialogAsync("Checkout", message, confirmLabel: hasPendingChanges ? "Discard and Checkout" : "Checkout", isDestructive: hasPendingChanges))
         {
             return;
         }
 
-        await _version.RunBusyAsync(async ct =>
+        await version.RunBusyAsync(async ct =>
         {
             // Checkout fails (silently stays put) with a dirty working tree - discard first, exactly like the
             // confirmation just above already told the user would happen.
             if (hasPendingChanges)
             {
-                await _versioningService.ResetAsync(ct);
+                await versioningService.ResetAsync(ct);
             }
 
-            await _versioningService.CheckoutRefAsync(refName, ct);
+            await versioningService.CheckoutRefAsync(refName, ct);
         });
     }
 
@@ -305,31 +305,31 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task MergeIntoCurrentAsync(string sourceBranch)
     {
-        await _version.RunBusyAsync(async ct =>
+        await version.RunBusyAsync(async ct =>
         {
-            GitOperationOutcome outcome = await _versioningService.MergeAsync(sourceBranch, ct);
-            outcome = await _version.ResolveConflictsAsync(outcome, ct2 => _versioningService.ContinueMergeAsync(ct2), ct);
+            GitOperationOutcome outcome = await versioningService.MergeAsync(sourceBranch, ct);
+            outcome = await version.ResolveConflictsAsync(outcome, ct2 => versioningService.ContinueMergeAsync(ct2), ct);
             if (outcome == GitOperationOutcome.Succeeded)
             {
-                if (!await _versioningService.PushCurrentBranchAsync(force: true, ct))
+                if (!await versioningService.PushCurrentBranchAsync(force: true, ct))
                 {
-                    _version.MarkFailed("Merge succeeded locally, but pushing it to the remote failed.");
+                    version.MarkFailed("Merge succeeded locally, but pushing it to the remote failed.");
                     return;
                 }
 
-                if (!await _versioningService.DeleteBranchEverywhereAsync(sourceBranch, ct))
+                if (!await versioningService.DeleteBranchEverywhereAsync(sourceBranch, ct))
                 {
-                    _version.MarkFailed($"Merged, but deleting '{sourceBranch}' on the remote failed.");
+                    version.MarkFailed($"Merged, but deleting '{sourceBranch}' on the remote failed.");
                 }
             }
             else if (outcome == GitOperationOutcome.Conflicts)
             {
-                await _versioningService.AbortMergeAsync(ct);
-                _version.MarkFailed("Could not automatically resolve the merge conflicts - aborted.");
+                await versioningService.AbortMergeAsync(ct);
+                version.MarkFailed("Could not automatically resolve the merge conflicts - aborted.");
             }
             else
             {
-                _version.MarkFailed("Merge failed.");
+                version.MarkFailed("Merge failed.");
             }
         });
     }
@@ -338,25 +338,25 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task RebaseCurrentOntoAsync(string ontoBranch)
     {
-        await _version.RunBusyAsync(async ct =>
+        await version.RunBusyAsync(async ct =>
         {
-            GitOperationOutcome outcome = await _versioningService.RebaseAsync(ontoBranch, ct);
-            outcome = await _version.ResolveConflictsAsync(outcome, ct2 => _versioningService.ContinueRebaseAsync(ct2), ct);
+            GitOperationOutcome outcome = await versioningService.RebaseAsync(ontoBranch, ct);
+            outcome = await version.ResolveConflictsAsync(outcome, ct2 => versioningService.ContinueRebaseAsync(ct2), ct);
             if (outcome == GitOperationOutcome.Succeeded)
             {
-                if (!await _versioningService.PushCurrentBranchAsync(force: true, ct))
+                if (!await versioningService.PushCurrentBranchAsync(force: true, ct))
                 {
-                    _version.MarkFailed("Rebase succeeded locally, but pushing it to the remote failed.");
+                    version.MarkFailed("Rebase succeeded locally, but pushing it to the remote failed.");
                 }
             }
             else if (outcome == GitOperationOutcome.Conflicts)
             {
-                await _versioningService.AbortRebaseAsync(ct);
-                _version.MarkFailed("Could not automatically resolve the rebase conflicts - aborted.");
+                await versioningService.AbortRebaseAsync(ct);
+                version.MarkFailed("Could not automatically resolve the rebase conflicts - aborted.");
             }
             else
             {
-                _version.MarkFailed("Rebase failed.");
+                version.MarkFailed("Rebase failed.");
             }
         });
     }
@@ -364,22 +364,22 @@ public sealed partial class HistoryTabViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task DeleteBranchAsync(string name)
     {
-        if (!await _dialogService.ShowConfirmDialogAsync("Delete Branch", $"Delete branch '{name}'? This cannot be undone.", confirmLabel: "Delete"))
+        if (!await dialogService.ShowConfirmDialogAsync("Delete Branch", $"Delete branch '{name}'? This cannot be undone.", confirmLabel: "Delete"))
         {
             return;
         }
 
-        await _version.RunBusyAsync(ct => _versioningService.DeleteBranchEverywhereAsync(name, ct));
+        await version.RunBusyAsync(ct => versioningService.DeleteBranchEverywhereAsync(name, ct));
     }
 
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task DeleteTagAsync(string name)
     {
-        if (!await _dialogService.ShowConfirmDialogAsync("Delete Tag", $"Delete tag '{name}'? This cannot be undone.", confirmLabel: "Delete"))
+        if (!await dialogService.ShowConfirmDialogAsync("Delete Tag", $"Delete tag '{name}'? This cannot be undone.", confirmLabel: "Delete"))
         {
             return;
         }
 
-        await _version.RunBusyAsync(ct => _versioningService.DeleteTagEverywhereAsync(name, ct));
+        await version.RunBusyAsync(ct => versioningService.DeleteTagEverywhereAsync(name, ct));
     }
 }

@@ -2,7 +2,7 @@ namespace AutoDev.Core.Services;
 
 public sealed class FileTreeService(IGitService gitService) : IFileTreeService
 {
-    private const string MetadataDirName = ".autodev";
+    private static readonly string metadataDirName = ".autodev";
 
     public IReadOnlyList<FileSystemEntry> GetChildren(string directoryPath)
     {
@@ -13,7 +13,7 @@ public sealed class FileTreeService(IGitService gitService) : IFileTreeService
 
         IEnumerable<FileSystemEntry> directories = Directory.EnumerateDirectories(directoryPath)
             .Select(Path.GetFileName)
-            .Where(n => n is { Length: > 0 } && n != MetadataDirName && n != ".git")
+            .Where(n => n is { Length: > 0 } && n != metadataDirName && n != ".git")
             .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
             .Select(n => new FileSystemEntry(n!, Path.Combine(directoryPath, n!), IsDirectory: true));
 

@@ -6,14 +6,14 @@
 
 using Markwardt.ScriptUtilities;
 
-const string TestResultsFolder = "TestResults";
+string testResultsFolder = "TestResults";
 
 (await Script.Run(false, "dotnet", "tool", "restore")).Verify();
-Script.Delete(TestResultsFolder);
+Script.Delete(testResultsFolder);
 
-(await Script.Run("dotnet", "test", "Tests/Tests.csproj", "--settings", "Tests/coverage.runsettings", "--collect:XPlat Code Coverage", "--results-directory", TestResultsFolder)).Verify();
+(await Script.Run("dotnet", "test", "Tests/Tests.csproj", "--settings", "Tests/coverage.runsettings", "--collect:XPlat Code Coverage", "--results-directory", testResultsFolder)).Verify();
 
-(await Script.Run(false, "dotnet", "reportgenerator", $"-reports:{TestResultsFolder}/**/coverage.cobertura.xml", $"-targetdir:{TestResultsFolder}", "-reporttypes:TextSummary")).Verify();
+(await Script.Run(false, "dotnet", "reportgenerator", $"-reports:{testResultsFolder}/**/coverage.cobertura.xml", $"-targetdir:{testResultsFolder}", "-reporttypes:TextSummary")).Verify();
 
-Script.Log(await Script.Read(Path.Combine(TestResultsFolder, "Summary.txt")) ?? throw new InvalidOperationException("Coverage summary was not generated."));
-Script.Delete(TestResultsFolder);
+Script.Log(await Script.Read(Path.Combine(testResultsFolder, "Summary.txt")) ?? throw new InvalidOperationException("Coverage summary was not generated."));
+Script.Delete(testResultsFolder);

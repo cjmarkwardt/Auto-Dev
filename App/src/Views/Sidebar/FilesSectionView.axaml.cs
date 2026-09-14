@@ -10,11 +10,11 @@ namespace AutoDev.Views.Sidebar;
 public partial class FilesSectionView : UserControl
 {
     /// <summary>How far the pointer must move (in DIPs) past a row's PointerPressed before it counts as a drag rather than a click - keeps an ordinary click/select from ever misfiring DoDragDropAsync.</summary>
-    private const double DragStartThreshold = 4;
+    private static readonly double dragStartThreshold = 4;
 
-    private FileTreeNodeViewModel? _dragCandidateNode;
-    private PointerPressedEventArgs? _dragPressArgs;
-    private Point _dragStartPosition;
+    private FileTreeNodeViewModel? dragCandidateNode;
+    private PointerPressedEventArgs? dragPressArgs;
+    private Point dragStartPosition;
 
     public FilesSectionView()
     {
@@ -30,9 +30,9 @@ public partial class FilesSectionView : UserControl
 
         if (!node.IsPlaceholder && e.GetCurrentPoint(element).Properties.IsLeftButtonPressed)
         {
-            _dragCandidateNode = node;
-            _dragPressArgs = e;
-            _dragStartPosition = e.GetPosition(element);
+            dragCandidateNode = node;
+            dragPressArgs = e;
+            dragStartPosition = e.GetPosition(element);
         }
 
         if (!node.IsDirectory && DataContext is FilesSectionViewModel vm)
@@ -54,25 +54,25 @@ public partial class FilesSectionView : UserControl
     /// </summary>
     private async void OnRowPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (_dragCandidateNode is not { } node || _dragPressArgs is not { } pressArgs || sender is not Control element)
+        if (dragCandidateNode is not { } node || dragPressArgs is not { } pressArgs || sender is not Control element)
         {
             return;
         }
 
         if (!e.GetCurrentPoint(element).Properties.IsLeftButtonPressed)
         {
-            _dragCandidateNode = null;
-            _dragPressArgs = null;
+            dragCandidateNode = null;
+            dragPressArgs = null;
             return;
         }
 
-        if (Point.Distance(e.GetPosition(element), _dragStartPosition) < DragStartThreshold)
+        if (Point.Distance(e.GetPosition(element), dragStartPosition) < dragStartThreshold)
         {
             return;
         }
 
-        _dragCandidateNode = null;
-        _dragPressArgs = null;
+        dragCandidateNode = null;
+        dragPressArgs = null;
 
         if (TopLevel.GetTopLevel(this)?.StorageProvider is not { } storageProvider)
         {
@@ -96,8 +96,8 @@ public partial class FilesSectionView : UserControl
 
     private void OnRowPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        _dragCandidateNode = null;
-        _dragPressArgs = null;
+        dragCandidateNode = null;
+        dragPressArgs = null;
     }
 
     private void OnRowDragOver(object? sender, DragEventArgs e)

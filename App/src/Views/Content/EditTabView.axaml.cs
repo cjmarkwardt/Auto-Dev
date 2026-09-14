@@ -23,24 +23,24 @@ namespace AutoDev.Views.Content;
 
 public partial class EditTabView : UserControl
 {
-    private readonly RegistryOptions _registryOptions = new(ThemeName.DarkPlus);
-    private TextEditor? _editor;
-    private TextMate.Installation? _textMateInstallation;
-    private bool _isSyncingFromVm;
-    private MarkdownScrollViewer? _markdownPreview;
-    private HexViewControl? _hexViewer;
-    private TextBox? _findBox;
+    private readonly RegistryOptions registryOptions = new(ThemeName.DarkPlus);
+    private TextEditor? editor;
+    private TextMate.Installation? textMateInstallation;
+    private bool isSyncingFromVm;
+    private MarkdownScrollViewer? markdownPreview;
+    private HexViewControl? hexViewer;
+    private TextBox? findBox;
 
     /// <summary>The memory-mapped file backing _hexViewer's current LineReader, and the path it maps - see UpdateHexView. Disposed as soon as a different file loads (hex or not) or this View detaches, so a hex-viewed file is never held open longer than it's actually on screen.</summary>
-    private MemoryMappedLineReader? _hexReader;
-    private string? _hexReaderPath;
+    private MemoryMappedLineReader? hexReader;
+    private string? hexReaderPath;
 
     /// <summary>
     /// One AvaloniaEdit TextDocument per open file path, each with its own independent UndoStack (a fresh
     /// TextDocument gets a fresh one) - reused across switches so undo/redo history stays isolated per file
     /// instead of all files sharing the single TextEditor's default document. See OnFileLoaded.
     /// </summary>
-    private readonly Dictionary<string, TextDocument> _documentsByPath = [];
+    private readonly Dictionary<string, TextDocument> documentsByPath = [];
 
     /// <summary>
     /// The EditTabViewModel OnDataContextChanged/DetachedFromVisualTree are currently subscribed to, if any -
@@ -55,44 +55,44 @@ public partial class EditTabView : UserControl
     /// Select(offset, length) with an offset valid for the old tab's document but not the new one's crashed
     /// with an ArgumentOutOfRangeException.
     /// </summary>
-    private EditTabViewModel? _subscribedVm;
+    private EditTabViewModel? subscribedVm;
 
     /// <summary>The markdown-preview counterpart to _findBox's plain-text search - each entry is one match's owning CTextBlock plus its (start, length) within that block's own Text. Rebuilt from scratch by RecomputePreviewMatches on every query/option change, since the preview's whole CTextBlock tree is itself rebuilt from scratch on every Markdown change (see OnMarkdownPreviewPropertyChanged) - there's no stable identity to incrementally update against.</summary>
-    private readonly List<(CTextBlock Block, int Start, int Length)> _previewMatches = [];
+    private readonly List<(CTextBlock Block, int Start, int Length)> previewMatches = [];
 
     /// <summary>0-based index into _previewMatches of whichever match is currently selected/scrolled-to; -1 while there's no current match. The ViewModel's own FindCurrentMatchIndex (1-based, shared with plain-text mode's "N of M" display) is always kept one higher than this.</summary>
-    private int _previewMatchIndex = -1;
+    private int previewMatchIndex = -1;
 
     /// <summary>Whichever CTextBlock NavigateToPreviewMatch last selected, if any - cleared before selecting a new one (or when the bar closes/query changes to no matches) so a stale highlight never lingers on a block that's no longer the current match.</summary>
-    private CTextBlock? _previewSelectedBlock;
+    private CTextBlock? previewSelectedBlock;
 
     public EditTabView()
     {
         InitializeComponent();
-        ProtoTextMateGrammar.Register(_registryOptions);
-        _editor = this.FindControl<TextEditor>("Editor");
-        if (_editor is not null)
+        ProtoTextMateGrammar.Register(registryOptions);
+        editor = this.FindControl<TextEditor>("Editor");
+        if (editor is not null)
         {
-            _textMateInstallation = _editor.InstallTextMate(_registryOptions);
-            _editor.TextChanged += OnEditorTextChanged;
+            textMateInstallation = editor.InstallTextMate(registryOptions);
+            editor.TextChanged += OnEditorTextChanged;
 
             // AvaloniaEdit's built-in hyperlink detection (e.g. URLs inside XML attribute values)
             // defaults TextView.LinkTextForegroundBrush to Brushes.Blue (#0000FF), which is hard to
             // read against our dark background and is unrelated to/not overridden by the TextMate theme.
-            _editor.TextArea.TextView.LinkTextForegroundBrush = new SolidColorBrush(Color.Parse("#4FC1FF"));
+            editor.TextArea.TextView.LinkTextForegroundBrush = new SolidColorBrush(Color.Parse("#4FC1FF"));
 
             // The line number margin butts directly against the text with no gap of its own - Editor's
             // outer Padding only affects the far left/right edges, not this internal seam.
-            if (_editor.TextArea.LeftMargins.OfType<LineNumberMargin>().FirstOrDefault() is { } lineNumberMargin)
+            if (editor.TextArea.LeftMargins.OfType<LineNumberMargin>().FirstOrDefault() is { } lineNumberMargin)
             {
                 lineNumberMargin.Margin = new Thickness(0, 0, 10, 0);
             }
         }
 
-        _markdownPreview = this.FindControl<MarkdownScrollViewer>("MarkdownPreview");
-        if (_markdownPreview is not null)
+        markdownPreview = this.FindControl<MarkdownScrollViewer>("MarkdownPreview");
+        if (markdownPreview is not null)
         {
-            _markdownPreview.PropertyChanged += OnMarkdownPreviewPropertyChanged;
+            markdownPreview.PropertyChanged += OnMarkdownPreviewPropertyChanged;
 
             // The code-block copy button (Button.CopyButton) doesn't exist yet when ApplyMarkdownCodeColors
             // runs after a Markdown change - CodePad (Markdown.Avalonia.SyntaxHigh) only adds it to its own
@@ -102,21 +102,21 @@ public partial class EditTabView : UserControl
             // whichever control's own bounds were entered, never to ancestors), so this reliably re-scans
             // every time the pointer moves anywhere over the preview, catching the button the first moment
             // it actually exists.
-            _markdownPreview.PointerMoved += (_, _) => ApplyMarkdownCopyButtonFix();
+            markdownPreview.PointerMoved += (_, _) => ApplyMarkdownCopyButtonFix();
 
             // Engine already holds a live default Markdown instance the moment MarkdownScrollViewer itself
             // is constructed (see its own ctor) - safe to configure right away, before any Markdown content
             // is ever set. See OnMarkdownLinkClicked for the three kinds of link this handles.
-            if (_markdownPreview.Engine is Markdown.Avalonia.Markdown engine)
+            if (markdownPreview.Engine is Markdown.Avalonia.Markdown engine)
             {
                 engine.HyperlinkCommand = new RelayCommand<string?>(OnMarkdownLinkClicked);
             }
         }
 
-        _hexViewer = this.FindControl<HexViewControl>("HexViewer");
+        hexViewer = this.FindControl<HexViewControl>("HexViewer");
 
-        _findBox = this.FindControl<TextBox>("FindBox");
-        _findBox?.AddHandler(KeyDownEvent, OnFindBoxKeyDown, RoutingStrategies.Tunnel);
+        findBox = this.FindControl<TextBox>("FindBox");
+        findBox?.AddHandler(KeyDownEvent, OnFindBoxKeyDown, RoutingStrategies.Tunnel);
 
         DataContextChanged += OnDataContextChanged;
 
@@ -176,9 +176,9 @@ public partial class EditTabView : UserControl
             // AvaloniaEdit selection" to seed from.
             if (!Vm.IsFindBarOpen)
             {
-                if (Vm.ShowTextEditor && _editor is { SelectionLength: > 0 })
+                if (Vm.ShowTextEditor && editor is { SelectionLength: > 0 })
                 {
-                    Vm.FindText = _editor.SelectedText;
+                    Vm.FindText = editor.SelectedText;
                 }
 
                 Vm.IsFindBarOpen = true;
@@ -219,8 +219,8 @@ public partial class EditTabView : UserControl
 
     private void FocusFindBox() => Dispatcher.UIThread.Post(() =>
     {
-        _findBox?.Focus();
-        _findBox?.SelectAll();
+        findBox?.Focus();
+        findBox?.SelectAll();
     }, DispatcherPriority.Background);
 
     /// <summary>
@@ -234,15 +234,15 @@ public partial class EditTabView : UserControl
     /// </summary>
     private void OnNavigateToMatch(int offset, int length)
     {
-        if (_editor?.Document is not { } document || offset < 0 || length < 0 || offset + length > document.TextLength)
+        if (editor?.Document is not { } document || offset < 0 || length < 0 || offset + length > document.TextLength)
         {
             return;
         }
 
-        _editor.Select(offset, length);
+        editor.Select(offset, length);
         TextLocation location = document.GetLocation(offset);
-        _editor.ScrollTo(location.Line, location.Column);
-        _editor.TextArea.Caret.BringCaretToView();
+        editor.ScrollTo(location.Line, location.Column);
+        editor.TextArea.Caret.BringCaretToView();
     }
 
     /// <summary>
@@ -279,12 +279,12 @@ public partial class EditTabView : UserControl
     /// </summary>
     private void ScrollToHeading(string anchor)
     {
-        if (_markdownPreview is null || anchor.Length == 0)
+        if (markdownPreview is null || anchor.Length == 0)
         {
             return;
         }
 
-        CTextBlock? heading = _markdownPreview.GetLogicalDescendants()
+        CTextBlock? heading = markdownPreview.GetLogicalDescendants()
             .OfType<CTextBlock>()
             .FirstOrDefault(t =>
                 t.Classes.Any(c => c is "Heading1" or "Heading2" or "Heading3" or "Heading4" or "Heading5" or "Heading6") &&
@@ -306,31 +306,31 @@ public partial class EditTabView : UserControl
     /// </summary>
     private void RecomputePreviewMatches()
     {
-        _previewSelectedBlock?.ClearSelection();
-        _previewSelectedBlock = null;
-        _previewMatches.Clear();
-        _previewMatchIndex = -1;
+        previewSelectedBlock?.ClearSelection();
+        previewSelectedBlock = null;
+        previewMatches.Clear();
+        previewMatchIndex = -1;
 
-        if (Vm is not { IsFindBarOpen: true, ShowMarkdownPreview: true } vm || _markdownPreview is null)
+        if (Vm is not { IsFindBarOpen: true, ShowMarkdownPreview: true } vm || markdownPreview is null)
         {
             return;
         }
 
         if (vm.FindText.Length > 0)
         {
-            foreach (CTextBlock block in _markdownPreview.GetLogicalDescendants().OfType<CTextBlock>())
+            foreach (CTextBlock block in markdownPreview.GetLogicalDescendants().OfType<CTextBlock>())
             {
                 foreach (int offset in TextSearch.FindAllMatches(block.Text, vm.FindText, vm.FindMatchCase, vm.FindMatchWholeWord))
                 {
-                    _previewMatches.Add((block, offset, vm.FindText.Length));
+                    previewMatches.Add((block, offset, vm.FindText.Length));
                 }
             }
         }
 
-        vm.FindMatchCount = _previewMatches.Count;
-        vm.FindCurrentMatchIndex = _previewMatches.Count > 0 ? 1 : 0;
+        vm.FindMatchCount = previewMatches.Count;
+        vm.FindCurrentMatchIndex = previewMatches.Count > 0 ? 1 : 0;
 
-        if (_previewMatches.Count > 0)
+        if (previewMatches.Count > 0)
         {
             NavigateToPreviewMatch(0);
         }
@@ -339,32 +339,32 @@ public partial class EditTabView : UserControl
     /// <summary>EditTabViewModel.PreviewMatchMoveRequested's handler - the markdown-preview counterpart to EditTabViewModel.MoveToMatch, run here instead of there for the same reason RecomputePreviewMatches is (see its own doc comment).</summary>
     private void MovePreviewMatch(int direction)
     {
-        if (Vm is not { } vm || _previewMatches.Count == 0)
+        if (Vm is not { } vm || previewMatches.Count == 0)
         {
             return;
         }
 
-        _previewMatchIndex = ((_previewMatchIndex + direction) % _previewMatches.Count + _previewMatches.Count) % _previewMatches.Count;
-        vm.FindCurrentMatchIndex = _previewMatchIndex + 1;
-        NavigateToPreviewMatch(_previewMatchIndex);
+        previewMatchIndex = ((previewMatchIndex + direction) % previewMatches.Count + previewMatches.Count) % previewMatches.Count;
+        vm.FindCurrentMatchIndex = previewMatchIndex + 1;
+        NavigateToPreviewMatch(previewMatchIndex);
     }
 
     /// <summary>Selects (highlights) and scrolls to _previewMatches[index], clearing whichever match was previously selected first - CTextBlock.Select takes absolute begin/end character offsets into its own Text, not a (start, length) pair like AvaloniaEdit.TextEditor.Select.</summary>
     private void NavigateToPreviewMatch(int index)
     {
-        _previewSelectedBlock?.ClearSelection();
+        previewSelectedBlock?.ClearSelection();
 
-        if (index < 0 || index >= _previewMatches.Count)
+        if (index < 0 || index >= previewMatches.Count)
         {
-            _previewSelectedBlock = null;
+            previewSelectedBlock = null;
             return;
         }
 
-        (CTextBlock? block, int start, int length) = _previewMatches[index];
+        (CTextBlock? block, int start, int length) = previewMatches[index];
         block.Select(start, start + length);
         block.BringIntoView();
-        _previewSelectedBlock = block;
-        _previewMatchIndex = index;
+        previewSelectedBlock = block;
+        previewMatchIndex = index;
     }
 
     /// <summary>Mirrors GitHub's own heading-anchor algorithm closely enough for real-world use: lowercase, spaces to hyphens, anything other than a letter/digit/hyphen/underscore stripped. Doesn't handle GitHub's duplicate-heading "-1"/"-2" suffixing - the first (and in practice only) heading with a given text always wins here.</summary>
@@ -409,27 +409,27 @@ public partial class EditTabView : UserControl
         Vm.FindBarFocusRequested += FocusFindBox;
         Vm.PreviewSearchInvalidated += RecomputePreviewMatches;
         Vm.PreviewMatchMoveRequested += MovePreviewMatch;
-        _subscribedVm = Vm;
+        subscribedVm = Vm;
         OnFileLoaded(null);
     }
 
     private void Unsubscribe()
     {
-        if (_subscribedVm is null)
+        if (subscribedVm is null)
         {
             return;
         }
 
-        _subscribedVm.FocusRequested -= FocusEditor;
-        _subscribedVm.FileLoaded -= OnFileLoaded;
-        _subscribedVm.NavigateToMatch -= OnNavigateToMatch;
-        _subscribedVm.FindBarFocusRequested -= FocusFindBox;
-        _subscribedVm.PreviewSearchInvalidated -= RecomputePreviewMatches;
-        _subscribedVm.PreviewMatchMoveRequested -= MovePreviewMatch;
-        _subscribedVm = null;
+        subscribedVm.FocusRequested -= FocusEditor;
+        subscribedVm.FileLoaded -= OnFileLoaded;
+        subscribedVm.NavigateToMatch -= OnNavigateToMatch;
+        subscribedVm.FindBarFocusRequested -= FocusFindBox;
+        subscribedVm.PreviewSearchInvalidated -= RecomputePreviewMatches;
+        subscribedVm.PreviewMatchMoveRequested -= MovePreviewMatch;
+        subscribedVm = null;
     }
 
-    private void FocusEditor() => Dispatcher.UIThread.Post(() => _editor?.Focus(), DispatcherPriority.Background);
+    private void FocusEditor() => Dispatcher.UIThread.Post(() => editor?.Focus(), DispatcherPriority.Background);
 
     /// <summary>
     /// The sole place Vm.Content flows into the editor - fires on every completed load, including a reload
@@ -453,7 +453,7 @@ public partial class EditTabView : UserControl
     {
         UpdateHexView();
 
-        if (_editor is null || Vm is null || !Vm.HasTextContent || Vm.CurrentFilePath is not { } path)
+        if (editor is null || Vm is null || !Vm.HasTextContent || Vm.CurrentFilePath is not { } path)
         {
             // No document to attach a grammar to (image/binary file, or editor not ready yet) - still update
             // the language so a later text file open isn't left pointing at whatever grammar the previous
@@ -462,15 +462,15 @@ public partial class EditTabView : UserControl
             return;
         }
 
-        if (!_documentsByPath.TryGetValue(path, out TextDocument? document) || document.Text != Vm.Content)
+        if (!documentsByPath.TryGetValue(path, out TextDocument? document) || document.Text != Vm.Content)
         {
             document = new TextDocument(Vm.Content);
-            _documentsByPath[path] = document;
+            documentsByPath[path] = document;
         }
 
-        _isSyncingFromVm = true;
-        _editor.Document = document;
-        _isSyncingFromVm = false;
+        isSyncingFromVm = true;
+        editor.Document = document;
+        isSyncingFromVm = false;
 
         // Deliberately called AFTER the document swap above, not before: SetGrammar's own initial tokenize
         // pass runs against whatever document is CURRENTLY attached to the editor at the moment it's called,
@@ -486,9 +486,9 @@ public partial class EditTabView : UserControl
         if (seekToLine is { } line)
         {
             int clampedLine = Math.Clamp(line, 1, document.LineCount);
-            _editor.ScrollTo(clampedLine, 0);
-            _editor.CaretOffset = document.GetLineByNumber(clampedLine).Offset;
-            _editor.TextArea.Caret.BringCaretToView();
+            editor.ScrollTo(clampedLine, 0);
+            editor.CaretOffset = document.GetLineByNumber(clampedLine).Offset;
+            editor.TextArea.Caret.BringCaretToView();
         }
     }
 
@@ -508,62 +508,62 @@ public partial class EditTabView : UserControl
     /// <summary>Memory-maps path and points _hexViewer at it - a no-op if that exact file is already mapped (e.g. an unrelated FileLoaded replay), so a hex file already on screen never gets briefly unmapped and remapped out from under the control.</summary>
     private void SetupHexView(string path)
     {
-        if (_hexReader is not null && string.Equals(_hexReaderPath, path, StringComparison.Ordinal))
+        if (hexReader is not null && string.Equals(hexReaderPath, path, StringComparison.Ordinal))
         {
             return;
         }
 
         TeardownHexView();
 
-        _hexReader = new MemoryMappedLineReader(path);
-        _hexReaderPath = path;
+        hexReader = new MemoryMappedLineReader(path);
+        hexReaderPath = path;
 
-        if (_hexViewer is not null)
+        if (hexViewer is not null)
         {
-            _hexViewer.LineReader = _hexReader;
-            _hexViewer.HexFormatter = new HexFormatter(_hexReader.Length);
+            hexViewer.LineReader = hexReader;
+            hexViewer.HexFormatter = new HexFormatter(hexReader.Length);
         }
     }
 
     private void TeardownHexView()
     {
-        if (_hexReader is null)
+        if (hexReader is null)
         {
             return;
         }
 
-        if (_hexViewer is not null)
+        if (hexViewer is not null)
         {
-            _hexViewer.LineReader = null;
-            _hexViewer.HexFormatter = null;
+            hexViewer.LineReader = null;
+            hexViewer.HexFormatter = null;
         }
 
-        _hexReader.Dispose();
-        _hexReader = null;
-        _hexReaderPath = null;
+        hexReader.Dispose();
+        hexReader = null;
+        hexReaderPath = null;
     }
 
     private void OnEditorTextChanged(object? sender, EventArgs e)
     {
-        if (_isSyncingFromVm || Vm is null || _editor is null)
+        if (isSyncingFromVm || Vm is null || editor is null)
         {
             return;
         }
 
-        Vm.Content = _editor.Text;
+        Vm.Content = editor.Text;
     }
 
     private void UpdateLanguage()
     {
-        if (Vm?.CurrentFilePath is null || _editor is null || _textMateInstallation is null)
+        if (Vm?.CurrentFilePath is null || editor is null || textMateInstallation is null)
         {
             return;
         }
 
         string extension = System.IO.Path.GetExtension(Vm.CurrentFilePath);
-        _editor.SyntaxHighlighting = null;
-        Language? language = _registryOptions.GetLanguageByExtension(extension);
-        _textMateInstallation.SetGrammar(language is not null ? _registryOptions.GetScopeByLanguageId(language.Id) : null!);
+        editor.SyntaxHighlighting = null;
+        Language? language = registryOptions.GetLanguageByExtension(extension);
+        textMateInstallation.SetGrammar(language is not null ? registryOptions.GetScopeByLanguageId(language.Id) : null!);
     }
 
     private void OnMarkdownPreviewPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
@@ -596,7 +596,7 @@ public partial class EditTabView : UserControl
     /// </summary>
     private void ApplyMarkdownCodeColors()
     {
-        if (_markdownPreview is null)
+        if (markdownPreview is null)
         {
             return;
         }
@@ -604,7 +604,7 @@ public partial class EditTabView : UserControl
         IBrush? codeBackground = this.TryFindResource("HeaderBackgroundBrush", out object? background) ? background as IBrush : null;
         IBrush? codeBorderBrush = this.TryFindResource("BorderSubtleBrush", out object? borderBrush) ? borderBrush as IBrush : null;
 
-        List<Border> codeBlocks = _markdownPreview.GetLogicalDescendants().OfType<Border>().Where(b => b.Classes.Contains("CodeBlock")).ToList();
+        List<Border> codeBlocks = markdownPreview.GetLogicalDescendants().OfType<Border>().Where(b => b.Classes.Contains("CodeBlock")).ToList();
         HashSet<CCode> tokensInsideCodeBlocks = codeBlocks.SelectMany(b => b.GetLogicalDescendants().OfType<CCode>()).ToHashSet();
 
         // A fenced block with a recognized language renders as a real embedded AvaloniaEdit.TextEditor
@@ -629,7 +629,7 @@ public partial class EditTabView : UserControl
             codeEditor.TextArea.TextView.Redraw();
         }
 
-        foreach (CCode code in _markdownPreview.GetLogicalDescendants().OfType<CCode>())
+        foreach (CCode code in markdownPreview.GetLogicalDescendants().OfType<CCode>())
         {
             if (codeBackground is not null)
             {
@@ -668,7 +668,7 @@ public partial class EditTabView : UserControl
         // recognized-language block's highlighter *did* color individually - a Run's own explicit Foreground
         // still wins over its parent TextBlock's). FontFamily is set for the same reason as CCode's own
         // MonospaceFontFamily above - this element's own default is the same crash-prone composite font list.
-        foreach (TextBlock? text in _markdownPreview.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("CodeBlock")))
+        foreach (TextBlock? text in markdownPreview.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("CodeBlock")))
         {
             text.Foreground = Brushes.White;
             text.FontFamily = new FontFamily("monospace");
@@ -696,12 +696,12 @@ public partial class EditTabView : UserControl
     /// </summary>
     private void ApplyMarkdownCopyButtonFix()
     {
-        if (_markdownPreview is null)
+        if (markdownPreview is null)
         {
             return;
         }
 
-        foreach (Button? button in _markdownPreview.GetLogicalDescendants().OfType<Button>().Where(b => b.Classes.Contains("CopyButton")))
+        foreach (Button? button in markdownPreview.GetLogicalDescendants().OfType<Button>().Where(b => b.Classes.Contains("CopyButton")))
         {
             button.Padding = new Thickness(4, 0);
             button.MinHeight = 0;

@@ -6,16 +6,16 @@ namespace AutoDev.ViewModels.Dialogs;
 public sealed partial class ConfirmDialogViewModel : ViewModelBase
 {
     [ObservableProperty]
-    private string _title = "";
+    private string title = "";
 
     [ObservableProperty]
-    private string _message = "";
+    private string message = "";
 
     [ObservableProperty]
-    private string _confirmLabel = "Delete";
+    private string confirmLabel = "Delete";
 
     [ObservableProperty]
-    private bool _isDestructive = true;
+    private bool isDestructive = true;
 
     public event Action<bool>? RequestClose;
 

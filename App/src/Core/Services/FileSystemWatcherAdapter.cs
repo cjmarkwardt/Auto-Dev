@@ -2,13 +2,13 @@ namespace AutoDev.Core.Services;
 
 public sealed class FileSystemWatcherAdapter : IWorkspaceFileWatcher
 {
-    private static readonly TimeSpan DebounceWindow = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan debounceWindow = TimeSpan.FromMilliseconds(250);
 
-    private readonly FileSystemWatcher _watcher;
-    private readonly Lock _gate = new();
-    private readonly HashSet<string> _pendingPaths = new(StringComparer.Ordinal);
-    private readonly string[] _ignoredRoots;
-    private CancellationTokenSource? _debounceCts;
+    private readonly FileSystemWatcher watcher;
+    private readonly Lock gate = new();
+    private readonly HashSet<string> pendingPaths = new(StringComparer.Ordinal);
+    private readonly string[] ignoredRoots;
+    private CancellationTokenSource? debounceCts;
 
     public FileSystemWatcherAdapter(string workspacePath)
     {
@@ -20,49 +20,49 @@ public sealed class FileSystemWatcherAdapter : IWorkspaceFileWatcher
         // touches the index again, forever - visible as the whole Files tree (and any hover highlight in it)
         // continuously rebuilding/flickering every debounce window for as long as anything kept re-querying
         // git status in response.
-        _ignoredRoots =
+        ignoredRoots =
         [
             Path.Combine(workspacePath, ".git") + Path.DirectorySeparatorChar,
             Path.Combine(workspacePath, ".autodev") + Path.DirectorySeparatorChar,
         ];
 
-        _watcher = new FileSystemWatcher(workspacePath)
+        watcher = new FileSystemWatcher(workspacePath)
         {
             IncludeSubdirectories = true,
             NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
         };
-        _watcher.Changed += (_, e) => ScheduleRaise(e.FullPath);
-        _watcher.Created += (_, e) => ScheduleRaise(e.FullPath);
-        _watcher.Deleted += (_, e) => ScheduleRaise(e.FullPath);
-        _watcher.Renamed += (_, e) => ScheduleRaise(e.OldFullPath, e.FullPath);
-        _watcher.EnableRaisingEvents = true;
+        watcher.Changed += (_, e) => ScheduleRaise(e.FullPath);
+        watcher.Created += (_, e) => ScheduleRaise(e.FullPath);
+        watcher.Deleted += (_, e) => ScheduleRaise(e.FullPath);
+        watcher.Renamed += (_, e) => ScheduleRaise(e.OldFullPath, e.FullPath);
+        watcher.EnableRaisingEvents = true;
     }
 
     public event Action<IReadOnlySet<string>>? Changed;
 
-    private bool IsIgnored(string path) => _ignoredRoots.Any(root => path.StartsWith(root, StringComparison.Ordinal));
+    private bool IsIgnored(string path) => ignoredRoots.Any(root => path.StartsWith(root, StringComparison.Ordinal));
 
     private void ScheduleRaise(params ReadOnlySpan<string> paths)
     {
         CancellationTokenSource? cts = null;
-        lock (_gate)
+        lock (gate)
         {
             foreach (string path in paths)
             {
                 if (!IsIgnored(path))
                 {
-                    _pendingPaths.Add(path);
+                    pendingPaths.Add(path);
                 }
             }
 
-            if (_pendingPaths.Count == 0)
+            if (pendingPaths.Count == 0)
             {
                 return; // every path in this batch was under .git/.autodev - nothing worth debouncing/raising
             }
 
-            _debounceCts?.Cancel();
-            _debounceCts = new CancellationTokenSource();
-            cts = _debounceCts;
+            debounceCts?.Cancel();
+            debounceCts = new CancellationTokenSource();
+            cts = debounceCts;
         }
 
         _ = DebounceAndRaiseAsync(cts.Token);
@@ -72,7 +72,7 @@ public sealed class FileSystemWatcherAdapter : IWorkspaceFileWatcher
     {
         try
         {
-            await Task.Delay(DebounceWindow, cancellationToken);
+            await Task.Delay(debounceWindow, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -80,10 +80,10 @@ public sealed class FileSystemWatcherAdapter : IWorkspaceFileWatcher
         }
 
         HashSet<string> paths;
-        lock (_gate)
+        lock (gate)
         {
-            paths = [.. _pendingPaths];
-            _pendingPaths.Clear();
+            paths = [.. pendingPaths];
+            pendingPaths.Clear();
         }
 
         Changed?.Invoke(paths);
@@ -91,22 +91,22 @@ public sealed class FileSystemWatcherAdapter : IWorkspaceFileWatcher
 
     public void Pause()
     {
-        _watcher.EnableRaisingEvents = false;
-        lock (_gate)
+        watcher.EnableRaisingEvents = false;
+        lock (gate)
         {
-            _debounceCts?.Cancel();
-            _pendingPaths.Clear();
+            debounceCts?.Cancel();
+            pendingPaths.Clear();
         }
     }
 
-    public void Resume() => _watcher.EnableRaisingEvents = true;
+    public void Resume() => watcher.EnableRaisingEvents = true;
 
     public void Dispose()
     {
-        _watcher.EnableRaisingEvents = false;
-        _watcher.Dispose();
-        _debounceCts?.Cancel();
-        _debounceCts?.Dispose();
+        watcher.EnableRaisingEvents = false;
+        watcher.Dispose();
+        debounceCts?.Cancel();
+        debounceCts?.Dispose();
     }
 }
 

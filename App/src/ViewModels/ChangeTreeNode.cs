@@ -25,7 +25,7 @@ public sealed partial class ChangeTreeNode : ObservableObject
 
     /// <summary>Defaults to expanded - both a Changes Mode tree and a History tab expanded-commit tree are usually small, so starting fully open reads better than requiring a click through every folder. Bound TwoWay from the TreeViewItem, so both a manual toggle and FilesSectionViewModel.CollapseAll (see CollapseAll below) actually stick instead of being immediately overridden by a hardcoded always-expanded style.</summary>
     [ObservableProperty]
-    private bool _isExpanded = true;
+    private bool isExpanded = true;
 
     public List<ChangeTreeNode> Children { get; } = [];
 

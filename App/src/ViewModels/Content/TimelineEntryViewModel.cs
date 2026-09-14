@@ -22,11 +22,11 @@ public sealed partial class TimelineEntryViewModel(BranchTimelineEntry entry) : 
     public bool IsLastInPage { get; init; }
 
     [ObservableProperty]
-    private bool _isExpanded;
+    private bool isExpanded;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasNoChanges))]
-    private bool _isLoadingChanges;
+    private bool isLoadingChanges;
 
     public ObservableCollection<ChangeTreeNode> Changes { get; } = [];
 

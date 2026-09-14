@@ -13,14 +13,14 @@ public sealed class MarkdownLineBreakProcessorTests
     [Fact]
     public void LeavesTextWithNoBrTagUnchanged()
     {
-        const string markdown = "Just a plain paragraph with no tags at all.";
+        string markdown = "Just a plain paragraph with no tags at all.";
         Assert.Equal(markdown, MarkdownLineBreakProcessor.Process(markdown));
     }
 
     [Fact]
     public void LeavesABrTagInsideAFencedCodeBlockUntouched()
     {
-        const string markdown = "Text<br>before\n```html\n<p>Example<br>Text</p>\n```\nText<br>after";
+        string markdown = "Text<br>before\n```html\n<p>Example<br>Text</p>\n```\nText<br>after";
 
         string result = MarkdownLineBreakProcessor.Process(markdown);
 

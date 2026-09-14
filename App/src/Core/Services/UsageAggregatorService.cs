@@ -5,7 +5,7 @@ namespace AutoDev.Core.Services;
 
 public sealed class UsageAggregatorService : IUsageAggregatorService
 {
-    private readonly ConcurrentDictionary<string, UsageSnapshot> _bySessionOrRunId = new();
+    private readonly ConcurrentDictionary<string, UsageSnapshot> bySessionOrRunId = new();
 
     public UsageSnapshot TotalUsage { get; private set; } = UsageSnapshot.Zero;
 
@@ -13,8 +13,8 @@ public sealed class UsageAggregatorService : IUsageAggregatorService
 
     public void ReportUsage(string sessionOrRunId, UsageSnapshot snapshot)
     {
-        _bySessionOrRunId[sessionOrRunId] = snapshot;
-        TotalUsage = _bySessionOrRunId.Values.Aggregate(UsageSnapshot.Zero, (acc, s) => acc + s);
+        bySessionOrRunId[sessionOrRunId] = snapshot;
+        TotalUsage = bySessionOrRunId.Values.Aggregate(UsageSnapshot.Zero, (acc, s) => acc + s);
         TotalUsageChanged?.Invoke();
     }
 }

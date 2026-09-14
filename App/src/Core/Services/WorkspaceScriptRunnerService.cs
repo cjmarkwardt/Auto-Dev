@@ -11,52 +11,52 @@ public sealed class WorkspaceScriptRunnerService(
     IWorkspaceMetadataStore metadataStore,
     ILogger<WorkspaceScriptRunnerService> logger) : IWorkspaceScriptRunner
 {
-    private readonly ConcurrentDictionary<string, byte> _activeRuns = new();
-    private readonly ConcurrentDictionary<string, LiveScriptRun> _liveRuns = new();
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _runCancellations = new();
-    private readonly ConcurrentDictionary<string, byte> _userStopped = new();
-    private CancellationTokenSource? _cts;
+    private readonly ConcurrentDictionary<string, byte> activeRuns = new();
+    private readonly ConcurrentDictionary<string, LiveScriptRun> liveRuns = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> runCancellations = new();
+    private readonly ConcurrentDictionary<string, byte> userStopped = new();
+    private CancellationTokenSource? cts;
 
     /// <summary>0 while idle, 1 while any .cs file in this workspace is running - guards RunNowAsync so only one script total ever runs at a time per workspace, regardless of which .cs file it is. Set/cleared with Interlocked rather than folded into _activeRuns.TryAdd itself, since that dictionary stays keyed by path (IsRunning(scriptId)/GetLiveRun still need to answer "is *this* script running") while this is a single, path-independent gate.</summary>
-    private int _runInProgress;
+    private int runInProgress;
 
     public event Action<ScriptRef>? ScriptRunStarted;
     public event Action<ScriptRunRecord>? ScriptRunCompleted;
 
-    public bool IsRunning(string scriptId) => _activeRuns.ContainsKey(scriptId);
+    public bool IsRunning(string scriptId) => activeRuns.ContainsKey(scriptId);
 
     public bool StopRun(string scriptId)
     {
-        if (!_runCancellations.TryGetValue(scriptId, out CancellationTokenSource? cts))
+        if (!runCancellations.TryGetValue(scriptId, out CancellationTokenSource? cts))
         {
             return false;
         }
 
-        _userStopped[scriptId] = 0;
+        userStopped[scriptId] = 0;
         cts.Cancel();
         return true;
     }
 
-    public LiveScriptRun? GetLiveRun(string scriptId) => _liveRuns.GetValueOrDefault(scriptId);
+    public LiveScriptRun? GetLiveRun(string scriptId) => liveRuns.GetValueOrDefault(scriptId);
 
     /// <summary>Scripts only ever run manually (see IWorkspaceScriptRunner) - the runner exists purely to track/broadcast the state of runs kicked off via RunNowAsync, so there's no background loop to start; kept only so the CancellationTokenSource every run links against exists before the first RunNowAsync call.</summary>
-    public void Start() => _cts ??= new CancellationTokenSource();
+    public void Start() => cts ??= new CancellationTokenSource();
 
     public async Task RunNowAsync(ScriptRef script, CancellationToken cancellationToken = default)
     {
-        if (Interlocked.CompareExchange(ref _runInProgress, 1, 0) != 0)
+        if (Interlocked.CompareExchange(ref runInProgress, 1, 0) != 0)
         {
             return; // another script (or this same one) is already running - only one script total runs at a time
         }
 
-        _activeRuns.TryAdd(script.Path, 0);
+        activeRuns.TryAdd(script.Path, 0);
         try
         {
             await RunAndTrackAsync(script, cancellationToken);
         }
         finally
         {
-            Interlocked.Exchange(ref _runInProgress, 0);
+            Interlocked.Exchange(ref runInProgress, 0);
         }
     }
 
@@ -68,17 +68,17 @@ public sealed class WorkspaceScriptRunnerService(
         // actually kills the underlying subprocess instead of leaving it orphaned and running forever with
         // no way to ever persist a run record for it. Not a `using` here - StopRun needs to reach this
         // specific run's token from outside, for as long as the run is active.
-        CancellationTokenSource linkedCts = _cts is not null
-            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _cts.Token)
+        CancellationTokenSource linkedCts = cts is not null
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token)
             : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _runCancellations[script.Path] = linkedCts;
+        runCancellations[script.Path] = linkedCts;
 
         // GetLiveRun(script.Path) must already resolve by the time a ScriptRunStarted subscriber (see
         // ScriptTabViewModel.OnAnyRunStarted) reacts to it, so this is registered before that event fires
         // rather than after - a subscriber reacting to the event and immediately calling GetLiveRun would
         // otherwise race this method's own continuation.
         LiveScriptRun liveRun = new LiveScriptRun();
-        _liveRuns[script.Path] = liveRun;
+        liveRuns[script.Path] = liveRun;
 
         ScriptRunStarted?.Invoke(script);
 
@@ -129,7 +129,7 @@ public sealed class WorkspaceScriptRunnerService(
                 // WasStopped, rather than propagating out and skipping that entirely.
             }
 
-            bool wasStopped = _userStopped.ContainsKey(script.Path);
+            bool wasStopped = userStopped.ContainsKey(script.Path);
             ScriptRunRecord record = new ScriptRunRecord
             {
                 FilePath = script.Path,
@@ -151,11 +151,11 @@ public sealed class WorkspaceScriptRunnerService(
         finally
         {
             liveRun.MarkFinished();
-            _runCancellations.TryRemove(script.Path, out _);
-            _userStopped.TryRemove(script.Path, out _);
+            runCancellations.TryRemove(script.Path, out _);
+            userStopped.TryRemove(script.Path, out _);
             linkedCts.Dispose();
-            _liveRuns.TryRemove(script.Path, out _);
-            _activeRuns.TryRemove(script.Path, out _);
+            liveRuns.TryRemove(script.Path, out _);
+            activeRuns.TryRemove(script.Path, out _);
         }
     }
 
@@ -189,8 +189,8 @@ public sealed class WorkspaceScriptRunnerService(
 
     public void Dispose()
     {
-        _cts?.Cancel();
-        _cts?.Dispose();
+        cts?.Cancel();
+        cts?.Dispose();
     }
 }
 

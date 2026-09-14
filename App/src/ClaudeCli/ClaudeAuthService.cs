@@ -9,7 +9,7 @@ namespace AutoDev.ClaudeCli;
 
 public sealed class ClaudeAuthService(ILogger<ClaudeAuthService> logger) : IAiAuthService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web);
 
     public AiProvider Provider => AiProvider.Claude;
 
@@ -29,7 +29,7 @@ public sealed class ClaudeAuthService(ILogger<ClaudeAuthService> logger) : IAiAu
                 return AiAuthStatus.NotLoggedIn;
             }
 
-            return JsonSerializer.Deserialize<AiAuthStatus>(result.StandardOutput, JsonOptions)
+            return JsonSerializer.Deserialize<AiAuthStatus>(result.StandardOutput, jsonOptions)
                    ?? AiAuthStatus.NotLoggedIn;
         }
         catch (Exception ex)

@@ -26,13 +26,13 @@ public sealed partial class MergeDialogViewModel : ViewModelBase
     public IReadOnlyList<string> Branches { get; }
 
     [ObservableProperty]
-    private string? _selectedBranch;
+    private string? selectedBranch;
 
     [ObservableProperty]
-    private string _message = "";
+    private string message = "";
 
     [ObservableProperty]
-    private bool _isLoadingMessage;
+    private bool isLoadingMessage;
 
     public bool CanConfirm => SelectedBranch is not null && Message.Trim().Length > 0;
 

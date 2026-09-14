@@ -20,33 +20,33 @@ namespace AutoDev.Views.Content;
 
 public partial class GenerateTabView : UserControl
 {
-    private ScrollViewer? _scroller;
-    private TextBox? _inputBox;
-    private MarkdownScrollViewer? _outputMarkdown;
+    private ScrollViewer? scroller;
+    private TextBox? inputBox;
+    private MarkdownScrollViewer? outputMarkdown;
 
     /// <summary>The GenerateTabViewModel OnVmPropertyChanged/FocusInput are currently subscribed to, if any - tracked so both OnDataContextChanged and DetachedFromVisualTree can unsubscribe it. Avalonia never recycles this view across a workspace-tab switch - a brand new GenerateTabView is templated for whichever WorkspaceViewModel becomes selected, and the previous one is simply dropped, so DataContextChanged alone never fires again to clean it up (see WorkspaceView's own identical fix/doc comment) - without unsubscribing on detach too, every past tab switch leaves one more GenerateTabView permanently reachable through its own workspace's long-lived GenerateTabViewModel.</summary>
-    private GenerateTabViewModel? _subscribedVm;
+    private GenerateTabViewModel? subscribedVm;
 
     public GenerateTabView()
     {
         InitializeComponent();
-        _scroller = this.FindControl<ScrollViewer>("Scroller");
-        _inputBox = this.FindControl<TextBox>("InputBox");
-        if (_inputBox is not null)
+        scroller = this.FindControl<ScrollViewer>("Scroller");
+        inputBox = this.FindControl<TextBox>("InputBox");
+        if (inputBox is not null)
         {
             // Tunnel (not bubble): TextBox's own AcceptsReturn handling consumes Enter during the
             // bubble phase to insert a newline, so we must intercept during tunneling to get first look.
-            _inputBox.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
+            inputBox.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
         }
 
         // Same code-span/code-block/copy-button fixes as EditTabView.axaml.cs's MarkdownScrollViewer (see
         // ApplyMarkdownCodeColors/ApplyMarkdownCopyButtonFix's doc comments there for the full rationale) -
         // this is a second, independent MarkdownScrollViewer instance, so it needs its own patching.
-        _outputMarkdown = this.FindControl<MarkdownScrollViewer>("OutputMarkdown");
-        if (_outputMarkdown is not null)
+        outputMarkdown = this.FindControl<MarkdownScrollViewer>("OutputMarkdown");
+        if (outputMarkdown is not null)
         {
-            _outputMarkdown.PropertyChanged += OnOutputMarkdownPropertyChanged;
-            _outputMarkdown.PointerMoved += (_, _) => ApplyMarkdownCopyButtonFix();
+            outputMarkdown.PropertyChanged += OnOutputMarkdownPropertyChanged;
+            outputMarkdown.PointerMoved += (_, _) => ApplyMarkdownCopyButtonFix();
         }
 
         DataContextChanged += OnDataContextChanged;
@@ -70,23 +70,23 @@ public partial class GenerateTabView : UserControl
         {
             vm.PropertyChanged += OnVmPropertyChanged;
             vm.FocusRequested += FocusInput;
-            _subscribedVm = vm;
+            subscribedVm = vm;
         }
     }
 
     private void Unsubscribe()
     {
-        if (_subscribedVm is null)
+        if (subscribedVm is null)
         {
             return;
         }
 
-        _subscribedVm.PropertyChanged -= OnVmPropertyChanged;
-        _subscribedVm.FocusRequested -= FocusInput;
-        _subscribedVm = null;
+        subscribedVm.PropertyChanged -= OnVmPropertyChanged;
+        subscribedVm.FocusRequested -= FocusInput;
+        subscribedVm = null;
     }
 
-    private void FocusInput() => Dispatcher.UIThread.Post(() => _inputBox?.Focus(), DispatcherPriority.Background);
+    private void FocusInput() => Dispatcher.UIThread.Post(() => inputBox?.Focus(), DispatcherPriority.Background);
 
     /// <summary>Switching to a different displayed request should show its input from the top, not wherever the scroll position happened to be left from the previously-displayed one.</summary>
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -97,7 +97,7 @@ public partial class GenerateTabView : UserControl
         }
     }
 
-    private void ScrollToTop() => Dispatcher.UIThread.Post(() => _scroller?.ScrollToHome(), DispatcherPriority.Background);
+    private void ScrollToTop() => Dispatcher.UIThread.Post(() => scroller?.ScrollToHome(), DispatcherPriority.Background);
 
     private void OnOutputMarkdownPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
@@ -112,7 +112,7 @@ public partial class GenerateTabView : UserControl
     /// <summary>Same fix as EditTabView.axaml.cs's ApplyMarkdownCodeColors - see that method's doc comment for the full rationale (local property values beat the library's own more-specific built-in styles).</summary>
     private void ApplyMarkdownCodeColors()
     {
-        if (_outputMarkdown is null)
+        if (outputMarkdown is null)
         {
             return;
         }
@@ -120,7 +120,7 @@ public partial class GenerateTabView : UserControl
         IBrush? codeBackground = this.TryFindResource("HeaderBackgroundBrush", out object? background) ? background as IBrush : null;
         IBrush? codeBorderBrush = this.TryFindResource("BorderSubtleBrush", out object? borderBrush) ? borderBrush as IBrush : null;
 
-        List<Border> codeBlocks = _outputMarkdown.GetLogicalDescendants().OfType<Border>().Where(b => b.Classes.Contains("CodeBlock")).ToList();
+        List<Border> codeBlocks = outputMarkdown.GetLogicalDescendants().OfType<Border>().Where(b => b.Classes.Contains("CodeBlock")).ToList();
         HashSet<CCode> tokensInsideCodeBlocks = codeBlocks.SelectMany(b => b.GetLogicalDescendants().OfType<CCode>()).ToHashSet();
 
         // A fenced block with a recognized language (e.g. ```csharp) renders as a real embedded
@@ -140,7 +140,7 @@ public partial class GenerateTabView : UserControl
             editor.TextArea.TextView.Redraw();
         }
 
-        foreach (CCode code in _outputMarkdown.GetLogicalDescendants().OfType<CCode>())
+        foreach (CCode code in outputMarkdown.GetLogicalDescendants().OfType<CCode>())
         {
             if (codeBackground is not null)
             {
@@ -173,7 +173,7 @@ public partial class GenerateTabView : UserControl
             }
         }
 
-        foreach (TextBlock? text in _outputMarkdown.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("CodeBlock")))
+        foreach (TextBlock? text in outputMarkdown.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("CodeBlock")))
         {
             text.Foreground = Brushes.White;
             text.FontFamily = new FontFamily("monospace");
@@ -185,12 +185,12 @@ public partial class GenerateTabView : UserControl
     /// <summary>Same fix as EditTabView.axaml.cs's ApplyMarkdownCopyButtonFix - see that method's doc comment for the full rationale (shrinks the lazily-added copy button so it can't grow a single-line code block on hover).</summary>
     private void ApplyMarkdownCopyButtonFix()
     {
-        if (_outputMarkdown is null)
+        if (outputMarkdown is null)
         {
             return;
         }
 
-        foreach (Button? button in _outputMarkdown.GetLogicalDescendants().OfType<Button>().Where(b => b.Classes.Contains("CopyButton")))
+        foreach (Button? button in outputMarkdown.GetLogicalDescendants().OfType<Button>().Where(b => b.Classes.Contains("CopyButton")))
         {
             button.Padding = new Thickness(4, 0);
             button.MinHeight = 0;
@@ -294,6 +294,6 @@ public partial class GenerateTabView : UserControl
             return;
         }
 
-        _inputBox?.Paste();
+        inputBox?.Paste();
     }
 }

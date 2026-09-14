@@ -6,7 +6,7 @@ namespace AutoDev.Core.Services;
 
 public sealed class JsonSettingsService : ISettingsService
 {
-    private readonly string _settingsFilePath;
+    private readonly string settingsFilePath;
 
     public JsonSettingsService()
     {
@@ -14,19 +14,19 @@ public sealed class JsonSettingsService : ISettingsService
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.Create),
             "AutoDev");
         Directory.CreateDirectory(appDataDir);
-        _settingsFilePath = Path.Combine(appDataDir, "settings.json");
+        settingsFilePath = Path.Combine(appDataDir, "settings.json");
     }
 
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(_settingsFilePath))
+        if (!File.Exists(settingsFilePath))
         {
             return new AppSettings();
         }
 
         try
         {
-            await using FileStream stream = File.OpenRead(_settingsFilePath);
+            await using FileStream stream = File.OpenRead(settingsFilePath);
             return await JsonSerializer.DeserializeAsync<AppSettings>(stream, AppJson.Options, cancellationToken)
                    ?? new AppSettings();
         }
@@ -38,7 +38,7 @@ public sealed class JsonSettingsService : ISettingsService
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
-        await using FileStream stream = File.Create(_settingsFilePath);
+        await using FileStream stream = File.Create(settingsFilePath);
         await JsonSerializer.SerializeAsync(stream, settings, AppJson.Options, cancellationToken);
     }
 }

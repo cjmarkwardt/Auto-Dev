@@ -19,7 +19,7 @@ namespace AutoDev.ClaudeCli;
 /// </summary>
 public sealed partial class ClaudeUsageService(ILogger<ClaudeUsageService> logger) : IAiUsageService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions jsonOptions = new()
     {
         Converters = { new ClaudeStreamEventJsonConverter() },
     };
@@ -52,7 +52,7 @@ public sealed partial class ClaudeUsageService(ILogger<ClaudeUsageService> logge
             AiStreamEvent? evt;
             try
             {
-                evt = JsonSerializer.Deserialize<AiStreamEvent>(line, JsonOptions);
+                evt = JsonSerializer.Deserialize<AiStreamEvent>(line, jsonOptions);
             }
             catch (JsonException)
             {
@@ -105,11 +105,11 @@ public sealed partial class ClaudeUsageService(ILogger<ClaudeUsageService> logge
     /// the current year, same as TryParseExact's normal behavior. Returns null (no countdown shown)
     /// rather than guessing if either step fails.
     /// </summary>
-    private static readonly string[] ResetsAtFormats = ["MMM d, h:mmtt", "MMM d, htt"];
+    private static readonly string[] resetsAtFormats = ["MMM d, h:mmtt", "MMM d, htt"];
 
     private static DateTimeOffset? TryParseResetsAtUtc(string resets, string? timezone)
     {
-        if (!DateTime.TryParseExact(resets, ResetsAtFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsed))
+        if (!DateTime.TryParseExact(resets, resetsAtFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsed))
         {
             return null;
         }

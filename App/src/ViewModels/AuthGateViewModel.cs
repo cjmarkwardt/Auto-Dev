@@ -16,16 +16,16 @@ namespace AutoDev.ViewModels;
 /// </summary>
 public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authServices, IAiProviderSelectionService providerSelection, IGitService gitService) : ViewModelBase
 {
-    private readonly IAiAuthService[] _authServices = [.. authServices];
+    private readonly IAiAuthService[] authServices = [.. authServices];
 
     [ObservableProperty]
-    private bool _isChecking = true;
+    private bool isChecking = true;
 
     [ObservableProperty]
-    private bool _gitMissing;
+    private bool gitMissing;
 
     [ObservableProperty]
-    private bool _neitherInstalled;
+    private bool neitherInstalled;
 
     public ObservableCollection<ProviderLoginRowViewModel> LoginRows { get; } = [];
 
@@ -43,7 +43,7 @@ public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authSe
         }
 
         Dictionary<AiProvider, (bool Installed, bool LoggedIn)> statusByProvider = new Dictionary<AiProvider, (bool Installed, bool LoggedIn)>();
-        foreach (IAiAuthService authService in _authServices)
+        foreach (IAiAuthService authService in authServices)
         {
             bool installed = authService.IsInstalled;
             bool loggedIn = installed && (await authService.GetStatusAsync()).LoggedIn;
@@ -67,7 +67,7 @@ public sealed partial class AuthGateViewModel(IEnumerable<IAiAuthService> authSe
         NeitherInstalled = statusByProvider.Values.All(status => !status.Installed);
 
         LoginRows.Clear();
-        foreach (IAiAuthService authService in _authServices)
+        foreach (IAiAuthService authService in authServices)
         {
             if (!statusByProvider[authService.Provider].Installed)
             {

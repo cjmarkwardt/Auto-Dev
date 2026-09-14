@@ -6,15 +6,15 @@ namespace AutoDev.Views;
 
 public partial class WindowControlsView : UserControl
 {
-    private Button? _maximizeButton;
-    private Button? _restoreButton;
-    private Window? _subscribedWindow;
+    private Button? maximizeButton;
+    private Button? restoreButton;
+    private Window? subscribedWindow;
 
     public WindowControlsView()
     {
         InitializeComponent();
-        _maximizeButton = this.FindControl<Button>("MaximizeButton");
-        _restoreButton = this.FindControl<Button>("RestoreButton");
+        maximizeButton = this.FindControl<Button>("MaximizeButton");
+        restoreButton = this.FindControl<Button>("RestoreButton");
         AttachedToVisualTree += (_, _) => SubscribeToWindowState();
         DetachedFromVisualTree += (_, _) => UnsubscribeFromWindowState();
     }
@@ -26,7 +26,7 @@ public partial class WindowControlsView : UserControl
         UnsubscribeFromWindowState();
         if (OwnerWindow is { } window)
         {
-            _subscribedWindow = window;
+            subscribedWindow = window;
             window.PropertyChanged += OnWindowPropertyChanged;
             UpdateMaximizeGlyph(window.WindowState);
         }
@@ -34,10 +34,10 @@ public partial class WindowControlsView : UserControl
 
     private void UnsubscribeFromWindowState()
     {
-        if (_subscribedWindow is { } window)
+        if (subscribedWindow is { } window)
         {
             window.PropertyChanged -= OnWindowPropertyChanged;
-            _subscribedWindow = null;
+            subscribedWindow = null;
         }
     }
 
@@ -52,14 +52,14 @@ public partial class WindowControlsView : UserControl
     private void UpdateMaximizeGlyph(WindowState state)
     {
         bool isMaximized = state == WindowState.Maximized;
-        if (_maximizeButton is not null)
+        if (maximizeButton is not null)
         {
-            _maximizeButton.IsVisible = !isMaximized;
+            maximizeButton.IsVisible = !isMaximized;
         }
 
-        if (_restoreButton is not null)
+        if (restoreButton is not null)
         {
-            _restoreButton.IsVisible = isMaximized;
+            restoreButton.IsVisible = isMaximized;
         }
     }
 

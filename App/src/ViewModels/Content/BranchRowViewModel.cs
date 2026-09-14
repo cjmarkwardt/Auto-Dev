@@ -7,8 +7,8 @@ namespace AutoDev.ViewModels.Content;
 public sealed partial class BranchRowViewModel(BranchSummary branch) : ViewModelBase
 {
     [ObservableProperty]
-    private BranchSummary _branch = branch;
+    private BranchSummary branch = branch;
 
     [ObservableProperty]
-    private bool _isSelected;
+    private bool isSelected;
 }

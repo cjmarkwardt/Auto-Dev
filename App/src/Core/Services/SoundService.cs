@@ -22,18 +22,18 @@ namespace AutoDev.Core.Services;
 /// </summary>
 public sealed class SoundService : ISoundService, IDisposable
 {
-    private const int SampleRateHz = 44100;
-    private const double DurationSeconds = 0.18;
-    private const double FrequencyHz = 880.0;
+    private static readonly int sampleRateHz = 44100;
+    private static readonly double durationSeconds = 0.18;
+    private static readonly double frequencyHz = 880.0;
 
     /// <summary>Fraction of full scale (short.MaxValue) the sine wave peaks at - kept short of 1.0 so the linear fade-out envelope has no headroom to clip on the way down.</summary>
-    private const double GainFraction = 0.9;
+    private static readonly double gainFraction = 0.9;
 
-    private static readonly Lazy<byte[]> DingPcm = new(GenerateDingPcm);
+    private static readonly Lazy<byte[]> dingPcm = new(GenerateDingPcm);
 
-    private readonly object _lock = new();
-    private readonly HashSet<Process> _activePlayers = [];
-    private bool _disposed;
+    private readonly object @lock = new();
+    private readonly HashSet<Process> activePlayers = [];
+    private bool disposed;
 
     public void PlayDing()
     {
@@ -58,18 +58,18 @@ public sealed class SoundService : ISoundService, IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool MessageBeep(uint uType);
 
-    private const uint MB_ICONASTERISK = 0x00000040;
+    private static readonly uint mbIconAsterisk = 0x00000040;
 
-    private static void PlayWindowsBeep() => MessageBeep(MB_ICONASTERISK);
+    private static void PlayWindowsBeep() => MessageBeep(mbIconAsterisk);
 
     private void PlayLinuxDing()
     {
-        if (TryPlayRawPcm("aplay", ["-q", "-t", "raw", "-r", SampleRateHz.ToString(), "-c", "1", "-f", "S16_LE", "-"]))
+        if (TryPlayRawPcm("aplay", ["-q", "-t", "raw", "-r", sampleRateHz.ToString(), "-c", "1", "-f", "S16_LE", "-"]))
         {
             return;
         }
 
-        TryPlayRawPcm("paplay", ["--raw", $"--rate={SampleRateHz}", "--channels=1", "--format=s16le"]);
+        TryPlayRawPcm("paplay", ["--raw", $"--rate={sampleRateHz}", "--channels=1", "--format=s16le"]);
     }
 
     private bool TryPlayRawPcm(string fileName, string[] arguments)
@@ -100,29 +100,29 @@ public sealed class SoundService : ISoundService, IDisposable
             // just-spawned player exists but isn't yet tracked. EnableRaisingEvents + Exited untracks and
             // disposes it the moment it finishes normally, so _activePlayers only ever holds genuinely
             // still-running players, never a backlog of stale handles.
-            lock (_lock)
+            lock (@lock)
             {
-                if (_disposed)
+                if (disposed)
                 {
                     KillAndDispose(process);
                     return false;
                 }
 
-                _activePlayers.Add(process);
+                activePlayers.Add(process);
             }
 
             process.EnableRaisingEvents = true;
             process.Exited += (_, _) =>
             {
-                lock (_lock)
+                lock (@lock)
                 {
-                    _activePlayers.Remove(process);
+                    activePlayers.Remove(process);
                 }
 
                 process.Dispose();
             };
 
-            process.StandardInput.BaseStream.Write(DingPcm.Value);
+            process.StandardInput.BaseStream.Write(dingPcm.Value);
             process.StandardInput.BaseStream.Close();
             return true;
         }
@@ -136,16 +136,16 @@ public sealed class SoundService : ISoundService, IDisposable
     public void Dispose()
     {
         List<Process> toKill;
-        lock (_lock)
+        lock (@lock)
         {
-            if (_disposed)
+            if (disposed)
             {
                 return;
             }
 
-            _disposed = true;
-            toKill = [.. _activePlayers];
-            _activePlayers.Clear();
+            disposed = true;
+            toKill = [.. activePlayers];
+            activePlayers.Clear();
         }
 
         foreach (Process process in toKill)
@@ -176,13 +176,13 @@ public sealed class SoundService : ISoundService, IDisposable
 
     private static byte[] GenerateDingPcm()
     {
-        int sampleCount = (int)(SampleRateHz * DurationSeconds);
+        int sampleCount = (int)(sampleRateHz * durationSeconds);
         byte[] buffer = new byte[sampleCount * 2];
         for (int i = 0; i < sampleCount; i++)
         {
-            double t = i / (double)SampleRateHz;
-            double envelope = 1.0 - t / DurationSeconds; // linear fade-out avoids an audible click at the end
-            double sample = Math.Sin(2 * Math.PI * FrequencyHz * t) * envelope * short.MaxValue * GainFraction;
+            double t = i / (double)sampleRateHz;
+            double envelope = 1.0 - t / durationSeconds; // linear fade-out avoids an audible click at the end
+            double sample = Math.Sin(2 * Math.PI * frequencyHz * t) * envelope * short.MaxValue * gainFraction;
             short value = (short)Math.Clamp(sample, short.MinValue, short.MaxValue);
             BitConverter.GetBytes(value).CopyTo(buffer, i * 2);
         }

@@ -14,7 +14,7 @@ public static partial class MermaidMarkdownProcessor
     [GeneratedRegex(@"^[ \t]*(\S+)[ \t]+[|o{}]+--[|o{}]+[ \t]+\1[ \t]*:.*\r?\n?", RegexOptions.Multiline)]
     private static partial Regex ErSelfRelationshipPattern();
 
-    private static readonly string CacheDir = Path.Combine(Path.GetTempPath(), "AutoDev", "mermaid-cache");
+    private static readonly string cacheDir = Path.Combine(Path.GetTempPath(), "AutoDev", "mermaid-cache");
 
     /// <summary>
     /// Mermaider 0.12.1's ER-diagram layout engine corrupts the layout of the *entire* diagram when a
@@ -45,7 +45,7 @@ public static partial class MermaidMarkdownProcessor
         {
             string source = ErSelfRelationshipWorkaround(match.Groups[1].Value.Trim());
             string hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
-            string pngPath = Path.Combine(CacheDir, $"{hash}.png");
+            string pngPath = Path.Combine(cacheDir, $"{hash}.png");
 
             if (!File.Exists(pngPath))
             {
@@ -55,7 +55,7 @@ public static partial class MermaidMarkdownProcessor
                     return match.Value;
                 }
 
-                Directory.CreateDirectory(CacheDir);
+                Directory.CreateDirectory(cacheDir);
                 File.WriteAllBytes(pngPath, png);
             }
 

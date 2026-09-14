@@ -8,7 +8,7 @@ namespace AutoDev.AiCli;
 /// </summary>
 public static class AiSystemPromptGuidance
 {
-    public const string Text =
+    public static readonly string Text =
         "When testing or verifying a change to a GUI application, never use the user's primary/real display. " +
         "Launch an isolated virtual display (e.g. Xvfb) instead, so nothing appears on their actual screen. " +
         "Only use the user's real display if they explicitly ask for something to be run or shown to them directly. " +

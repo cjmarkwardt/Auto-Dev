@@ -14,33 +14,33 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     private const string GitIgnoreFileName = ".gitignore";
 
     /// <summary>A line in .fileignore consisting of exactly this (surrounding whitespace ignored) is replaced with .gitignore's own lines - see ReloadFileIgnore.</summary>
-    private const string GitIgnoreDirective = "$gitignore";
+    private static readonly string gitIgnoreDirective = "$gitignore";
 
     /// <summary>How often OnWatcherChanged's own git status refresh is allowed to actually run - see ScheduleGitStatusRefresh.</summary>
-    private static readonly TimeSpan GitStatusRefreshThrottle = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan gitStatusRefreshThrottle = TimeSpan.FromSeconds(5);
 
-    private readonly string _rootPath;
-    private readonly IFileTreeService _fileTreeService;
-    private readonly IWorkspaceFileWatcher _watcher;
-    private readonly IDialogService _dialogService;
-    private readonly IUiDispatcher _dispatcher;
-    private readonly IExternalOpenService _externalOpenService;
-    private readonly IClipboardService _clipboardService;
-    private readonly IWorkspaceScriptRunner _scriptRunner;
-    private readonly IWorkspaceVersioningService _versioningService;
-    private readonly EditTabViewModel _edit;
+    private readonly string rootPath;
+    private readonly IFileTreeService fileTreeService;
+    private readonly IWorkspaceFileWatcher watcher;
+    private readonly IDialogService dialogService;
+    private readonly IUiDispatcher dispatcher;
+    private readonly IExternalOpenService externalOpenService;
+    private readonly IClipboardService clipboardService;
+    private readonly IWorkspaceScriptRunner scriptRunner;
+    private readonly IWorkspaceVersioningService versioningService;
+    private readonly EditTabViewModel edit;
 
     /// <summary>Workspace-relative paths (see RelativePathOf) of every .cs file currently running - maintained from the script runner's events and re-applied to nodes after every Refresh() (which can recreate node instances). See ApplyRunningState.</summary>
-    private readonly HashSet<string> _runningScriptPaths = [];
+    private readonly HashSet<string> runningScriptPaths = [];
 
     /// <summary>Null while no .fileignore exists at the workspace root, in which case every node's FileIgnoreOverride is also left null (falling back to its own git Status.Ignored) - see ReloadFileIgnore/ResolveFileIgnore.</summary>
-    private FileIgnoreMatcher? _fileIgnoreMatcher;
+    private FileIgnoreMatcher? fileIgnoreMatcher;
 
     /// <summary>Set for the duration of a pending/in-flight throttled git status refresh (see ScheduleGitStatusRefresh) - cancelled on Dispose so a refresh never runs against a torn-down workspace tab.</summary>
-    private CancellationTokenSource? _gitStatusRefreshThrottleCts;
+    private CancellationTokenSource? gitStatusRefreshThrottleCts;
 
     /// <summary>Whether this workspace's own tab is the currently-selected one - see SetActive. Starts true, matching a freshly opened workspace always becoming the selected tab immediately (see WorkspaceFactory/MainShellViewModel.OnWorkspaceOpened).</summary>
-    private bool _isActive = true;
+    private bool isActive = true;
 
     /// <summary>
     /// True for the whole duration of a Generate turn, OR any plain (non-AI) version action
@@ -51,11 +51,11 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// VersionSectionViewModel.IsInteractionBlocked.
     /// </summary>
     [ObservableProperty]
-    private bool _isInteractionBlocked;
+    private bool isInteractionBlocked;
 
     /// <summary>True while any .cs file in this workspace has a run in flight - mirrors _runningScriptPaths.Count > 0, kept in sync from OnScriptRunStarted/OnScriptRunCompleted. Forwarded to GenerateTabViewModel.HasRunningScripts by WorkspaceViewModel, since AI work should only ever start while nothing else is running against the same working tree.</summary>
     [ObservableProperty]
-    private bool _hasRunningScripts;
+    private bool hasRunningScripts;
 
     /// <summary>
     /// Whether a branch is currently targeted - set via ApplyTargetState. Creating a new file/folder is only
@@ -63,7 +63,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// commit a new file to. Existing files stay renamable/deletable regardless (see CanMutateNode) - only
     /// creation is gated by this.
     /// </summary>
-    private bool _isEditableTarget;
+    private bool isEditableTarget;
 
     partial void OnIsInteractionBlockedChanged(bool value)
     {
@@ -93,16 +93,16 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// <summary>Called by WorkspaceViewModel whenever the targeted version/release/feature (or direct mode) changes.</summary>
     public void ApplyTargetState(bool isEditableTarget)
     {
-        _isEditableTarget = isEditableTarget;
+        this.isEditableTarget = isEditableTarget;
         NewFileCommand.NotifyCanExecuteChanged();
         NewFolderCommand.NotifyCanExecuteChanged();
         NewFileInFolderCommand.NotifyCanExecuteChanged();
         NewFolderInFolderCommand.NotifyCanExecuteChanged();
     }
 
-    private bool CanMutate() => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode && _isEditableTarget;
+    private bool CanMutate() => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode && isEditableTarget;
 
-    private bool CanMutateInFolder(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode && _isEditableTarget;
+    private bool CanMutateInFolder(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode && isEditableTarget;
 
     private bool CanMutateNode(FileTreeNodeViewModel? node) => !IsInteractionBlocked && !HasRunningScripts && !IsChangesMode;
 
@@ -118,32 +118,32 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         IWorkspaceVersioningService versioningService,
         EditTabViewModel edit)
     {
-        _rootPath = rootPath;
-        _fileTreeService = fileTreeService;
-        _dialogService = dialogService;
-        _dispatcher = dispatcher;
-        _externalOpenService = externalOpenService;
-        _clipboardService = clipboardService;
-        _scriptRunner = scriptRunner;
-        _versioningService = versioningService;
-        _edit = edit;
-        _watcher = watcherFactory.Create(rootPath);
-        _watcher.Changed += OnWatcherChanged;
-        _scriptRunner.ScriptRunStarted += OnScriptRunStarted;
-        _scriptRunner.ScriptRunCompleted += OnScriptRunCompleted;
-        _scriptRunner.Start();
+        this.rootPath = rootPath;
+        this.fileTreeService = fileTreeService;
+        this.dialogService = dialogService;
+        this.dispatcher = dispatcher;
+        this.externalOpenService = externalOpenService;
+        this.clipboardService = clipboardService;
+        this.scriptRunner = scriptRunner;
+        this.versioningService = versioningService;
+        this.edit = edit;
+        watcher = watcherFactory.Create(rootPath);
+        watcher.Changed += OnWatcherChanged;
+        this.scriptRunner.ScriptRunStarted += OnScriptRunStarted;
+        this.scriptRunner.ScriptRunCompleted += OnScriptRunCompleted;
+        this.scriptRunner.Start();
         ReloadFileIgnore();
         Refresh();
     }
 
     /// <summary>Exposed for FilesSectionView's drop-on-empty-space handler, which needs a target directory when nothing under the pointer resolves to a specific node.</summary>
-    public string RootPath => _rootPath;
+    public string RootPath => rootPath;
 
     public ObservableCollection<FileTreeNodeViewModel> RootNodes { get; } = [];
 
     /// <summary>The header toggle's own state - defaults to hidden, since gitignored content (build output, dependencies, etc.) is rarely what anyone's looking for in this tree. Purely a view-layer filter (see FilesSectionView.axaml's row IsVisible binding) - never affects Refresh()/RootNodes itself, so toggling it on/off is instant with no re-scan. Disabled entirely (see FilesSectionView.axaml) while IsChangesMode is on, since it has no effect there.</summary>
     [ObservableProperty]
-    private bool _showIgnoredFiles;
+    private bool showIgnoredFiles;
 
     /// <summary>
     /// The header toggle's own state for Changes Mode - an entirely separate read-only view of the tree
@@ -154,7 +154,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// mutations made while it's showing.
     /// </summary>
     [ObservableProperty]
-    private bool _isChangesMode;
+    private bool isChangesMode;
 
     /// <summary>Populated only while IsChangesMode is on (see OnIsChangesModeChanged) - lazily loaded/unloaded exactly like a History tab timeline entry's own expanded changes tree, which this reuses the same ChangeTreeNode model as.</summary>
     public ObservableCollection<ChangeTreeNode> ChangedNodes { get; } = [];
@@ -181,7 +181,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     private async Task LoadChangesModeAsync()
     {
-        IReadOnlyList<GitChange> changes = await _versioningService.GetWorkingTreeChangesAsync();
+        IReadOnlyList<GitChange> changes = await versioningService.GetWorkingTreeChangesAsync();
         if (!IsChangesMode)
         {
             return; // toggled off again while this was in flight
@@ -207,7 +207,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        IReadOnlyList<GitChange> changes = await _versioningService.GetWorkingTreeChangesAsync();
+        IReadOnlyList<GitChange> changes = await versioningService.GetWorkingTreeChangesAsync();
         if (!IsChangesMode)
         {
             return; // toggled off while this was in flight
@@ -240,16 +240,16 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        FileDiffContent diff = await _versioningService.GetWorkingTreeFileDiffAsync(path);
-        await _edit.LoadDiffAsync(Path.GetFileName(path), diff);
-        _edit.RequestFocus();
+        FileDiffContent diff = await versioningService.GetWorkingTreeFileDiffAsync(path);
+        await edit.LoadDiffAsync(Path.GetFileName(path), diff);
+        edit.RequestFocus();
     }
 
     [ObservableProperty]
-    private FileTreeNodeViewModel? _selectedNode;
+    private FileTreeNodeViewModel? selectedNode;
 
     /// <summary>Set around a HighlightPath call's own SelectedNode assignment - see OnSelectedNodeChanged, which checks this to avoid re-raising FileSelected (and so re-opening the file) for a selection change that's purely following an open that already happened some other way.</summary>
-    private bool _suppressFileSelected;
+    private bool suppressFileSelected;
 
     public event Action<string>? FileSelected;
 
@@ -273,7 +273,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     partial void OnSelectedNodeChanged(FileTreeNodeViewModel? value)
     {
-        if (value is { IsDirectory: false } && !_suppressFileSelected)
+        if (value is { IsDirectory: false } && !suppressFileSelected)
         {
             FileSelected?.Invoke(value.FullPath);
         }
@@ -281,7 +281,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     public void Refresh()
     {
-        IReadOnlyList<FileSystemEntry> entries = _fileTreeService.GetChildren(_rootPath);
+        IReadOnlyList<FileSystemEntry> entries = fileTreeService.GetChildren(rootPath);
         HashSet<string> entryPaths = entries.Select(e => e.FullPath).ToHashSet();
 
         for (int i = RootNodes.Count - 1; i >= 0; i--)
@@ -298,7 +298,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         {
             if (!existingPaths.Contains(entry.FullPath))
             {
-                RootNodes.Insert(Math.Min(insertIndex, RootNodes.Count), new FileTreeNodeViewModel(entry, _fileTreeService, ResolveFileIgnore));
+                RootNodes.Insert(Math.Min(insertIndex, RootNodes.Count), new FileTreeNodeViewModel(entry, fileTreeService, ResolveFileIgnore));
             }
 
             insertIndex++;
@@ -335,13 +335,13 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     private void Activate()
     {
-        if (_isActive)
+        if (isActive)
         {
             return;
         }
 
-        _isActive = true;
-        _watcher.Resume();
+        isActive = true;
+        watcher.Resume();
 
         // Nothing was watched while paused (Resume alone doesn't replay anything missed) - re-resolve
         // everything from scratch rather than assuming nothing changed, exactly like OnWatcherChanged does
@@ -360,19 +360,19 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     private void Deactivate()
     {
-        if (!_isActive)
+        if (!isActive)
         {
             return;
         }
 
-        _isActive = false;
-        _watcher.Pause();
-        _gitStatusRefreshThrottleCts?.Cancel();
+        isActive = false;
+        watcher.Pause();
+        gitStatusRefreshThrottleCts?.Cancel();
     }
 
     /// <summary>Supplied to every FileTreeNodeViewModel at construction (see FileTreeNodeViewModel._resolveFileIgnore) - a closure rather than a one-off computed value so it keeps reflecting whatever _fileIgnoreMatcher is *current* whenever it's actually called, including long after the node itself was built.</summary>
     private bool? ResolveFileIgnore(FileTreeNodeViewModel node) =>
-        _fileIgnoreMatcher?.IsMatch(RelativePathOf(node), node.IsDirectory);
+        fileIgnoreMatcher?.IsMatch(RelativePathOf(node), node.IsDirectory);
 
     /// <summary>
     /// Reads .fileignore from the workspace root (if present) into _fileIgnoreMatcher, expanding any line
@@ -386,10 +386,10 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void ReloadFileIgnore()
     {
-        string fileIgnorePath = Path.Combine(_rootPath, FileIgnoreFileName);
+        string fileIgnorePath = Path.Combine(rootPath, FileIgnoreFileName);
         if (!File.Exists(fileIgnorePath))
         {
-            _fileIgnoreMatcher = null;
+            fileIgnoreMatcher = null;
             return;
         }
 
@@ -406,13 +406,13 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         List<string> expanded = [];
         foreach (string line in lines)
         {
-            if (line.Trim() != GitIgnoreDirective)
+            if (line.Trim() != gitIgnoreDirective)
             {
                 expanded.Add(line);
                 continue;
             }
 
-            string gitIgnorePath = Path.Combine(_rootPath, GitIgnoreFileName);
+            string gitIgnorePath = Path.Combine(rootPath, GitIgnoreFileName);
             if (!File.Exists(gitIgnorePath))
             {
                 continue;
@@ -428,14 +428,14 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             }
         }
 
-        _fileIgnoreMatcher = FileIgnoreMatcher.Parse(expanded);
+        fileIgnoreMatcher = FileIgnoreMatcher.Parse(expanded);
     }
 
 
     /// <summary>Re-stamps IsScriptRunning on whatever node currently represents each still-running script path - Refresh() can recreate node instances (SyncChildren), so a running script's freshly-inserted node would otherwise default back to not-running.</summary>
     private void ReapplyRunningStates()
     {
-        foreach (string path in _runningScriptPaths)
+        foreach (string path in runningScriptPaths)
         {
             ApplyRunningState(RootNodes, path, running: true);
         }
@@ -457,7 +457,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private string RelativePathOf(FileTreeNodeViewModel node) => Path.GetRelativePath(_rootPath, node.FullPath).Replace('\\', '/');
+    private string RelativePathOf(FileTreeNodeViewModel node) => Path.GetRelativePath(rootPath, node.FullPath).Replace('\\', '/');
 
     /// <summary>Expands ancestor folders as needed and selects the node for an absolute path - used by F2 quick-open (filename mode, where this is also what opens the file, via FileSelected below). A no-op if fullPath doesn't resolve to a loaded node under this workspace (e.g. it's outside the tree entirely, or under a folder never expanded).</summary>
     public void SelectPath(string fullPath)
@@ -485,21 +485,21 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        _suppressFileSelected = true;
+        suppressFileSelected = true;
         try
         {
             SelectedNode = node;
         }
         finally
         {
-            _suppressFileSelected = false;
+            suppressFileSelected = false;
         }
     }
 
     /// <summary>Expands ancestor folders as needed and returns the leaf (file, never a folder) node for an absolute path - shared lookup behind SelectPath/HighlightPath. Null if any path segment doesn't resolve under this workspace's currently-loaded tree (outside the workspace entirely, or nested under a folder never expanded).</summary>
     private FileTreeNodeViewModel? FindNode(string fullPath)
     {
-        string relative = Path.GetRelativePath(_rootPath, fullPath);
+        string relative = Path.GetRelativePath(rootPath, fullPath);
         string[] segments = relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
 
         ObservableCollection<FileTreeNodeViewModel> currentLevel = RootNodes;
@@ -526,87 +526,87 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task NewFileAsync()
     {
-        string? name = await _dialogService.ShowInputDialogAsync("New File", "File name", "untitled.txt");
+        string? name = await dialogService.ShowInputDialogAsync("New File", "File name", "untitled.txt");
         if (string.IsNullOrWhiteSpace(name))
         {
             return;
         }
 
-        _fileTreeService.CreateFile(_rootPath, name);
+        fileTreeService.CreateFile(rootPath, name);
         Refresh();
     }
 
     [RelayCommand(CanExecute = nameof(CanMutate))]
     private async Task NewFolderAsync()
     {
-        string? name = await _dialogService.ShowInputDialogAsync("New Folder", "Folder name", "New Folder");
+        string? name = await dialogService.ShowInputDialogAsync("New Folder", "Folder name", "New Folder");
         if (string.IsNullOrWhiteSpace(name))
         {
             return;
         }
 
-        _fileTreeService.CreateFolder(_rootPath, name);
+        fileTreeService.CreateFolder(rootPath, name);
         Refresh();
     }
 
     [RelayCommand(CanExecute = nameof(CanMutateInFolder))]
     private async Task NewFileInFolderAsync(FileTreeNodeViewModel node)
     {
-        string? name = await _dialogService.ShowInputDialogAsync("New File", "File name", "untitled.txt");
+        string? name = await dialogService.ShowInputDialogAsync("New File", "File name", "untitled.txt");
         if (string.IsNullOrWhiteSpace(name))
         {
             return;
         }
 
-        _fileTreeService.CreateFile(node.FullPath, name);
+        fileTreeService.CreateFile(node.FullPath, name);
         Refresh();
     }
 
     [RelayCommand(CanExecute = nameof(CanMutateInFolder))]
     private async Task NewFolderInFolderAsync(FileTreeNodeViewModel node)
     {
-        string? name = await _dialogService.ShowInputDialogAsync("New Folder", "Folder name", "New Folder");
+        string? name = await dialogService.ShowInputDialogAsync("New Folder", "Folder name", "New Folder");
         if (string.IsNullOrWhiteSpace(name))
         {
             return;
         }
 
-        _fileTreeService.CreateFolder(node.FullPath, name);
+        fileTreeService.CreateFolder(node.FullPath, name);
         Refresh();
     }
 
     [RelayCommand(CanExecute = nameof(CanMutateNode))]
     private async Task RenameAsync(FileTreeNodeViewModel node)
     {
-        string? newName = await _dialogService.ShowInputDialogAsync("Rename", "New name", node.Name);
+        string? newName = await dialogService.ShowInputDialogAsync("Rename", "New name", node.Name);
         if (string.IsNullOrWhiteSpace(newName) || newName == node.Name)
         {
             return;
         }
 
-        _fileTreeService.Rename(node.FullPath, newName);
+        fileTreeService.Rename(node.FullPath, newName);
         Refresh();
     }
 
     [RelayCommand(CanExecute = nameof(CanMutateNode))]
     private void Duplicate(FileTreeNodeViewModel node)
     {
-        _fileTreeService.Duplicate(node.FullPath, node.IsDirectory);
+        fileTreeService.Duplicate(node.FullPath, node.IsDirectory);
         Refresh();
     }
 
     /// <summary>The FILES heading's own "Open" always targets the workspace root - the per-node context menu (OpenFolder below) is the way to open a specific folder instead. Non-mutating (just launches the OS file manager), so unlike New File/Folder it's never gated on CanMutate.</summary>
     [RelayCommand]
-    private void OpenInFileManager() => _externalOpenService.OpenFolder(_rootPath);
+    private void OpenInFileManager() => externalOpenService.OpenFolder(rootPath);
 
     /// <summary>Copies the workspace root's own absolute filesystem path to the clipboard - the header-level counterpart to a node's own "Copy Path" context menu item (CopyPath below). Non-mutating, so unlike New File/Folder it's never gated on CanMutate.</summary>
     [RelayCommand]
-    private async Task CopyRootPath() => await _clipboardService.SetTextAsync(_rootPath);
+    private async Task CopyRootPath() => await clipboardService.SetTextAsync(rootPath);
 
     /// <summary>Used both for a folder's own "Open" (opens itself) and a file's "Open Folder" (opens its containing folder) - see the two separate, differently-labeled context menu items bound to this same command.</summary>
     [RelayCommand]
     private void OpenFolderInFileManager(FileTreeNodeViewModel node) =>
-        _externalOpenService.OpenFolder(node.IsDirectory ? node.FullPath : Path.GetDirectoryName(node.FullPath) ?? _rootPath);
+        externalOpenService.OpenFolder(node.IsDirectory ? node.FullPath : Path.GetDirectoryName(node.FullPath) ?? rootPath);
 
     /// <summary>Raised by a folder's "Set Command Context" context menu item - wired in WorkspaceViewModel to CommandTabViewModel.SetWorkingDirectory, pointing the Command tab's working directory at that folder. Non-mutating (just view state elsewhere), so unlike New File/Folder it's never gated on CanMutate.</summary>
     public event Action<string>? SetCommandContextRequested;
@@ -616,7 +616,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
     /// <summary>Copies the node's absolute filesystem path to the clipboard - non-mutating, so unlike New File/Folder it's never gated on CanMutate.</summary>
     [RelayCommand]
-    private async Task CopyPath(FileTreeNodeViewModel node) => await _clipboardService.SetTextAsync(node.FullPath);
+    private async Task CopyPath(FileTreeNodeViewModel node) => await clipboardService.SetTextAsync(node.FullPath);
 
     /// <summary>Collapses every expanded folder in the tree back to the root level - non-mutating (just view state), so unlike New File/Folder it's never gated on CanMutate. Collapses both trees unconditionally rather than gating on IsChangesMode: whichever one isn't currently visible is either empty (ChangedNodes, outside Changes Mode) or about to be rebuilt fresh next time Changes Mode loads anyway, so there's no visible difference and no need to track which mode was active.</summary>
     [RelayCommand]
@@ -636,13 +636,13 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanMutateNode))]
     private async Task DeleteAsync(FileTreeNodeViewModel node)
     {
-        bool confirmed = await _dialogService.ShowConfirmDialogAsync("Delete", $"Delete '{node.Name}'? This cannot be undone.");
+        bool confirmed = await dialogService.ShowConfirmDialogAsync("Delete", $"Delete '{node.Name}'? This cannot be undone.");
         if (!confirmed)
         {
             return;
         }
 
-        _fileTreeService.Delete(node.FullPath, node.IsDirectory);
+        fileTreeService.Delete(node.FullPath, node.IsDirectory);
         Refresh();
     }
 
@@ -676,11 +676,11 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             await FlushPendingEditBeforeRun();
         }
 
-        await _scriptRunner.RunNowAsync(new ScriptRef(scriptPath, scriptName));
+        await scriptRunner.RunNowAsync(new ScriptRef(scriptPath, scriptName));
     }
 
     [RelayCommand(CanExecute = nameof(CanStopScript))]
-    private void StopScript(FileTreeNodeViewModel node) => _scriptRunner.StopRun(RelativePathOf(node));
+    private void StopScript(FileTreeNodeViewModel node) => scriptRunner.StopRun(RelativePathOf(node));
 
     [RelayCommand]
     private void ViewScript(FileTreeNodeViewModel node) => ScriptOutputRequested?.Invoke((RelativePathOf(node), Path.GetFileNameWithoutExtension(node.Name)));
@@ -710,7 +710,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            _fileTreeService.Move(sourcePath, destinationDirectory);
+            fileTreeService.Move(sourcePath, destinationDirectory);
             return;
         }
         catch (IOException)
@@ -723,7 +723,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
 
         string name = Path.GetFileName(sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        bool overwrite = await _dialogService.ShowConfirmDialogAsync("Item Already Exists", $"'{name}' already exists in the destination. Overwrite it?", "Overwrite");
+        bool overwrite = await dialogService.ShowConfirmDialogAsync("Item Already Exists", $"'{name}' already exists in the destination. Overwrite it?", "Overwrite");
         if (!overwrite)
         {
             return;
@@ -731,7 +731,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
 
         try
         {
-            _fileTreeService.Move(sourcePath, destinationDirectory, overwrite: true);
+            fileTreeService.Move(sourcePath, destinationDirectory, overwrite: true);
         }
         catch (Exception)
         {
@@ -739,7 +739,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OnWatcherChanged(IReadOnlySet<string> changedPaths) => _dispatcher.Post(() =>
+    private void OnWatcherChanged(IReadOnlySet<string> changedPaths) => dispatcher.Post(() =>
     {
         // Reloaded before Refresh() (not after) so any brand new FileTreeNodeViewModel it constructs
         // resolves its own FileIgnoreOverride against the up to date ruleset immediately, rather than
@@ -792,7 +792,7 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        IReadOnlyDictionary<string, GitFileStatus> statuses = await _fileTreeService.GetStatusesAsync(_rootPath, [.. nodes.Select(n => n.FullPath)]);
+        IReadOnlyDictionary<string, GitFileStatus> statuses = await fileTreeService.GetStatusesAsync(rootPath, [.. nodes.Select(n => n.FullPath)]);
         foreach (FileTreeNodeViewModel node in nodes)
         {
             if (statuses.TryGetValue(node.FullPath, out GitFileStatus status))
@@ -812,20 +812,20 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void ScheduleGitStatusRefresh()
     {
-        if (_gitStatusRefreshThrottleCts is not null)
+        if (gitStatusRefreshThrottleCts is not null)
         {
             return;
         }
 
-        _gitStatusRefreshThrottleCts = new CancellationTokenSource();
-        _ = ThrottledRefreshGitStatusAsync(_gitStatusRefreshThrottleCts.Token);
+        gitStatusRefreshThrottleCts = new CancellationTokenSource();
+        _ = ThrottledRefreshGitStatusAsync(gitStatusRefreshThrottleCts.Token);
     }
 
     private async Task ThrottledRefreshGitStatusAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await Task.Delay(GitStatusRefreshThrottle, cancellationToken);
+            await Task.Delay(gitStatusRefreshThrottle, cancellationToken);
             await RefreshGitStatusAsync();
         }
         catch (OperationCanceledException)
@@ -834,35 +834,35 @@ public sealed partial class FilesSectionViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            _gitStatusRefreshThrottleCts = null;
+            gitStatusRefreshThrottleCts = null;
         }
     }
 
-    private void OnScriptRunStarted(ScriptRef script) => _dispatcher.Post(() =>
+    private void OnScriptRunStarted(ScriptRef script) => dispatcher.Post(() =>
     {
-        _runningScriptPaths.Add(script.Path);
+        runningScriptPaths.Add(script.Path);
         ApplyRunningState(RootNodes, script.Path, running: true);
         RunScriptCommand.NotifyCanExecuteChanged();
         StopScriptCommand.NotifyCanExecuteChanged();
-        HasRunningScripts = _runningScriptPaths.Count > 0;
+        HasRunningScripts = runningScriptPaths.Count > 0;
     });
 
-    private void OnScriptRunCompleted(ScriptRunRecord record) => _dispatcher.Post(() =>
+    private void OnScriptRunCompleted(ScriptRunRecord record) => dispatcher.Post(() =>
     {
-        _runningScriptPaths.Remove(record.FilePath);
+        runningScriptPaths.Remove(record.FilePath);
         ApplyRunningState(RootNodes, record.FilePath, running: false);
         RunScriptCommand.NotifyCanExecuteChanged();
         StopScriptCommand.NotifyCanExecuteChanged();
-        HasRunningScripts = _runningScriptPaths.Count > 0;
+        HasRunningScripts = runningScriptPaths.Count > 0;
     });
 
     public void Dispose()
     {
-        _watcher.Changed -= OnWatcherChanged;
-        _watcher.Dispose();
-        _scriptRunner.ScriptRunStarted -= OnScriptRunStarted;
-        _scriptRunner.ScriptRunCompleted -= OnScriptRunCompleted;
-        _scriptRunner.Dispose();
-        _gitStatusRefreshThrottleCts?.Cancel();
+        watcher.Changed -= OnWatcherChanged;
+        watcher.Dispose();
+        scriptRunner.ScriptRunStarted -= OnScriptRunStarted;
+        scriptRunner.ScriptRunCompleted -= OnScriptRunCompleted;
+        scriptRunner.Dispose();
+        gitStatusRefreshThrottleCts?.Cancel();
     }
 }

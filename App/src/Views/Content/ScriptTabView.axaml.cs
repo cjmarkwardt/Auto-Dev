@@ -10,13 +10,13 @@ namespace AutoDev.Views.Content;
 public partial class ScriptTabView : UserControl
 {
     /// <summary>How close to the bottom (in pixels) still counts as "at the bottom" for IsScrolledToBottom - a small allowance for sub-pixel/rounding slack in ScrollViewer's own Offset/Extent/Viewport, rather than demanding exact equality.</summary>
-    private const double BottomTolerance = 2.0;
+    private static readonly double bottomTolerance = 2.0;
 
-    private readonly ScrollViewer? _scroller;
-    private readonly TextBox? _inputBox;
+    private readonly ScrollViewer? scroller;
+    private readonly TextBox? inputBox;
 
     /// <summary>The ScriptTabViewModel OnVmPropertyChanged is currently subscribed to, if any - tracked so both OnDataContextChanged and DetachedFromVisualTree can unsubscribe it. Avalonia never recycles this view across a workspace-tab switch - a brand new ScriptTabView is templated for whichever WorkspaceViewModel becomes selected, and the previous one is simply dropped, so DataContextChanged alone never fires again to clean it up (see WorkspaceView's own identical fix/doc comment) - without unsubscribing on detach too, every past tab switch leaves one more ScriptTabView permanently reachable through its own workspace's long-lived ScriptTabViewModel.</summary>
-    private ScriptTabViewModel? _subscribedVm;
+    private ScriptTabViewModel? subscribedVm;
 
     /// <summary>
     /// Whether _scroller was sitting at (or within BottomTolerance of) the bottom the last time its own
@@ -29,23 +29,23 @@ public partial class ScriptTabView : UserControl
     /// away. Starts true so the first output a freshly selected/started script produces still scrolls into
     /// view immediately.
     /// </summary>
-    private bool _isScrolledToBottom = true;
+    private bool isScrolledToBottom = true;
 
     public ScriptTabView()
     {
         InitializeComponent();
-        _scroller = this.FindControl<ScrollViewer>("Scroller");
-        _inputBox = this.FindControl<TextBox>("InputBox");
-        if (_scroller is not null)
+        scroller = this.FindControl<ScrollViewer>("Scroller");
+        inputBox = this.FindControl<TextBox>("InputBox");
+        if (scroller is not null)
         {
-            _scroller.ScrollChanged += OnScrollerScrollChanged;
+            scroller.ScrollChanged += OnScrollerScrollChanged;
         }
 
-        if (_inputBox is not null)
+        if (inputBox is not null)
         {
             // Tunnel (not bubble): TextBox's own handling would otherwise consume Enter first during the
             // bubble phase - same reasoning as CommandTabView/GenerateTabView's identical setup.
-            _inputBox.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
+            inputBox.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
         }
 
         DataContextChanged += OnDataContextChanged;
@@ -61,12 +61,12 @@ public partial class ScriptTabView : UserControl
         // ever gets a chance to run - permanently latching auto-scroll off with no real scroll from the
         // user. Only an actual offset change (a manual scroll, or our own ScrollToEnd() call) means anything
         // here.
-        if (_scroller is null || e.OffsetDelta.Y == 0)
+        if (scroller is null || e.OffsetDelta.Y == 0)
         {
             return;
         }
 
-        _isScrolledToBottom = _scroller.Offset.Y + _scroller.Viewport.Height >= _scroller.Extent.Height - BottomTolerance;
+        isScrolledToBottom = scroller.Offset.Y + scroller.Viewport.Height >= scroller.Extent.Height - bottomTolerance;
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -76,19 +76,19 @@ public partial class ScriptTabView : UserControl
         if (DataContext is ScriptTabViewModel vm)
         {
             vm.PropertyChanged += OnVmPropertyChanged;
-            _subscribedVm = vm;
+            subscribedVm = vm;
         }
     }
 
     private void Unsubscribe()
     {
-        if (_subscribedVm is null)
+        if (subscribedVm is null)
         {
             return;
         }
 
-        _subscribedVm.PropertyChanged -= OnVmPropertyChanged;
-        _subscribedVm = null;
+        subscribedVm.PropertyChanged -= OnVmPropertyChanged;
+        subscribedVm = null;
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs args)
@@ -104,9 +104,9 @@ public partial class ScriptTabView : UserControl
         // the user has since scrolled away, yanking them back down out from under whatever they're reading.
         Dispatcher.UIThread.Post(() =>
         {
-            if (_isScrolledToBottom)
+            if (isScrolledToBottom)
             {
-                _scroller?.ScrollToEnd();
+                scroller?.ScrollToEnd();
             }
         }, DispatcherPriority.Background);
     }

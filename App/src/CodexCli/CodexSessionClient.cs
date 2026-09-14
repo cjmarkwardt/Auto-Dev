@@ -20,46 +20,46 @@ namespace AutoDev.CodexCli;
 /// </summary>
 public sealed class CodexSessionClient : IAiSessionClient
 {
-    private readonly string _workspacePath;
-    private readonly string _model;
-    private readonly string? _effort;
-    private readonly ILogger _logger;
-    private readonly Channel<AiStreamEvent> _channel = Channel.CreateUnbounded<AiStreamEvent>();
-    private readonly SemaphoreSlim _turnLock = new(1, 1);
+    private readonly string workspacePath;
+    private readonly string model;
+    private readonly string? effort;
+    private readonly ILogger logger;
+    private readonly Channel<AiStreamEvent> channel = Channel.CreateUnbounded<AiStreamEvent>();
+    private readonly SemaphoreSlim turnLock = new(1, 1);
 
-    private string? _threadId;
-    private Process? _currentProcess;
-    private bool _started;
-    private bool _disposed;
-    private CancellationTokenSource? _lifetimeCts;
+    private string? threadId;
+    private Process? currentProcess;
+    private bool started;
+    private bool disposed;
+    private CancellationTokenSource? lifetimeCts;
 
-    private long _cumulativeInputTokens;
-    private long _cumulativeOutputTokens;
-    private long _cumulativeCachedInputTokens;
-    private long _cumulativeCacheWriteInputTokens;
+    private long cumulativeInputTokens;
+    private long cumulativeOutputTokens;
+    private long cumulativeCachedInputTokens;
+    private long cumulativeCacheWriteInputTokens;
 
     public CodexSessionClient(string workspacePath, string model, string? effort, ILogger logger)
     {
-        _workspacePath = workspacePath;
-        _model = model;
-        _effort = effort;
-        _logger = logger;
+        this.workspacePath = workspacePath;
+        this.model = model;
+        this.effort = effort;
+        this.logger = logger;
     }
 
     public string SessionId { get; private set; } = "";
 
-    public bool IsRunning => _currentProcess is { HasExited: false };
+    public bool IsRunning => currentProcess is { HasExited: false };
 
     public void Start(string? resumeSessionId = null)
     {
-        _lifetimeCts = new CancellationTokenSource();
-        _threadId = string.IsNullOrEmpty(resumeSessionId) ? null : resumeSessionId;
-        SessionId = _threadId ?? "";
-        _started = true;
+        lifetimeCts = new CancellationTokenSource();
+        threadId = string.IsNullOrEmpty(resumeSessionId) ? null : resumeSessionId;
+        SessionId = threadId ?? "";
+        started = true;
     }
 
     public IAsyncEnumerable<AiStreamEvent> ReadAllEventsAsync(CancellationToken cancellationToken = default) =>
-        _channel.Reader.ReadAllAsync(cancellationToken);
+        channel.Reader.ReadAllAsync(cancellationToken);
 
     public Task SendUserMessageAsync(string text, CancellationToken cancellationToken = default) =>
         RunTurnAsync(text, [], cancellationToken);
@@ -69,17 +69,17 @@ public sealed class CodexSessionClient : IAiSessionClient
 
     private async Task RunTurnAsync(string text, IReadOnlyList<ImageAttachment> images, CancellationToken cancellationToken)
     {
-        if (!_started || _lifetimeCts is null)
+        if (!started || lifetimeCts is null)
         {
             throw new InvalidOperationException("Session has not been started.");
         }
 
-        using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, cancellationToken);
+        using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token, cancellationToken);
 
-        await _turnLock.WaitAsync(linkedCts.Token);
+        await turnLock.WaitAsync(linkedCts.Token);
         try
         {
-            if (_disposed)
+            if (disposed)
             {
                 return;
             }
@@ -92,7 +92,7 @@ public sealed class CodexSessionClient : IAiSessionClient
         }
         finally
         {
-            _turnLock.Release();
+            turnLock.Release();
         }
     }
 
@@ -106,13 +106,13 @@ public sealed class CodexSessionClient : IAiSessionClient
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to start codex process");
+            logger.LogWarning(ex, "Failed to start codex process");
             await EmitAsync(FailureResult($"Failed to start codex: {ex.Message}"), cancellationToken);
             CleanUpTempImages(tempImagePaths);
             return;
         }
 
-        _currentProcess = process;
+        currentProcess = process;
         _ = Task.Run(() => DrainStderrAsync(process, cancellationToken), CancellationToken.None);
 
         StringBuilder turnText = new StringBuilder();
@@ -159,7 +159,7 @@ public sealed class CodexSessionClient : IAiSessionClient
             await EmitAsync(FailureResult($"Codex process exited unexpectedly (exit code {SafeExitCode(process)})."), CancellationToken.None);
         }
 
-        _currentProcess = null;
+        currentProcess = null;
         process.Dispose();
         CleanUpTempImages(tempImagePaths);
     }
@@ -191,7 +191,7 @@ public sealed class CodexSessionClient : IAiSessionClient
 
         if (evt.SessionId is { Length: > 0 })
         {
-            _threadId = evt.SessionId;
+            threadId = evt.SessionId;
             SessionId = evt.SessionId;
         }
 
@@ -211,10 +211,10 @@ public sealed class CodexSessionClient : IAiSessionClient
             return;
         }
 
-        _cumulativeInputTokens += GetLong(usage, "input_tokens");
-        _cumulativeOutputTokens += GetLong(usage, "output_tokens") + GetLong(usage, "reasoning_output_tokens");
-        _cumulativeCachedInputTokens += GetLong(usage, "cached_input_tokens");
-        _cumulativeCacheWriteInputTokens += GetLong(usage, "cache_write_input_tokens");
+        cumulativeInputTokens += GetLong(usage, "input_tokens");
+        cumulativeOutputTokens += GetLong(usage, "output_tokens") + GetLong(usage, "reasoning_output_tokens");
+        cumulativeCachedInputTokens += GetLong(usage, "cached_input_tokens");
+        cumulativeCacheWriteInputTokens += GetLong(usage, "cache_write_input_tokens");
     }
 
     private static long GetLong(JsonElement el, string name) =>
@@ -238,11 +238,11 @@ public sealed class CodexSessionClient : IAiSessionClient
 
     private Dictionary<string, ModelUsageEntry> CumulativeModelUsage() => new()
     {
-        [_model] = new ModelUsageEntry(
-            _cumulativeInputTokens,
-            _cumulativeOutputTokens,
-            _cumulativeCachedInputTokens,
-            _cumulativeCacheWriteInputTokens,
+        [model] = new ModelUsageEntry(
+            cumulativeInputTokens,
+            cumulativeOutputTokens,
+            cumulativeCachedInputTokens,
+            cumulativeCacheWriteInputTokens,
             0m),
     };
 
@@ -250,7 +250,7 @@ public sealed class CodexSessionClient : IAiSessionClient
     {
         ProcessStartInfo startInfo = new ProcessStartInfo(CodexCliLocator.ExecutableName)
         {
-            WorkingDirectory = _workspacePath,
+            WorkingDirectory = workspacePath,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -260,10 +260,10 @@ public sealed class CodexSessionClient : IAiSessionClient
 
         startInfo.ArgumentList.Add("exec");
 
-        if (_threadId is { Length: > 0 })
+        if (threadId is { Length: > 0 })
         {
             startInfo.ArgumentList.Add("resume");
-            startInfo.ArgumentList.Add(_threadId);
+            startInfo.ArgumentList.Add(threadId);
         }
 
         startInfo.ArgumentList.Add("--json");
@@ -272,19 +272,19 @@ public sealed class CodexSessionClient : IAiSessionClient
 
         // `exec resume` has no -C flag of its own - WorkingDirectory above covers it for every turn, but the
         // very first turn (plain `exec`, no thread yet) needs it passed explicitly too.
-        if (_threadId is null)
+        if (threadId is null)
         {
             startInfo.ArgumentList.Add("-C");
-            startInfo.ArgumentList.Add(_workspacePath);
+            startInfo.ArgumentList.Add(workspacePath);
         }
 
         startInfo.ArgumentList.Add("-m");
-        startInfo.ArgumentList.Add(_model);
+        startInfo.ArgumentList.Add(model);
 
-        if (!string.IsNullOrEmpty(_effort))
+        if (!string.IsNullOrEmpty(effort))
         {
             startInfo.ArgumentList.Add("-c");
-            startInfo.ArgumentList.Add($"model_reasoning_effort={TomlString.Quote(_effort)}");
+            startInfo.ArgumentList.Add($"model_reasoning_effort={TomlString.Quote(effort)}");
         }
 
         // Passed on every turn (not just the first) rather than relying on it staying in a resumed thread's
@@ -329,7 +329,7 @@ public sealed class CodexSessionClient : IAiSessionClient
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error reading codex stderr - still draining");
+                logger.LogWarning(ex, "Error reading codex stderr - still draining");
                 continue;
             }
 
@@ -340,7 +340,7 @@ public sealed class CodexSessionClient : IAiSessionClient
 
             if (!string.IsNullOrWhiteSpace(line))
             {
-                _logger.LogDebug("codex stderr: {Line}", line);
+                logger.LogDebug("codex stderr: {Line}", line);
             }
         }
     }
@@ -349,7 +349,7 @@ public sealed class CodexSessionClient : IAiSessionClient
     {
         try
         {
-            await _channel.Writer.WriteAsync(evt, cancellationToken);
+            await channel.Writer.WriteAsync(evt, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -389,7 +389,7 @@ public sealed class CodexSessionClient : IAiSessionClient
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                _logger.LogWarning(ex, "Failed to delete temporary Codex image attachment {Path}", path);
+                logger.LogWarning(ex, "Failed to delete temporary Codex image attachment {Path}", path);
             }
         }
     }
@@ -408,10 +408,10 @@ public sealed class CodexSessionClient : IAiSessionClient
 
     public async ValueTask DisposeAsync()
     {
-        _disposed = true;
-        _lifetimeCts?.Cancel();
+        disposed = true;
+        lifetimeCts?.Cancel();
 
-        if (_currentProcess is { HasExited: false } process)
+        if (currentProcess is { HasExited: false } process)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
         }
@@ -421,17 +421,17 @@ public sealed class CodexSessionClient : IAiSessionClient
         try
         {
             using CancellationTokenSource waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await _turnLock.WaitAsync(waitCts.Token);
-            _turnLock.Release();
+            await turnLock.WaitAsync(waitCts.Token);
+            turnLock.Release();
         }
         catch (OperationCanceledException)
         {
             // Best effort - proceed with teardown regardless.
         }
 
-        _lifetimeCts?.Dispose();
-        _turnLock.Dispose();
-        _channel.Writer.TryComplete();
+        lifetimeCts?.Dispose();
+        turnLock.Dispose();
+        channel.Writer.TryComplete();
     }
 }
 

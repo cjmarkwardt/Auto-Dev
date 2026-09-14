@@ -6,17 +6,17 @@ namespace AutoDev.ViewModels.Dialogs;
 public sealed partial class InputDialogViewModel : ViewModelBase
 {
     [ObservableProperty]
-    private string _title = "";
+    private string title = "";
 
     [ObservableProperty]
-    private string _label = "";
+    private string label = "";
 
     [ObservableProperty]
-    private string _value = "";
+    private string value = "";
 
     /// <summary>When true, the window hides Cancel and blocks every other way of dismissing itself (native close button, Escape) - see InputDialogWindow's Closing handler. OK also stays disabled while Value is blank, so the only way out is confirming a real value.</summary>
     [ObservableProperty]
-    private bool _requireValue;
+    private bool requireValue;
 
     public bool CanConfirm => !RequireValue || !string.IsNullOrWhiteSpace(Value);
 

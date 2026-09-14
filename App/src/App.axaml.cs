@@ -15,9 +15,9 @@ namespace AutoDev;
 
 public partial class App : Application
 {
-    private ServiceProvider? _services;
-    private MainWindowViewModel? _mainWindowViewModel;
-    private bool _shutdownConfirmed;
+    private ServiceProvider? services;
+    private MainWindowViewModel? mainWindowViewModel;
+    private bool shutdownConfirmed;
 
     public override void Initialize()
     {
@@ -28,10 +28,10 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            _services = BuildServiceProvider();
-            _mainWindowViewModel = _services.GetRequiredService<MainWindowViewModel>();
+            services = BuildServiceProvider();
+            mainWindowViewModel = services.GetRequiredService<MainWindowViewModel>();
 
-            MainWindow window = new MainWindow { DataContext = _mainWindowViewModel };
+            MainWindow window = new MainWindow { DataContext = mainWindowViewModel };
             desktop.MainWindow = window;
 
             desktop.ShutdownRequested += OnShutdownRequested;
@@ -42,7 +42,7 @@ public partial class App : Application
             // itself is idempotent), so there's no harm in this firing in addition to the normal path below.
             AppDomain.CurrentDomain.ProcessExit += (_, _) => DisposeServices();
 
-            _ = _mainWindowViewModel.InitializeAsync();
+            _ = mainWindowViewModel.InitializeAsync();
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -50,14 +50,14 @@ public partial class App : Application
 
     private async void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
     {
-        if (_shutdownConfirmed || _mainWindowViewModel is null)
+        if (shutdownConfirmed || mainWindowViewModel is null)
         {
             return;
         }
 
         e.Cancel = true;
-        await _mainWindowViewModel.ShutdownAsync();
-        _shutdownConfirmed = true;
+        await mainWindowViewModel.ShutdownAsync();
+        shutdownConfirmed = true;
 
         // Disposes every registered singleton that implements IDisposable, notably SoundService - see its
         // own doc comment for why a ding's underlying player process otherwise survives past this app's own
@@ -71,7 +71,7 @@ public partial class App : Application
         }
     }
 
-    private void DisposeServices() => _services?.Dispose();
+    private void DisposeServices() => services?.Dispose();
 
     private static ServiceProvider BuildServiceProvider()
     {

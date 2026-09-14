@@ -27,7 +27,7 @@ public sealed partial class TemplatesDialogViewModel : ViewModelBase
     public bool CanApply { get; }
 
     [ObservableProperty]
-    private bool _isLoading;
+    private bool isLoading;
 
     /// <summary>Non-null argument is the template that was applied (name plus its freshly-read content); null means the dialog was closed (Close button, or the window's own chrome) without applying one.</summary>
     public event Action<AppliedTemplate?>? RequestClose;

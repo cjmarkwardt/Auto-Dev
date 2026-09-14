@@ -11,80 +11,80 @@ namespace AutoDev.ViewModels;
 
 public sealed partial class HeaderViewModel : ViewModelBase
 {
-    private static readonly TimeSpan UsagePollInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan usagePollInterval = TimeSpan.FromSeconds(60);
 
-    private readonly IAiAuthService[] _authServices;
-    private readonly IAiUsageService[] _usageServices;
-    private readonly IAiProviderSelectionService _providerSelection;
-    private readonly IUsageAggregatorService _usageAggregator;
-    private readonly IWorkspaceService _workspaceService;
-    private readonly IGitService _gitService;
-    private readonly IDialogService _dialogService;
-    private readonly IUiDispatcher _dispatcher;
-    private readonly INewInstanceService _newInstanceService;
+    private readonly IAiAuthService[] authServices;
+    private readonly IAiUsageService[] usageServices;
+    private readonly IAiProviderSelectionService providerSelection;
+    private readonly IUsageAggregatorService usageAggregator;
+    private readonly IWorkspaceService workspaceService;
+    private readonly IGitService gitService;
+    private readonly IDialogService dialogService;
+    private readonly IUiDispatcher dispatcher;
+    private readonly INewInstanceService newInstanceService;
 
     /// <summary>Drives the title bar's provider-switcher popup - see ToggleProviderMenuCommand/SelectProviderCommand.</summary>
     public IReadOnlyList<AiProvider> AvailableProviders { get; } = [AiProvider.Claude, AiProvider.Codex];
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ProviderDisplayName))]
-    private AiProvider _currentProvider = AiProvider.Claude;
+    private AiProvider currentProvider = AiProvider.Claude;
 
     public string ProviderDisplayName => CurrentProvider.DisplayName();
 
     [ObservableProperty]
-    private bool _isProviderMenuOpen;
+    private bool isProviderMenuOpen;
 
     [ObservableProperty]
-    private string _accountEmail = "";
+    private string accountEmail = "";
 
     [ObservableProperty]
-    private string _subscriptionType = "";
+    private string subscriptionType = "";
 
     /// <summary>True while the current provider has a real session/week percentage to show (Claude, via its own `/usage` command) - false falls back to TokenUsageDisplay instead (Codex, which has no scriptable usage-percentage API - see CodexUsageService).</summary>
     [ObservableProperty]
-    private bool _hasPeriodUsage;
+    private bool hasPeriodUsage;
 
     [ObservableProperty]
-    private string _sessionUsageDisplay = "Session —";
+    private string sessionUsageDisplay = "Session —";
 
     /// <summary>True once session usage reaches 90% - drives a soft-red warning color on the usage text.</summary>
     [ObservableProperty]
-    private bool _isSessionUsageCritical;
+    private bool isSessionUsageCritical;
 
     [ObservableProperty]
-    private string _sessionResetTooltip = "";
+    private string sessionResetTooltip = "";
 
     [ObservableProperty]
-    private string _sessionResetCountdown = "";
+    private string sessionResetCountdown = "";
 
     [ObservableProperty]
-    private string _weekUsageDisplay = "Week —";
+    private string weekUsageDisplay = "Week —";
 
     /// <summary>True once week usage reaches 90% - drives a soft-red warning color on the usage text.</summary>
     [ObservableProperty]
-    private bool _isWeekUsageCritical;
+    private bool isWeekUsageCritical;
 
     [ObservableProperty]
-    private string _weekResetTooltip = "";
+    private string weekResetTooltip = "";
 
     [ObservableProperty]
-    private string _weekResetCountdown = "";
+    private string weekResetCountdown = "";
 
     /// <summary>Shown instead of Session/Week whenever HasPeriodUsage is false - IUsageAggregatorService's raw cumulative token count (across every open workspace/provider this app session), the closest "whatever limits it has" equivalent available for a provider with no usage-percentage API.</summary>
     [ObservableProperty]
-    private string _tokenUsageDisplay = "";
+    private string tokenUsageDisplay = "";
 
     public ObservableCollection<WorkspaceInfo> RecentWorkspaces { get; } = [];
 
     /// <summary>True while a clone is in flight - disables the folder/recent buttons in the View (a second clone/open shouldn't start on top of it) and swaps the Clone button for a Cancel one.</summary>
     [ObservableProperty]
-    private bool _isCloning;
+    private bool isCloning;
 
-    private CancellationTokenSource? _cloneCts;
+    private CancellationTokenSource? cloneCts;
 
     /// <summary>Guards PollUsageLoopAsync so RefreshAccountAsync (called both at startup and on every provider switch) only ever starts the polling loop once - see RefreshAccountAsync's own doc comment for why it can't simply start in the constructor.</summary>
-    private bool _usagePollStarted;
+    private bool usagePollStarted;
 
     public HeaderViewModel(
         IEnumerable<IAiAuthService> authServices,
@@ -97,18 +97,18 @@ public sealed partial class HeaderViewModel : ViewModelBase
         IUiDispatcher dispatcher,
         INewInstanceService newInstanceService)
     {
-        _authServices = [.. authServices];
-        _usageServices = [.. usageServices];
-        _providerSelection = providerSelection;
-        _usageAggregator = usageAggregator;
-        _workspaceService = workspaceService;
-        _gitService = gitService;
-        _dialogService = dialogService;
-        _dispatcher = dispatcher;
-        _newInstanceService = newInstanceService;
+        this.authServices = [.. authServices];
+        this.usageServices = [.. usageServices];
+        this.providerSelection = providerSelection;
+        this.usageAggregator = usageAggregator;
+        this.workspaceService = workspaceService;
+        this.gitService = gitService;
+        this.dialogService = dialogService;
+        this.dispatcher = dispatcher;
+        this.newInstanceService = newInstanceService;
         CurrentProvider = providerSelection.CurrentProvider;
-        _providerSelection.ProviderChanged += OnProviderChanged;
-        _usageAggregator.TotalUsageChanged += OnTotalUsageChanged;
+        this.providerSelection.ProviderChanged += OnProviderChanged;
+        this.usageAggregator.TotalUsageChanged += OnTotalUsageChanged;
         RefreshTokenUsageDisplay();
     }
 
@@ -116,7 +116,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
 
     /// <summary>Title bar's top-left button - starts a second, fully independent AutoDev instance, since one instance now only ever opens a single workspace at a time.</summary>
     [RelayCommand]
-    private void OpenNewInstance() => _newInstanceService.OpenNewInstance();
+    private void OpenNewInstance() => newInstanceService.OpenNewInstance();
 
     /// <summary>
     /// Called once at startup (see MainShellViewModel.InitializeAsync) and again every time
@@ -127,15 +127,15 @@ public sealed partial class HeaderViewModel : ViewModelBase
     /// </summary>
     public async Task RefreshAccountAsync()
     {
-        CurrentProvider = _providerSelection.CurrentProvider;
-        IAiAuthService authService = _authServices.First(s => s.Provider == CurrentProvider);
+        CurrentProvider = providerSelection.CurrentProvider;
+        IAiAuthService authService = authServices.First(s => s.Provider == CurrentProvider);
         AiAuthStatus status = await authService.GetStatusAsync();
         AccountEmail = status.Email ?? "";
         SubscriptionType = FormatSubscription(status.SubscriptionType);
 
-        if (!_usagePollStarted)
+        if (!usagePollStarted)
         {
-            _usagePollStarted = true;
+            usagePollStarted = true;
             _ = PollUsageLoopAsync();
         }
     }
@@ -149,7 +149,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
     private async Task SelectProviderAsync(AiProvider provider)
     {
         IsProviderMenuOpen = false;
-        await _providerSelection.SetProviderAsync(provider);
+        await providerSelection.SetProviderAsync(provider);
     }
 
     /// <summary>
@@ -158,7 +158,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
     /// async, so without this the switch would otherwise show a brief flash of the wrong provider's numbers
     /// still labeled as if they were current.
     /// </summary>
-    private void OnProviderChanged(AiProvider provider) => _dispatcher.Post(() =>
+    private void OnProviderChanged(AiProvider provider) => dispatcher.Post(() =>
     {
         CurrentProvider = provider;
         HasPeriodUsage = false;
@@ -170,7 +170,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
     [RelayCommand]
     private async Task BrowseForFolderAsync()
     {
-        string? path = await _dialogService.PickFolderAsync(await _workspaceService.GetLastParentFolderAsync());
+        string? path = await dialogService.PickFolderAsync(await workspaceService.GetLastParentFolderAsync());
         if (path is null)
         {
             return;
@@ -178,7 +178,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
 
         if (Path.GetDirectoryName(path) is { Length: > 0 } parentDir)
         {
-            await _workspaceService.SaveLastParentFolderAsync(parentDir);
+            await workspaceService.SaveLastParentFolderAsync(parentDir);
         }
 
         await OpenWorkspaceAsync(path);
@@ -187,7 +187,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
     /// <summary>Opens a workspace folder by path with no picker UI involved - shared by BrowseForFolderAsync/CloneAsync/OpenRecentAsync's identical tail.</summary>
     private async Task OpenWorkspaceAsync(string path)
     {
-        WorkspaceInfo workspace = await _workspaceService.OpenOrCreateAsync(path);
+        WorkspaceInfo workspace = await workspaceService.OpenOrCreateAsync(path);
         WorkspaceOpened?.Invoke(workspace);
         await RefreshRecentWorkspacesAsync();
     }
@@ -196,35 +196,35 @@ public sealed partial class HeaderViewModel : ViewModelBase
     [RelayCommand]
     private async Task CloneAsync()
     {
-        string? url = await _dialogService.ShowInputDialogAsync("Clone Repository", "Repository URL", "");
+        string? url = await dialogService.ShowInputDialogAsync("Clone Repository", "Repository URL", "");
         if (string.IsNullOrWhiteSpace(url))
         {
             return;
         }
 
-        string? parentDir = await _dialogService.PickFolderAsync(await _workspaceService.GetLastParentFolderAsync());
+        string? parentDir = await dialogService.PickFolderAsync(await workspaceService.GetLastParentFolderAsync());
         if (parentDir is null)
         {
             return;
         }
 
-        await _workspaceService.SaveLastParentFolderAsync(parentDir);
+        await workspaceService.SaveLastParentFolderAsync(parentDir);
 
         string name = DeriveRepoName(url.Trim());
         string destination = Path.Combine(parentDir, name);
         if (Directory.Exists(destination))
         {
-            await _dialogService.ShowConfirmDialogAsync("Clone Repository", $"A folder named '{name}' already exists in {parentDir}.", confirmLabel: "OK", isDestructive: false);
+            await dialogService.ShowConfirmDialogAsync("Clone Repository", $"A folder named '{name}' already exists in {parentDir}.", confirmLabel: "OK", isDestructive: false);
             return;
         }
 
-        _cloneCts = new CancellationTokenSource();
+        cloneCts = new CancellationTokenSource();
         IsCloning = true;
         GitCloneResult result = new GitCloneResult(false, null);
         bool wasCanceled = false;
         try
         {
-            result = await _gitService.CloneAsync(parentDir, url.Trim(), name, _cloneCts.Token);
+            result = await gitService.CloneAsync(parentDir, url.Trim(), name, cloneCts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -243,8 +243,8 @@ public sealed partial class HeaderViewModel : ViewModelBase
         finally
         {
             IsCloning = false;
-            _cloneCts.Dispose();
-            _cloneCts = null;
+            cloneCts.Dispose();
+            cloneCts = null;
         }
 
         if (!result.Succeeded)
@@ -253,7 +253,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
             if (!wasCanceled)
             {
                 string detail = result.ErrorMessage is { Length: > 0 } message ? $"\n\n{message}" : "";
-                await _dialogService.ShowConfirmDialogAsync("Clone Repository", $"Failed to clone the repository.{detail}", confirmLabel: "OK", isDestructive: false);
+                await dialogService.ShowConfirmDialogAsync("Clone Repository", $"Failed to clone the repository.{detail}", confirmLabel: "OK", isDestructive: false);
             }
 
             return;
@@ -264,7 +264,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
 
     /// <summary>The only way to interrupt an in-flight clone - CliWrap forcefully kills the git process on cancellation, then CloneAsync's catch block cleans up the now-partial destination folder.</summary>
     [RelayCommand]
-    private void CancelClone() => _cloneCts?.Cancel();
+    private void CancelClone() => cloneCts?.Cancel();
 
     private static void TryDeletePartialClone(string destination)
     {
@@ -294,13 +294,13 @@ public sealed partial class HeaderViewModel : ViewModelBase
     [RelayCommand]
     private async Task RemoveRecentAsync(WorkspaceInfo workspace)
     {
-        await _workspaceService.ForgetRecentAsync(workspace.FullPath);
+        await workspaceService.ForgetRecentAsync(workspace.FullPath);
         await RefreshRecentWorkspacesAsync();
     }
 
     public async Task RefreshRecentWorkspacesAsync()
     {
-        IReadOnlyList<WorkspaceInfo> recents = await _workspaceService.GetRecentWorkspacesAsync();
+        IReadOnlyList<WorkspaceInfo> recents = await workspaceService.GetRecentWorkspacesAsync();
         RecentWorkspaces.Clear();
         foreach (WorkspaceInfo workspace in recents)
         {
@@ -324,7 +324,7 @@ public sealed partial class HeaderViewModel : ViewModelBase
         // (always returns null - see CodexUsageService), so polling it costs nothing either.
         await RefreshUsageLimitsAsync();
 
-        using PeriodicTimer timer = new PeriodicTimer(UsagePollInterval);
+        using PeriodicTimer timer = new PeriodicTimer(usagePollInterval);
         while (await timer.WaitForNextTickAsync())
         {
             await RefreshUsageLimitsAsync();
@@ -334,9 +334,9 @@ public sealed partial class HeaderViewModel : ViewModelBase
     /// <summary>Reads whichever IAiUsageService matches the provider currently selected at the moment this call started - see OnProviderChanged, which re-triggers this immediately on a switch rather than waiting for the next poll tick.</summary>
     private async Task RefreshUsageLimitsAsync()
     {
-        IAiUsageService usageService = _usageServices.First(s => s.Provider == CurrentProvider);
+        IAiUsageService usageService = usageServices.First(s => s.Provider == CurrentProvider);
         UsageLimitStatus? status = await usageService.GetUsageStatusAsync();
-        _dispatcher.Post(() => ApplyUsageStatus(status));
+        dispatcher.Post(() => ApplyUsageStatus(status));
     }
 
     /// <summary>
@@ -368,9 +368,9 @@ public sealed partial class HeaderViewModel : ViewModelBase
         }
     }
 
-    private void OnTotalUsageChanged() => _dispatcher.Post(RefreshTokenUsageDisplay);
+    private void OnTotalUsageChanged() => dispatcher.Post(RefreshTokenUsageDisplay);
 
-    private void RefreshTokenUsageDisplay() => TokenUsageDisplay = $"{FormatTokenCount(_usageAggregator.TotalUsage.TotalTokens)} tokens";
+    private void RefreshTokenUsageDisplay() => TokenUsageDisplay = $"{FormatTokenCount(usageAggregator.TotalUsage.TotalTokens)} tokens";
 
     private static string FormatTokenCount(long tokens) => tokens switch
     {

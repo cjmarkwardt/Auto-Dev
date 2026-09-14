@@ -14,10 +14,10 @@ public sealed partial class ScriptEntry(string id, string name) : ViewModelBase
     public string Id { get; } = id;
 
     [ObservableProperty]
-    private string _name = name;
+    private string name = name;
 
     [ObservableProperty]
-    private bool _isRunning;
+    private bool isRunning;
 
     public void UpdateFrom(string name) => Name = name;
 }
@@ -32,26 +32,26 @@ public sealed partial class ScriptEntry(string id, string name) : ViewModelBase
 /// </summary>
 public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
 {
-    private readonly string _workspacePath;
-    private readonly IWorkspaceMetadataStore _metadataStore;
-    private readonly IWorkspaceScriptRunner _scriptRunner;
-    private readonly IClipboardService _clipboardService;
-    private readonly IUiDispatcher _dispatcher;
-    private LiveScriptRun? _liveRun;
-    private PropertyChangedEventHandler? _liveRunHandler;
+    private readonly string workspacePath;
+    private readonly IWorkspaceMetadataStore metadataStore;
+    private readonly IWorkspaceScriptRunner scriptRunner;
+    private readonly IClipboardService clipboardService;
+    private readonly IUiDispatcher dispatcher;
+    private LiveScriptRun? liveRun;
+    private PropertyChangedEventHandler? liveRunHandler;
 
     public ScriptTabViewModel(string workspacePath, IWorkspaceMetadataStore metadataStore, IWorkspaceScriptRunner scriptRunner, IClipboardService clipboardService, IUiDispatcher dispatcher)
     {
-        _workspacePath = workspacePath;
-        _metadataStore = metadataStore;
-        _scriptRunner = scriptRunner;
-        _clipboardService = clipboardService;
-        _dispatcher = dispatcher;
+        this.workspacePath = workspacePath;
+        this.metadataStore = metadataStore;
+        this.scriptRunner = scriptRunner;
+        this.clipboardService = clipboardService;
+        this.dispatcher = dispatcher;
 
         Entries.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasEntries));
 
-        _scriptRunner.ScriptRunStarted += OnAnyRunStarted;
-        _scriptRunner.ScriptRunCompleted += OnAnyRunCompleted;
+        this.scriptRunner.ScriptRunStarted += OnAnyRunStarted;
+        this.scriptRunner.ScriptRunCompleted += OnAnyRunCompleted;
     }
 
     public ObservableCollection<ScriptEntry> Entries { get; } = [];
@@ -59,39 +59,39 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     public bool HasEntries => Entries.Count > 0;
 
     [ObservableProperty]
-    private ScriptEntry? _selectedEntry;
+    private ScriptEntry? selectedEntry;
 
     [ObservableProperty]
-    private bool _hasScript;
+    private bool hasScript;
 
     [ObservableProperty]
-    private string _scriptName = "";
+    private string scriptName = "";
 
     [ObservableProperty]
-    private bool _isRunning;
+    private bool isRunning;
 
     [ObservableProperty]
-    private bool _hasResult;
+    private bool hasResult;
 
     [ObservableProperty]
-    private bool _lastRunFailed;
+    private bool lastRunFailed;
 
     /// <summary>True only when the last run ended via an explicit user Stop - drives showing "Stopped" instead of "Failed" in the header.</summary>
     [ObservableProperty]
-    private bool _lastRunWasStopped;
+    private bool lastRunWasStopped;
 
     /// <summary>The last run's process exit code - null while a run is in flight, or if it was stopped before exiting on its own.</summary>
     [ObservableProperty]
-    private int? _exitCode;
+    private int? exitCode;
 
     [ObservableProperty]
-    private string _outputText = "";
+    private string outputText = "";
 
     partial void OnOutputTextChanged(string value) => CopyOutputCommand.NotifyCanExecuteChanged();
 
     /// <summary>Not-yet-sent text for the running script's own stdin (see SendInputAsync) - a script that calls Console.ReadLine() would otherwise hang forever, since nothing else in AutoDev ever supplies it input.</summary>
     [ObservableProperty]
-    private string _inputText = "";
+    private string inputText = "";
 
     public bool ShowRunning => IsRunning;
     public bool ShowSucceeded => !IsRunning && HasResult && !LastRunFailed;
@@ -120,10 +120,10 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     /// <summary>Called once when a workspace tab is opened - seeds the dropdown from persisted run history (plus anything already running), so scripts run in a previous session still show up, not just ones touched this session. There's no central script registry to enumerate (scripts are just .cs files wherever the user put them) - LoadRunScriptRefsAsync derives the list from run history instead, so a script that's never been run doesn't appear until it is.</summary>
     public async Task LoadAsync()
     {
-        IReadOnlyList<ScriptRef> scripts = await _metadataStore.LoadRunScriptRefsAsync(_workspacePath);
+        IReadOnlyList<ScriptRef> scripts = await metadataStore.LoadRunScriptRefsAsync(workspacePath);
         foreach (ScriptRef script in scripts)
         {
-            GetOrCreateEntry(script.Path, script.Name).IsRunning = _scriptRunner.IsRunning(script.Path);
+            GetOrCreateEntry(script.Path, script.Name).IsRunning = scriptRunner.IsRunning(script.Path);
         }
     }
 
@@ -131,7 +131,7 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     public void SelectScript(string id, string name)
     {
         ScriptEntry entry = GetOrCreateEntry(id, name);
-        entry.IsRunning = _scriptRunner.IsRunning(id);
+        entry.IsRunning = scriptRunner.IsRunning(id);
         SelectedEntry = entry;
     }
 
@@ -164,7 +164,7 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         ScriptName = value.Name;
         HasScript = true;
 
-        if (_scriptRunner.GetLiveRun(value.Id) is { } liveRun)
+        if (scriptRunner.GetLiveRun(value.Id) is { } liveRun)
         {
             IsRunning = true;
             HasResult = true;
@@ -178,14 +178,14 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
 
     private async Task LoadMostRecentRunAsync(string scriptId)
     {
-        List<ScriptRunRecord> runs = await _metadataStore.LoadScriptRunsAsync(_workspacePath, scriptId);
+        List<ScriptRunRecord> runs = await metadataStore.LoadScriptRunsAsync(workspacePath, scriptId);
 
         // Selection moved on, or - the specific race this guards against - a new run of this very script
         // started while this disk read was in flight (e.g. Run re-selects the already-selected script, then
         // starts it, all before this load's await returns): without the second check, this stale historical
         // load would land after OnAnyRunStarted's reset and overwrite the fresh display with the *previous*
         // run's leftover text, which every following progress line would then get appended after.
-        if (SelectedEntry?.Id != scriptId || _scriptRunner.IsRunning(scriptId))
+        if (SelectedEntry?.Id != scriptId || scriptRunner.IsRunning(scriptId))
         {
             return;
         }
@@ -213,7 +213,7 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     {
         if (SelectedEntry is { } entry)
         {
-            _scriptRunner.StopRun(entry.Id);
+            scriptRunner.StopRun(entry.Id);
         }
     }
 
@@ -227,27 +227,27 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     private bool CanCopyOutput() => OutputText.Length > 0;
 
     [RelayCommand(CanExecute = nameof(CanCopyOutput))]
-    private async Task CopyOutputAsync() => await _clipboardService.SetTextAsync(OutputText);
+    private async Task CopyOutputAsync() => await clipboardService.SetTextAsync(OutputText);
 
-    private bool CanSendInput() => IsRunning && _liveRun is not null && InputText.Length > 0;
+    private bool CanSendInput() => IsRunning && liveRun is not null && InputText.Length > 0;
 
     /// <summary>Sends InputText to the currently-viewed script's own stdin and clears the box - see LiveScriptRun.SendInputAsync.</summary>
     [RelayCommand(CanExecute = nameof(CanSendInput))]
     private async Task SendInputAsync()
     {
-        if (_liveRun is not { } liveRun)
+        if (liveRun is not { } run)
         {
             return;
         }
 
         string text = InputText;
         InputText = "";
-        await liveRun.SendInputAsync(text);
+        await run.SendInputAsync(text);
     }
 
     partial void OnInputTextChanged(string value) => SendInputCommand.NotifyCanExecuteChanged();
 
-    private void OnAnyRunStarted(ScriptRef script) => _dispatcher.Post(() =>
+    private void OnAnyRunStarted(ScriptRef script) => dispatcher.Post(() =>
     {
         ScriptEntry entry = GetOrCreateEntry(script.Path, script.Name);
         entry.IsRunning = true;
@@ -272,13 +272,13 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         ExitCode = null;
         OutputText = "";
 
-        if (_scriptRunner.GetLiveRun(script.Path) is { } liveRun)
+        if (scriptRunner.GetLiveRun(script.Path) is { } liveRun)
         {
             AttachLiveRun(liveRun);
         }
     });
 
-    private void OnAnyRunCompleted(ScriptRunRecord record) => _dispatcher.Post(() =>
+    private void OnAnyRunCompleted(ScriptRunRecord record) => dispatcher.Post(() =>
     {
         ScriptEntry? entry = Entries.FirstOrDefault(e => e.Id == record.FilePath);
         if (entry is not null)
@@ -304,36 +304,36 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
 
     private void AttachLiveRun(LiveScriptRun liveRun)
     {
-        _liveRun = liveRun;
+        this.liveRun = liveRun;
         OutputText = liveRun.OutputText;
         SendInputCommand.NotifyCanExecuteChanged();
-        _liveRunHandler = (_, e) => _dispatcher.Post(() =>
+        liveRunHandler = (_, e) => dispatcher.Post(() =>
         {
             if (e.PropertyName == nameof(LiveScriptRun.OutputText))
             {
                 OutputText = liveRun.OutputText;
             }
         });
-        liveRun.PropertyChanged += _liveRunHandler;
+        liveRun.PropertyChanged += liveRunHandler;
     }
 
     /// <summary>Unsubscribes from the live LiveScriptRun's PropertyChanged, if one is currently attached - a no-op otherwise. Called whenever the viewed script's live run is no longer relevant to this view model (selection changed, a new run started, or the run finished), so a still-running script's continued progress doesn't keep posting into a display that's since moved on.</summary>
     private void DetachLiveRun()
     {
-        if (_liveRun is not null && _liveRunHandler is not null)
+        if (liveRun is not null && liveRunHandler is not null)
         {
-            _liveRun.PropertyChanged -= _liveRunHandler;
+            liveRun.PropertyChanged -= liveRunHandler;
         }
 
-        _liveRun = null;
-        _liveRunHandler = null;
+        liveRun = null;
+        liveRunHandler = null;
         SendInputCommand.NotifyCanExecuteChanged();
     }
 
     public void Dispose()
     {
-        _scriptRunner.ScriptRunStarted -= OnAnyRunStarted;
-        _scriptRunner.ScriptRunCompleted -= OnAnyRunCompleted;
+        scriptRunner.ScriptRunStarted -= OnAnyRunStarted;
+        scriptRunner.ScriptRunCompleted -= OnAnyRunCompleted;
         DetachLiveRun();
     }
 }

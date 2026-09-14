@@ -13,15 +13,15 @@ namespace AutoDev.Core.Services;
 /// </summary>
 public static class ProtoTextMateGrammar
 {
-    private static readonly string ExtractedDirectory = Path.Combine(Path.GetTempPath(), "AutoDev", "grammars", "proto");
-    private static readonly Lock ExtractLock = new();
+    private static readonly string extractedDirectory = Path.Combine(Path.GetTempPath(), "AutoDev", "grammars", "proto");
+    private static readonly Lock extractLock = new();
     private static bool isExtracted;
 
     /// <summary>Registers the "PROTO" grammar on the given RegistryOptions, extracting its files to disk first if this is the first call in this process - safe to call once per RegistryOptions instance (EditTabView creates its own per view instance).</summary>
     public static void Register(RegistryOptions registryOptions)
     {
         EnsureExtracted();
-        registryOptions.LoadFromLocalFile("PROTO", Path.Combine(ExtractedDirectory, "package.json"));
+        registryOptions.LoadFromLocalFile("PROTO", Path.Combine(extractedDirectory, "package.json"));
     }
 
     private static void EnsureExtracted()
@@ -31,14 +31,14 @@ public static class ProtoTextMateGrammar
             return;
         }
 
-        lock (ExtractLock)
+        lock (extractLock)
         {
             if (isExtracted)
             {
                 return;
             }
 
-            Directory.CreateDirectory(ExtractedDirectory);
+            Directory.CreateDirectory(extractedDirectory);
             ExtractResource("package.json");
             ExtractResource("proto.tmLanguage.json");
             isExtracted = true;
@@ -48,7 +48,7 @@ public static class ProtoTextMateGrammar
     private static void ExtractResource(string fileName)
     {
         using Stream resourceStream = AssetLoader.Open(new Uri($"avares://AutoDev/Assets/Grammars/proto/{fileName}"));
-        using FileStream fileStream = File.Create(Path.Combine(ExtractedDirectory, fileName));
+        using FileStream fileStream = File.Create(Path.Combine(extractedDirectory, fileName));
         resourceStream.CopyTo(fileStream);
     }
 }

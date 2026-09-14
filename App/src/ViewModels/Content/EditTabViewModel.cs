@@ -19,58 +19,58 @@ public enum EditorKind
 
 public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, IExternalOpenService externalOpenService) : ViewModelBase
 {
-    private static readonly TimeSpan AutoSaveDebounce = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan autoSaveDebounce = TimeSpan.FromMilliseconds(750);
 
     /// <summary>Files at or below this size load straight away; anything larger stops at the IsLargeFile warning instead (see LoadCoreAsync) until the user explicitly confirms via LoadLargeFileAnywayCommand.</summary>
-    private const long LargeFileWarningThresholdBytes = 100 * 1024;
+    private static readonly long largeFileWarningThresholdBytes = 100 * 1024;
 
-    private CancellationTokenSource? _debounceCts;
-    private string _lastSavedContent = "";
-    private bool _isLoading;
+    private CancellationTokenSource? debounceCts;
+    private string lastSavedContent = "";
+    private bool isLoading;
 
     /// <summary>The path/seek-line a pending IsLargeFile warning is for - consumed by LoadLargeFileAnywayCommand, cleared as soon as a load actually proceeds (large-file or not).</summary>
-    private string? _pendingLargeFilePath;
-    private int? _pendingLargeFileSeekToLine;
+    private string? pendingLargeFilePath;
+    private int? pendingLargeFileSeekToLine;
 
     /// <summary>Browser-style in-memory navigation history of previously opened files, scoped to this workspace tab's lifetime (never persisted) - see LoadCoreAsync's push logic and GoBackAsync/GoForwardAsync.</summary>
-    private readonly List<string> _backStack = [];
-    private readonly List<string> _forwardStack = [];
-    private bool _isNavigatingHistory;
+    private readonly List<string> backStack = [];
+    private readonly List<string> forwardStack = [];
+    private bool isNavigatingHistory;
 
     [ObservableProperty]
-    private string? _currentFilePath;
+    private string? currentFilePath;
 
     [ObservableProperty]
-    private string _content = "";
+    private string content = "";
 
     [ObservableProperty]
-    private bool _hasUnsavedChanges;
+    private bool hasUnsavedChanges;
 
     /// <summary>Set when the open file changed on disk outside our own auto-save (detected via content comparison, not a raw watcher echo).</summary>
     [ObservableProperty]
-    private bool _hasExternalChange;
+    private bool hasExternalChange;
 
     [ObservableProperty]
-    private EditorKind _kind = EditorKind.File;
+    private EditorKind kind = EditorKind.File;
 
     /// <summary>Filename for a plain file, or the task's name for a task's content file.</summary>
     [ObservableProperty]
-    private string? _displayTitle;
+    private string? displayTitle;
 
     /// <summary>Set by WorkspaceContentViewModel.UpdateEditReadOnly - editing is only allowed while targeting a feature, or a version with direct mode on.</summary>
     [ObservableProperty]
-    private bool _isReadOnly;
+    private bool isReadOnly;
 
     /// <summary>Why editing is currently blocked, specific to whatever's actually true right now (AI working, wrong target mode, etc.) - see WorkspaceContentViewModel.ComputeReadOnlyReason. Empty while editable.</summary>
     [ObservableProperty]
-    private string _readOnlyReason = "";
+    private string readOnlyReason = "";
 
     /// <summary>True when the open file is an image (see ImageFileTypes) - the View shows ImageSource in a viewer instead of the text editor, and Content/auto-save/external-change-detection are all skipped (see LoadCoreAsync, OnContentChanged, SaveAsync, CheckForExternalChangesAsync).</summary>
     [ObservableProperty]
-    private bool _isImage;
+    private bool isImage;
 
     [ObservableProperty]
-    private Bitmap? _imageSource;
+    private Bitmap? imageSource;
 
     /// <summary>
     /// True while a file is being held back from loading - either it's over LargeFileWarningThresholdBytes,
@@ -81,14 +81,14 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// check (LoadCoreAsync forces IsImage false in this state).
     /// </summary>
     [ObservableProperty]
-    private bool _isLargeFile;
+    private bool isLargeFile;
 
     /// <summary>Whether the pending IsLargeFile warning was triggered by binary content (as opposed to, or in addition to, sheer size) - see IsBinaryContentAsync. Confirming via LoadLargeFileAnywayCommand opens a binary file in the hex viewer (IsHexView) rather than the plain text editor.</summary>
     [ObservableProperty]
-    private bool _isBinaryFile;
+    private bool isBinaryFile;
 
     [ObservableProperty]
-    private long _largeFileSizeBytes;
+    private long largeFileSizeBytes;
 
     /// <summary>Human-readable form of LargeFileSizeBytes (e.g. "92.0 MB") for the IsLargeFile warning.</summary>
     public string LargeFileSizeDisplay => FormatFileSize(LargeFileSizeBytes);
@@ -115,7 +115,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
 
     /// <summary>True once a binary file has been confirmed via LoadLargeFileAnywayCommand - the View shows a HexViewControl memory-mapped straight to CurrentFilePath instead of the plain text editor, so even a huge binary file never gets read into a Content string (see EditTabView's OnFileLoaded/SetupHexView).</summary>
     [ObservableProperty]
-    private bool _isHexView;
+    private bool isHexView;
 
     /// <summary>
     /// The Edit tab's markdown-only edit toggle - false (default) renders the file as a MarkdownScrollViewer
@@ -124,7 +124,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// IsMarkdown) for any other file type.
     /// </summary>
     [ObservableProperty]
-    private bool _isEditingMarkdown;
+    private bool isEditingMarkdown;
 
     /// <summary>
     /// Only meaningful while CanFind is true (see EditTabView.axaml's Find button/Ctrl+F handler, both gated
@@ -136,31 +136,31 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// or the bar's own close button - all funnel through the exact same path.
     /// </summary>
     [ObservableProperty]
-    private bool _isFindBarOpen;
+    private bool isFindBarOpen;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FindMatchCountDisplay))]
-    private string _findText = "";
+    private string findText = "";
 
     [ObservableProperty]
-    private bool _findMatchCase;
+    private bool findMatchCase;
 
     [ObservableProperty]
-    private bool _findMatchWholeWord;
+    private bool findMatchWholeWord;
 
     /// <summary>The current search's total match count, in whichever domain applies (see PreviewSearchInvalidated's own doc comment for why there are two) - RecomputeFindMatches keeps this mirroring _findMatches.Count in text mode; the View sets it directly after a preview-mode search. NotifyPropertyChangedFor(FindMatchCountDisplay) is load-bearing, not decorative - a repeat search that lands on the same FindCurrentMatchIndex (e.g. every keystroke while typing "apple" keeps re-landing on match 1) still needs FindMatchCountDisplay to refresh even though FindCurrentMatchIndex itself didn't change value.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(FindNextCommand))]
     [NotifyCanExecuteChangedFor(nameof(FindPreviousCommand))]
     [NotifyPropertyChangedFor(nameof(FindMatchCountDisplay))]
-    private int _findMatchCount;
+    private int findMatchCount;
 
     /// <summary>1-based position of the current match (within _findMatches in text mode, or the View's own tracked preview match index) - see FindMatchCountDisplay; 0 while there's no current match.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FindMatchCountDisplay))]
-    private int _findCurrentMatchIndex;
+    private int findCurrentMatchIndex;
 
-    private List<int> _findMatches = [];
+    private List<int> findMatches = [];
 
     public string FindMatchCountDisplay => FindText.Length == 0 ? "" : FindMatchCount == 0 ? "No results" : $"{FindCurrentMatchIndex} of {FindMatchCount}";
 
@@ -194,7 +194,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
         }
         else
         {
-            _findMatches = [];
+            findMatches = [];
             FindMatchCount = 0;
             FindCurrentMatchIndex = 0;
 
@@ -249,14 +249,14 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
             return;
         }
 
-        if (_findMatches.Count == 0)
+        if (findMatches.Count == 0)
         {
             return;
         }
 
-        int zeroBased = ((FindCurrentMatchIndex - 1 + direction) % _findMatches.Count + _findMatches.Count) % _findMatches.Count;
+        int zeroBased = ((FindCurrentMatchIndex - 1 + direction) % findMatches.Count + findMatches.Count) % findMatches.Count;
         FindCurrentMatchIndex = zeroBased + 1;
-        NavigateToMatch?.Invoke(_findMatches[zeroBased], FindText.Length);
+        NavigateToMatch?.Invoke(findMatches[zeroBased], FindText.Length);
     }
 
     /// <summary>
@@ -273,16 +273,16 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
             return;
         }
 
-        int previousOffset = FindCurrentMatchIndex > 0 && FindCurrentMatchIndex <= _findMatches.Count
-            ? _findMatches[FindCurrentMatchIndex - 1]
+        int previousOffset = FindCurrentMatchIndex > 0 && FindCurrentMatchIndex <= findMatches.Count
+            ? findMatches[FindCurrentMatchIndex - 1]
             : 0;
 
-        _findMatches = TextSearch.FindAllMatches(Content, FindText, FindMatchCase, FindMatchWholeWord);
-        FindMatchCount = _findMatches.Count;
+        findMatches = TextSearch.FindAllMatches(Content, FindText, FindMatchCase, FindMatchWholeWord);
+        FindMatchCount = findMatches.Count;
         FindNextCommand.NotifyCanExecuteChanged();
         FindPreviousCommand.NotifyCanExecuteChanged();
 
-        if (_findMatches.Count == 0)
+        if (findMatches.Count == 0)
         {
             FindCurrentMatchIndex = 0;
             return;
@@ -290,17 +290,17 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
 
         // Keep whichever match is at/after wherever the previous current match was, rather than always
         // snapping back to the very first match on every keystroke of the query.
-        int newIndex = _findMatches.FindIndex(offset => offset >= previousOffset);
+        int newIndex = findMatches.FindIndex(offset => offset >= previousOffset);
         if (newIndex < 0)
         {
-            newIndex = _findMatches.Count - 1;
+            newIndex = findMatches.Count - 1;
         }
 
         FindCurrentMatchIndex = newIndex + 1;
 
         if (navigate)
         {
-            NavigateToMatch?.Invoke(_findMatches[newIndex], FindText.Length);
+            NavigateToMatch?.Invoke(findMatches[newIndex], FindText.Length);
         }
     }
 
@@ -326,36 +326,36 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// <summary>Whether the Find bar/button and Ctrl+F make sense right now - either a plain-text editable surface or the rendered markdown preview (see IsFindBarOpen's own doc comment for how the two are searched differently), but not an image/hex view or the still-unconfirmed large-file warning.</summary>
     public bool CanFind => ShowTextEditor || ShowMarkdownPreview;
 
-    private const double MinMarkdownZoom = 0.5;
-    private const double MaxMarkdownZoom = 3.0;
-    private const double MarkdownZoomStep = 1.2;
+    private static readonly double minMarkdownZoom = 0.5;
+    private static readonly double maxMarkdownZoom = 3.0;
+    private static readonly double markdownZoomStep = 1.2;
 
     /// <summary>Scales the whole rendered markdown preview (see EditTabView.axaml's LayoutTransformControl) - added so a Mermaid diagram (see MermaidMarkdownProcessor) rendered too small/dense to read at 1:1 can be zoomed in without leaving the preview. Persists only in-memory for this tab's lifetime, same as SidebarWidth's own reasoning - not saved per-file, since it's a viewing preference for this session rather than a property of the file itself.</summary>
     [ObservableProperty]
-    private double _markdownZoom = 1.0;
+    private double markdownZoom = 1.0;
 
     [RelayCommand]
-    private void ZoomInMarkdown() => MarkdownZoom = Math.Min(MaxMarkdownZoom, MarkdownZoom * MarkdownZoomStep);
+    private void ZoomInMarkdown() => MarkdownZoom = Math.Min(maxMarkdownZoom, MarkdownZoom * markdownZoomStep);
 
     [RelayCommand]
-    private void ZoomOutMarkdown() => MarkdownZoom = Math.Max(MinMarkdownZoom, MarkdownZoom / MarkdownZoomStep);
+    private void ZoomOutMarkdown() => MarkdownZoom = Math.Max(minMarkdownZoom, MarkdownZoom / markdownZoomStep);
 
     [RelayCommand]
     private void ResetMarkdownZoom() => MarkdownZoom = 1.0;
 
     /// <summary>What ShowMarkdownPreview's MarkdownScrollViewer actually binds to - Content with any ```mermaid fenced blocks replaced by rendered diagram images (see MermaidMarkdownProcessor) and any `&lt;br&gt;` tags rewritten into a real hard line break (see MarkdownLineBreakProcessor). The saved file content is never touched - only this computed view of it. A stored (not computed) property: mermaid rendering runs off the UI thread (see UpdateRenderedContent) since it can take a visible moment, so this starts out as the raw content (with just the line-break rewrite, which is cheap enough to do inline) the instant Content changes, then is swapped in once mermaid rendering finishes, rather than blocking the UI thread synchronously on every markdown change.</summary>
     [ObservableProperty]
-    private string _renderedContent = "";
+    private string renderedContent = "";
 
     /// <summary>Bumped on every call - lets a slower-finishing render from an earlier Content/mode change (e.g. rapid file switching) detect it's stale and not overwrite a newer one's result.</summary>
-    private int _renderGeneration;
+    private int renderGeneration;
 
     /// <summary>True when the open file is an image but decoding it failed (corrupt/truncated file) - the View shows a fallback message instead of a blank viewer.</summary>
     public bool ImageLoadFailed => IsImage && ImageSource is null;
 
-    public bool CanGoBack => _backStack.Count > 0;
+    public bool CanGoBack => backStack.Count > 0;
 
-    public bool CanGoForward => _forwardStack.Count > 0;
+    public bool CanGoForward => forwardStack.Count > 0;
 
     partial void OnKindChanged(EditorKind value)
     {
@@ -406,7 +406,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// <summary>Immediately shows Content as-is (so switching files/modes is never blocked), then swaps in the mermaid-rendered version once ready - see RenderedContent's doc comment. Mermaid rendering runs via Task.Run purely to get it off the UI thread; the await afterward resumes back on it automatically (this method is always invoked from the UI thread, same as every other async method in this codebase that relies on the default SynchronizationContext capture - no explicit dispatcher needed).</summary>
     private void UpdateRenderedContent()
     {
-        int generation = ++_renderGeneration;
+        int generation = ++renderGeneration;
 
         if (!IsMarkdown)
         {
@@ -435,7 +435,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     private async Task RenderMermaidAsync(string content, int generation)
     {
         string rendered = await Task.Run(() => MarkdownLineBreakProcessor.Process(MermaidMarkdownProcessor.Process(content)));
-        if (generation == _renderGeneration)
+        if (generation == renderGeneration)
         {
             RenderedContent = rendered;
         }
@@ -520,7 +520,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
         Kind = EditorKind.Diff;
         CurrentFilePath = null;
         Content = "";
-        _lastSavedContent = "";
+        lastSavedContent = "";
         HasUnsavedChanges = false;
         HasExternalChange = false;
         IsImage = false;
@@ -571,19 +571,19 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     [RelayCommand]
     private async Task LoadLargeFileAnywayAsync()
     {
-        if (_pendingLargeFilePath is not { } path)
+        if (pendingLargeFilePath is not { } path)
         {
             return;
         }
 
-        await LoadCoreAsync(path, _pendingLargeFileSeekToLine, forceLoad: true);
+        await LoadCoreAsync(path, pendingLargeFileSeekToLine, forceLoad: true);
     }
 
     private async Task LoadCoreAsync(string path, int? seekToLine = null, bool forceLoad = false)
     {
         await FlushPendingSaveAsync();
 
-        _isLoading = true;
+        isLoading = true;
         ImageSource?.Dispose();
         IsFindBarOpen = false; // a find naturally scopes to one file - never carry a stale match list into the next
 
@@ -595,10 +595,10 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
         // hex viewer.
         bool isBinary = !isImagePath && await IsBinaryContentAsync(path);
 
-        if (!forceLoad && (fileSize > LargeFileWarningThresholdBytes || isBinary))
+        if (!forceLoad && (fileSize > largeFileWarningThresholdBytes || isBinary))
         {
-            _pendingLargeFilePath = path;
-            _pendingLargeFileSeekToLine = seekToLine;
+            pendingLargeFilePath = path;
+            pendingLargeFileSeekToLine = seekToLine;
             IsLargeFile = true;
             IsBinaryFile = isBinary;
             LargeFileSizeBytes = fileSize;
@@ -606,12 +606,12 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
             ImageSource = null;
             IsHexView = false;
             Content = "";
-            _lastSavedContent = "";
+            lastSavedContent = "";
         }
         else
         {
-            _pendingLargeFilePath = null;
-            _pendingLargeFileSeekToLine = null;
+            pendingLargeFilePath = null;
+            pendingLargeFileSeekToLine = null;
             IsLargeFile = false;
             IsBinaryFile = false;
 
@@ -621,7 +621,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
                 IsHexView = false;
                 ImageSource = await DecodeImageAsync(path);
                 Content = "";
-                _lastSavedContent = "";
+                lastSavedContent = "";
             }
             else if (isBinary)
             {
@@ -634,7 +634,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
                 ImageSource = null;
                 IsHexView = true;
                 Content = "";
-                _lastSavedContent = "";
+                lastSavedContent = "";
             }
             else
             {
@@ -643,7 +643,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
                 IsHexView = false;
                 string text = await fileTreeService.ReadFileAsync(path);
                 Content = text;
-                _lastSavedContent = text;
+                lastSavedContent = text;
             }
         }
 
@@ -651,10 +651,10 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
         // GoForwardAsync themselves pushes the file being left onto the back stack and clears any forward
         // stack (standard browser semantics: opening a new location after having gone back discards the
         // path not taken). Skipped for a same-path reload (ReloadFromDiskAsync) and while replaying history.
-        if (!_isNavigatingHistory && CurrentFilePath is { } previousPath && previousPath != path)
+        if (!isNavigatingHistory && CurrentFilePath is { } previousPath && previousPath != path)
         {
-            _backStack.Add(previousPath);
-            _forwardStack.Clear();
+            backStack.Add(previousPath);
+            forwardStack.Clear();
             NotifyHistoryChanged();
         }
 
@@ -671,7 +671,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
 
         HasUnsavedChanges = false;
         HasExternalChange = false;
-        _isLoading = false;
+        isLoading = false;
 
         // Fired unconditionally (unlike CurrentFilePath's own PropertyChanged, which no-ops when reloading
         // the same path) - ReloadFromDiskAsync needs the View to still react even though the path didn't
@@ -701,12 +701,12 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     /// </summary>
     private static async Task<bool> IsBinaryContentAsync(string path)
     {
-        const int SampleSize = 8000;
+        int sampleSize = 8000;
 
         try
         {
             await using FileStream stream = File.OpenRead(path);
-            byte[] buffer = new byte[SampleSize];
+            byte[] buffer = new byte[sampleSize];
             int read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length));
             return Array.IndexOf(buffer, (byte)0, 0, read) >= 0;
         }
@@ -725,21 +725,21 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
         UpdateRenderedContent();
         RecomputeFindMatches(navigate: false); // keep the count/positions accurate as the document itself changes, without yanking the viewport around - see its own doc comment
 
-        if (_isLoading || !HasTextContent)
+        if (isLoading || !HasTextContent)
         {
             return;
         }
 
-        HasUnsavedChanges = value != _lastSavedContent;
+        HasUnsavedChanges = value != lastSavedContent;
         HasExternalChange = false; // a further edit is treated as the user choosing to keep their version
         ScheduleAutoSave();
     }
 
     private void ScheduleAutoSave()
     {
-        _debounceCts?.Cancel();
+        debounceCts?.Cancel();
         CancellationTokenSource cts = new CancellationTokenSource();
-        _debounceCts = cts;
+        debounceCts = cts;
         _ = DebounceSaveAsync(cts.Token);
     }
 
@@ -747,7 +747,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     {
         try
         {
-            await Task.Delay(AutoSaveDebounce, cancellationToken);
+            await Task.Delay(autoSaveDebounce, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -759,7 +759,7 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
 
     public async Task FlushPendingSaveAsync()
     {
-        _debounceCts?.Cancel();
+        debounceCts?.Cancel();
         if (HasUnsavedChanges)
         {
             await SaveAsync();
@@ -774,20 +774,20 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
         }
 
         await fileTreeService.WriteFileAsync(CurrentFilePath, Content);
-        _lastSavedContent = Content;
+        lastSavedContent = Content;
         HasUnsavedChanges = false;
     }
 
     /// <summary>Called when the workspace file watcher reports a change - re-reads the file and flags a genuine external edit (i.e. content that doesn't match what we last saved/loaded).</summary>
     public async Task CheckForExternalChangesAsync()
     {
-        if (CurrentFilePath is null || !File.Exists(CurrentFilePath) || _isLoading || !HasTextContent)
+        if (CurrentFilePath is null || !File.Exists(CurrentFilePath) || isLoading || !HasTextContent)
         {
             return;
         }
 
         string onDisk = await fileTreeService.ReadFileAsync(CurrentFilePath);
-        if (onDisk != _lastSavedContent)
+        if (onDisk != lastSavedContent)
         {
             HasExternalChange = true;
         }
@@ -809,23 +809,23 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     [RelayCommand(CanExecute = nameof(CanGoBackExecute))]
     private async Task GoBackAsync()
     {
-        if (_backStack.Count == 0 || CurrentFilePath is not { } current)
+        if (backStack.Count == 0 || CurrentFilePath is not { } current)
         {
             return;
         }
 
-        string target = _backStack[^1];
-        _backStack.RemoveAt(_backStack.Count - 1);
-        _forwardStack.Add(current);
+        string target = backStack[^1];
+        backStack.RemoveAt(backStack.Count - 1);
+        forwardStack.Add(current);
 
-        _isNavigatingHistory = true;
+        isNavigatingHistory = true;
         try
         {
             await LoadFileAsync(target);
         }
         finally
         {
-            _isNavigatingHistory = false;
+            isNavigatingHistory = false;
         }
 
         NotifyHistoryChanged();
@@ -836,23 +836,23 @@ public sealed partial class EditTabViewModel(IFileTreeService fileTreeService, I
     [RelayCommand(CanExecute = nameof(CanGoForwardExecute))]
     private async Task GoForwardAsync()
     {
-        if (_forwardStack.Count == 0 || CurrentFilePath is not { } current)
+        if (forwardStack.Count == 0 || CurrentFilePath is not { } current)
         {
             return;
         }
 
-        string target = _forwardStack[^1];
-        _forwardStack.RemoveAt(_forwardStack.Count - 1);
-        _backStack.Add(current);
+        string target = forwardStack[^1];
+        forwardStack.RemoveAt(forwardStack.Count - 1);
+        backStack.Add(current);
 
-        _isNavigatingHistory = true;
+        isNavigatingHistory = true;
         try
         {
             await LoadFileAsync(target);
         }
         finally
         {
-            _isNavigatingHistory = false;
+            isNavigatingHistory = false;
         }
 
         NotifyHistoryChanged();

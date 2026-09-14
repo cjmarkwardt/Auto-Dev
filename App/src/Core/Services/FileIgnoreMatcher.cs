@@ -18,11 +18,11 @@ namespace AutoDev.Core.Services;
 /// </summary>
 public sealed class FileIgnoreMatcher
 {
-    private const string FileIgnoreFileName = ".fileignore";
-    private const string GitIgnoreFileName = ".gitignore";
+    private static readonly string fileIgnoreFileName = ".fileignore";
+    private static readonly string gitIgnoreFileName = ".gitignore";
 
     /// <summary>A line in .fileignore consisting of exactly this (surrounding whitespace ignored) is replaced with .gitignore's own lines - see LoadForWorkspace/FilesSectionViewModel.ReloadFileIgnore, which uses the identical directive.</summary>
-    private const string GitIgnoreDirective = "$gitignore";
+    private static readonly string gitIgnoreDirective = "$gitignore";
 
     private readonly IReadOnlyList<Rule> rules;
 
@@ -42,7 +42,7 @@ public sealed class FileIgnoreMatcher
     /// </summary>
     public static FileIgnoreMatcher? LoadForWorkspace(string workspacePath)
     {
-        string fileIgnorePath = Path.Combine(workspacePath, FileIgnoreFileName);
+        string fileIgnorePath = Path.Combine(workspacePath, fileIgnoreFileName);
         if (!File.Exists(fileIgnorePath))
         {
             return null;
@@ -61,13 +61,13 @@ public sealed class FileIgnoreMatcher
         List<string> expanded = [];
         foreach (string line in lines)
         {
-            if (line.Trim() != GitIgnoreDirective)
+            if (line.Trim() != gitIgnoreDirective)
             {
                 expanded.Add(line);
                 continue;
             }
 
-            string gitIgnorePath = Path.Combine(workspacePath, GitIgnoreFileName);
+            string gitIgnorePath = Path.Combine(workspacePath, gitIgnoreFileName);
             if (!File.Exists(gitIgnorePath))
             {
                 continue;

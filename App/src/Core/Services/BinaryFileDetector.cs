@@ -3,9 +3,9 @@ namespace AutoDev.Core.Services;
 /// <summary>Cheap best-effort binary/image detection for content search - an extension denylist first (no I/O), then a null-byte sniff of the first few KB for anything not on the list. Never throws; unreadable files are treated as binary (skip it rather than fail the whole search).</summary>
 public static class BinaryFileDetector
 {
-    private const int SniffBytes = 8000;
+    private static readonly int sniffBytes = 8000;
 
-    private static readonly HashSet<string> BinaryExtensions = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> binaryExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff", ".tif",
         ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
@@ -17,7 +17,7 @@ public static class BinaryFileDetector
 
     public static bool IsLikelyBinary(string path)
     {
-        if (BinaryExtensions.Contains(Path.GetExtension(path)))
+        if (binaryExtensions.Contains(Path.GetExtension(path)))
         {
             return true;
         }
@@ -25,7 +25,7 @@ public static class BinaryFileDetector
         try
         {
             using FileStream stream = File.OpenRead(path);
-            byte[] buffer = new byte[SniffBytes];
+            byte[] buffer = new byte[sniffBytes];
             int read = stream.Read(buffer, 0, buffer.Length);
             for (int i = 0; i < read; i++)
             {

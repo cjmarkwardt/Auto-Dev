@@ -117,11 +117,11 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
 
     /// <summary>Sidebar column width, bound two-way from WorkspaceView.axaml's ColumnDefinition.</summary>
     [ObservableProperty]
-    private GridLength _sidebarWidth = new(260);
+    private GridLength sidebarWidth = new(260);
 
     /// <summary>True from creation until InitializeAsync finishes - the View covers everything with a loading screen while this is true, since the sidebar/content would otherwise render prematurely empty (no repo state yet, etc.).</summary>
     [ObservableProperty]
-    private bool _isLoading = true;
+    private bool isLoading = true;
 
     /// <summary>Called by MainShellViewModel when the app's single open workspace becomes (or stops being) active - see FilesSectionViewModel.SetActive/VersionSectionViewModel.SetActive, the two owners of this workspace's own purely-reactive background services (file watcher, periodic remote sync). AI work, an in-flight manual git action, and a running .cs script are all deliberately untouched by this - see those methods' own doc comments for why.</summary>
     public void SetActive(bool active)

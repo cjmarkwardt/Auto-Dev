@@ -10,21 +10,21 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
     public required string Id { get; init; }
 
     [ObservableProperty]
-    private string _input = "";
+    private string input = "";
 
     [ObservableProperty]
-    private GenerateRequestStatus _status;
+    private GenerateRequestStatus status;
 
     [ObservableProperty]
-    private string? _output;
+    private string? output;
 
     /// <summary>The most recent tool Claude has invoked while this request is Working (e.g. "Reading Foo.cs") - see GenerateTabViewModel.CaptureActiveRequestToolUse. Only ever meaningful while Status is Working; DisplayStatus falls back to StatusLabel once the turn ends regardless of this value.</summary>
     [ObservableProperty]
-    private string? _currentAction;
+    private string? currentAction;
 
     /// <summary>When the action currently shown in CurrentAction began - see GenerateTabViewModel.CaptureActiveRequestToolUse, which stamps this to DateTimeOffset.UtcNow on every tool-use capture, unconditionally, even if the described text happens to be identical to the previous action (e.g. two separate reads of the same file are still two separate spans of work). Driving ElapsedDisplay from this rather than from CurrentAction's own change notification matters for exactly that reason: CurrentAction only raises a change when its text actually differs, but a fresh timestamp always does.</summary>
     [ObservableProperty]
-    private DateTimeOffset? _currentActionStartedAt;
+    private DateTimeOffset? currentActionStartedAt;
 
     public required DateTimeOffset CreatedAt { get; init; }
 
@@ -69,10 +69,10 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
 
     /// <summary>What GenerateTabView's output MarkdownScrollViewer actually binds to - Output with any ```mermaid fenced blocks replaced by rendered diagram images (see MermaidMarkdownProcessor) and any `&lt;br&gt;` tags rewritten into a real hard line break (see MarkdownLineBreakProcessor). A stored (not computed) property: mermaid rendering runs off the UI thread since it can take a visible moment, so this starts out as Output with just the line-break rewrite (cheap enough to do inline) the instant a turn completes, then is swapped in once mermaid rendering finishes, rather than blocking the UI thread synchronously.</summary>
     [ObservableProperty]
-    private string? _renderedOutput;
+    private string? renderedOutput;
 
     /// <summary>Bumped on every call - lets a slower-finishing render from an earlier Output change detect it's stale and not overwrite a newer one's result.</summary>
-    private int _renderGeneration;
+    private int renderGeneration;
 
     partial void OnStatusChanged(GenerateRequestStatus value)
     {
@@ -93,7 +93,7 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(HasOutput));
 
-        var generation = ++_renderGeneration;
+        var generation = ++renderGeneration;
         RenderedOutput = value is null ? value : MarkdownLineBreakProcessor.Process(value);
 
         if (value is null || !value.Contains("```mermaid", StringComparison.Ordinal))
@@ -108,7 +108,7 @@ public sealed partial class GenerateRequestViewModel : ViewModelBase
     private async Task RenderMermaidAsync(string output, int generation)
     {
         string rendered = await Task.Run(() => MarkdownLineBreakProcessor.Process(MermaidMarkdownProcessor.Process(output)));
-        if (generation == _renderGeneration)
+        if (generation == renderGeneration)
         {
             RenderedOutput = rendered;
         }

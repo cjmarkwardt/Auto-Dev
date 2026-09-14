@@ -31,7 +31,7 @@ internal static class MarkdownCodeHighlightTheme
     // why nothing closer to real semantic highlighting is available here. Deliberately does NOT also need to
     // exclude the XSHD's own built-in type keywords (bool/string/object/...) - those are all lowercase, so
     // this uppercase-first pattern never overlaps with them regardless.
-    private static readonly Regex TypeNamePattern = new(@"\b[A-Z][A-Za-z0-9_]*\b(?!\s*\()");
+    private static readonly Regex typeNamePattern = new(@"\b[A-Z][A-Za-z0-9_]*\b(?!\s*\()");
 
     // Plain identifiers (variables, parameters, fields) - lowercase/underscore-first, not immediately
     // followed by "(" (same exclusion as TypeNamePattern, for the same reason: a call is a MethodCall, not a
@@ -39,14 +39,14 @@ internal static class MarkdownCodeHighlightTheme
     // rule order that keeps TypeNamePattern from stealing already-keyword-classified tokens, this only ever
     // catches identifiers no more specific rule already claimed - real keywords (also lowercase-first) keep
     // their own dedicated color untouched.
-    private static readonly Regex IdentifierPattern = new(@"\b[a-z_][A-Za-z0-9_]*\b(?!\s*\()");
+    private static readonly Regex identifierPattern = new(@"\b[a-z_][A-Za-z0-9_]*\b(?!\s*\()");
 
     /// <summary>Cheap and idempotent - safe (and expected) to call on every embedded code-block TextEditor found, every time a markdown view re-renders, rather than once globally.</summary>
     public static void Apply(IHighlightingDefinition definition)
     {
-        const string keyword = "#569CD6";
-        const string type = "#4EC9B0";
-        const string identifier = "#9CDCFE";
+        string keyword = "#569CD6";
+        string type = "#4EC9B0";
+        string identifier = "#9CDCFE";
 
         Recolor(definition, "Punctuation", "#D4D4D4");
         Recolor(definition, "Comment", "#6A9955");
@@ -78,8 +78,8 @@ internal static class MarkdownCodeHighlightTheme
         // Non-keyword types (known .NET types like Task/CancellationToken and unknown/user-defined ones
         // alike - see TypeNamePattern's own doc comment) and plain identifiers, in that order so the
         // (mutually-exclusive-by-case) identifier rule can't shadow the type rule for any shared position.
-        AddRule(definition, TypeNamePattern, type);
-        AddRule(definition, IdentifierPattern, identifier);
+        AddRule(definition, typeNamePattern, type);
+        AddRule(definition, identifierPattern, identifier);
     }
 
     private static void Recolor(IHighlightingDefinition definition, string colorName, string hex, bool normalWeight = false)

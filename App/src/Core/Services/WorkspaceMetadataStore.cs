@@ -6,12 +6,12 @@ namespace AutoDev.Core.Services;
 
 public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
 {
-    private const string MetadataDirName = ".autodev";
-    private const string LocalDirName = "local";
-    private const string GenerateSessionsFileName = "generate-sessions.json";
-    private const string GenerateDraftsFileName = "generate-drafts.json";
-    private const string GenerateRequestsFileName = "generate-requests.json";
-    private const string ScriptRunsDirName = "script-runs";
+    private static readonly string metadataDirName = ".autodev";
+    private static readonly string localDirName = "local";
+    private static readonly string generateSessionsFileName = "generate-sessions.json";
+    private static readonly string generateDraftsFileName = "generate-drafts.json";
+    private static readonly string generateRequestsFileName = "generate-requests.json";
+    private static readonly string scriptRunsDirName = "script-runs";
 
     public void EnsureInitialized(string workspacePath)
     {
@@ -21,7 +21,7 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
 
     public async Task AppendScriptRunAsync(string workspacePath, ScriptRunRecord record, CancellationToken cancellationToken = default)
     {
-        string dir = Path.Combine(LocalDir(workspacePath), ScriptRunsDirName, SanitizeScriptFolder(record.FilePath));
+        string dir = Path.Combine(LocalDir(workspacePath), scriptRunsDirName, SanitizeScriptFolder(record.FilePath));
         Directory.CreateDirectory(dir);
         string path = Path.Combine(dir, $"{record.Id}.json");
         await using FileStream stream = File.Create(path);
@@ -30,7 +30,7 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
 
     public async Task<List<ScriptRunRecord>> LoadScriptRunsAsync(string workspacePath, string scriptPath, CancellationToken cancellationToken = default)
     {
-        string dir = Path.Combine(LocalDir(workspacePath), ScriptRunsDirName, SanitizeScriptFolder(scriptPath));
+        string dir = Path.Combine(LocalDir(workspacePath), scriptRunsDirName, SanitizeScriptFolder(scriptPath));
         List<ScriptRunRecord> records = await LoadRunRecordsInFolderAsync(dir, cancellationToken);
         // Filters by exact FilePath match as a safeguard against a (practically impossible) sanitize collision
         // between two different paths landing in the same folder.
@@ -39,7 +39,7 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
 
     public async Task<IReadOnlyList<ScriptRef>> LoadRunScriptRefsAsync(string workspacePath, CancellationToken cancellationToken = default)
     {
-        string root = Path.Combine(LocalDir(workspacePath), ScriptRunsDirName);
+        string root = Path.Combine(LocalDir(workspacePath), scriptRunsDirName);
         if (!Directory.Exists(root))
         {
             return [];
@@ -196,9 +196,9 @@ public sealed class WorkspaceMetadataStore : IWorkspaceMetadataStore
         await JsonSerializer.SerializeAsync(stream, dict, AppJson.Options, cancellationToken);
     }
 
-    private static string MetadataDir(string workspacePath) => Path.Combine(workspacePath, MetadataDirName);
-    private static string LocalDir(string workspacePath) => Path.Combine(MetadataDir(workspacePath), LocalDirName);
-    private static string GenerateSessionsFile(string workspacePath) => Path.Combine(LocalDir(workspacePath), GenerateSessionsFileName);
-    private static string GenerateDraftsFile(string workspacePath) => Path.Combine(LocalDir(workspacePath), GenerateDraftsFileName);
-    private static string GenerateRequestsFile(string workspacePath) => Path.Combine(LocalDir(workspacePath), GenerateRequestsFileName);
+    private static string MetadataDir(string workspacePath) => Path.Combine(workspacePath, metadataDirName);
+    private static string LocalDir(string workspacePath) => Path.Combine(MetadataDir(workspacePath), localDirName);
+    private static string GenerateSessionsFile(string workspacePath) => Path.Combine(LocalDir(workspacePath), generateSessionsFileName);
+    private static string GenerateDraftsFile(string workspacePath) => Path.Combine(LocalDir(workspacePath), generateDraftsFileName);
+    private static string GenerateRequestsFile(string workspacePath) => Path.Combine(LocalDir(workspacePath), generateRequestsFileName);
 }

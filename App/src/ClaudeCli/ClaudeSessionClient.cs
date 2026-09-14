@@ -10,45 +10,45 @@ namespace AutoDev.ClaudeCli;
 
 public sealed class ClaudeSessionClient : IAiSessionClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions jsonOptions = new()
     {
         Converters = { new ClaudeStreamEventJsonConverter() },
     };
 
-    private readonly string _workspacePath;
-    private readonly string _model;
-    private readonly string? _effort;
-    private readonly ILogger _logger;
-    private readonly Channel<AiStreamEvent> _channel = Channel.CreateUnbounded<AiStreamEvent>();
+    private readonly string workspacePath;
+    private readonly string model;
+    private readonly string? effort;
+    private readonly ILogger logger;
+    private readonly Channel<AiStreamEvent> channel = Channel.CreateUnbounded<AiStreamEvent>();
 
-    private Process? _process;
-    private CancellationTokenSource? _lifetimeCts;
+    private Process? process;
+    private CancellationTokenSource? lifetimeCts;
 
     public ClaudeSessionClient(string workspacePath, string model, string? effort, ILogger logger)
     {
-        _workspacePath = workspacePath;
-        _model = model;
-        _effort = effort;
-        _logger = logger;
+        this.workspacePath = workspacePath;
+        this.model = model;
+        this.effort = effort;
+        this.logger = logger;
         SessionId = Guid.NewGuid().ToString();
     }
 
     public string SessionId { get; private set; }
 
-    public bool IsRunning => _process is { HasExited: false };
+    public bool IsRunning => process is { HasExited: false };
 
     public void Start(string? resumeSessionId = null)
     {
-        if (_process is not null)
+        if (process is not null)
         {
             throw new InvalidOperationException("Session already started.");
         }
 
-        _lifetimeCts = new CancellationTokenSource();
+        lifetimeCts = new CancellationTokenSource();
 
         ProcessStartInfo startInfo = new ProcessStartInfo(ClaudeCliLocator.ExecutableName)
         {
-            WorkingDirectory = _workspacePath,
+            WorkingDirectory = workspacePath,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -63,12 +63,12 @@ public sealed class ClaudeSessionClient : IAiSessionClient
         startInfo.ArgumentList.Add("stream-json");
         startInfo.ArgumentList.Add("--verbose");
         startInfo.ArgumentList.Add("--model");
-        startInfo.ArgumentList.Add(_model);
+        startInfo.ArgumentList.Add(model);
 
-        if (!string.IsNullOrEmpty(_effort))
+        if (!string.IsNullOrEmpty(effort))
         {
             startInfo.ArgumentList.Add("--effort");
-            startInfo.ArgumentList.Add(_effort);
+            startInfo.ArgumentList.Add(effort);
         }
 
         startInfo.ArgumentList.Add("--permission-mode");
@@ -109,11 +109,11 @@ public sealed class ClaudeSessionClient : IAiSessionClient
             startInfo.ArgumentList.Add(SessionId);
         }
 
-        _process = Process.Start(startInfo)
+        process = Process.Start(startInfo)
                    ?? throw new InvalidOperationException("Failed to start claude process.");
 
-        _ = Task.Run(() => ReadOutputLoopAsync(_process, _lifetimeCts.Token));
-        _ = Task.Run(() => ReadStderrLoopAsync(_process, _lifetimeCts.Token));
+        _ = Task.Run(() => ReadOutputLoopAsync(process, lifetimeCts.Token));
+        _ = Task.Run(() => ReadStderrLoopAsync(process, lifetimeCts.Token));
     }
 
     private async Task ReadOutputLoopAsync(Process process, CancellationToken cancellationToken)
@@ -136,7 +136,7 @@ public sealed class ClaudeSessionClient : IAiSessionClient
                 AiStreamEvent evt;
                 try
                 {
-                    evt = JsonSerializer.Deserialize<AiStreamEvent>(line, JsonOptions)
+                    evt = JsonSerializer.Deserialize<AiStreamEvent>(line, jsonOptions)
                           ?? throw new JsonException("Deserialized to null.");
                 }
                 catch (Exception ex)
@@ -150,7 +150,7 @@ public sealed class ClaudeSessionClient : IAiSessionClient
                     // life, so even a perfectly normal ResultEvent later in the stream would never be seen,
                     // leaving the Generate tab stuck showing "Working" forever with no way out but Cancel. One
                     // bad line should only ever cost that one line, never the rest of the session.
-                    _logger.LogWarning(ex, "Failed to parse claude stream-json line: {Line}", line);
+                    logger.LogWarning(ex, "Failed to parse claude stream-json line: {Line}", line);
                     continue;
                 }
 
@@ -159,7 +159,7 @@ public sealed class ClaudeSessionClient : IAiSessionClient
                     SessionId = evt.SessionId;
                 }
 
-                await _channel.Writer.WriteAsync(evt, cancellationToken);
+                await channel.Writer.WriteAsync(evt, cancellationToken);
             }
         }
         catch (OperationCanceledException)
@@ -168,7 +168,7 @@ public sealed class ClaudeSessionClient : IAiSessionClient
         }
         finally
         {
-            _channel.Writer.TryComplete();
+            channel.Writer.TryComplete();
         }
     }
 
@@ -201,7 +201,7 @@ public sealed class ClaudeSessionClient : IAiSessionClient
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error reading claude stderr - still draining");
+                logger.LogWarning(ex, "Error reading claude stderr - still draining");
                 continue;
             }
 
@@ -212,13 +212,13 @@ public sealed class ClaudeSessionClient : IAiSessionClient
 
             if (!string.IsNullOrWhiteSpace(line))
             {
-                _logger.LogDebug("claude stderr: {Line}", line);
+                logger.LogDebug("claude stderr: {Line}", line);
             }
         }
     }
 
     public IAsyncEnumerable<AiStreamEvent> ReadAllEventsAsync(CancellationToken cancellationToken = default) =>
-        _channel.Reader.ReadAllAsync(cancellationToken);
+        channel.Reader.ReadAllAsync(cancellationToken);
 
     public Task SendUserMessageAsync(string text, CancellationToken cancellationToken = default) =>
         WriteLineAsync(ClaudeInputMessageWriter.UserMessage(text), cancellationToken);
@@ -228,40 +228,40 @@ public sealed class ClaudeSessionClient : IAiSessionClient
 
     private async Task WriteLineAsync(string json, CancellationToken cancellationToken)
     {
-        if (_process is null)
+        if (process is null)
         {
             throw new InvalidOperationException("Session has not been started.");
         }
 
-        await _process.StandardInput.WriteLineAsync(json.AsMemory(), cancellationToken);
-        await _process.StandardInput.FlushAsync(cancellationToken);
+        await process.StandardInput.WriteLineAsync(json.AsMemory(), cancellationToken);
+        await process.StandardInput.FlushAsync(cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
     {
-        _lifetimeCts?.Cancel();
+        lifetimeCts?.Cancel();
 
-        if (_process is { HasExited: false } process)
+        if (process is { HasExited: false } runningProcess)
         {
             try
             {
-                process.StandardInput.Close();
+                runningProcess.StandardInput.Close();
                 using CancellationTokenSource exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                await process.WaitForExitAsync(exitCts.Token);
+                await runningProcess.WaitForExitAsync(exitCts.Token);
             }
             catch (OperationCanceledException)
             {
-                try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                try { runningProcess.Kill(entireProcessTree: true); } catch { /* best effort */ }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error while shutting down claude session process");
+                logger.LogWarning(ex, "Error while shutting down claude session process");
             }
         }
 
-        _process?.Dispose();
-        _lifetimeCts?.Dispose();
-        _channel.Writer.TryComplete();
+        this.process?.Dispose();
+        lifetimeCts?.Dispose();
+        channel.Writer.TryComplete();
     }
 }
 

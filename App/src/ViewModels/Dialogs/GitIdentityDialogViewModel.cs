@@ -9,10 +9,10 @@ public sealed record GitIdentityDialogResult(string Name, string Email);
 public sealed partial class GitIdentityDialogViewModel : ViewModelBase
 {
     [ObservableProperty]
-    private string _name = "";
+    private string name = "";
 
     [ObservableProperty]
-    private string _email = "";
+    private string email = "";
 
     public bool CanConfirm => Name.Trim().Length > 0 && Email.Trim().Length > 0;
 

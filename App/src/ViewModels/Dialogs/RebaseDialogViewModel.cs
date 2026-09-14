@@ -26,13 +26,13 @@ public sealed partial class RebaseDialogViewModel : ViewModelBase
     public IReadOnlyList<string> Branches { get; }
 
     [ObservableProperty]
-    private string? _selectedBranch;
+    private string? selectedBranch;
 
     [ObservableProperty]
-    private string _squashMessage = "";
+    private string squashMessage = "";
 
     [ObservableProperty]
-    private bool _isLoadingMessage;
+    private bool isLoadingMessage;
 
     public bool CanConfirm => SelectedBranch is not null && SquashMessage.Trim().Length > 0;
 
