@@ -77,6 +77,9 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
         this.scriptRunner.TaskRunCompleted += OnAnyTaskCompleted;
     }
 
+    /// <summary>Raised every time AttachOrLoad runs, regardless of whether anything it sets actually changed value - the View's own cue to forget whatever scroll-position state it was tracking for whichever script/task was previously displayed (see ScriptTabView's own OnDisplayedEntryChanged), since that's purely visual state this ViewModel has no business owning itself.</summary>
+    public event Action? DisplayedEntryChanged;
+
     public ObservableCollection<ScriptEntry> Entries { get; } = [];
 
     public bool HasEntries => Entries.Count > 0;
@@ -293,6 +296,7 @@ public sealed partial class ScriptTabViewModel : ViewModelBase, IDisposable
     /// <summary>Attaches to entry's own live run if it's currently in flight, or loads its most recent historical run otherwise - shared by both a top-level selection change and a sub-tab switch, since either one just changes which single script's own output is currently being displayed.</summary>
     private void AttachOrLoad(ScriptEntry? entry)
     {
+        DisplayedEntryChanged?.Invoke();
         DetachLiveRun();
 
         if (entry is null)

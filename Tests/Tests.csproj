@@ -17,6 +17,12 @@
     <!-- Mocks IGitService/IWorkspaceVersioningService in tests that need an interface dependency
          isolated rather than a pure function. -->
     <PackageReference Include="Moq" Version="4.20.72" />
+    <!-- Runs real Avalonia layout/rendering off-screen (no X server needed) for a View-level test that needs
+         actual measure/arrange/scroll behavior (e.g. ScriptTabViewTests) rather than just the ViewModel it
+         binds to. Avalonia.Headless directly (not the .XUnit glue package, which pulls in xunit.v3.core and
+         conflicts with this project's xunit v2 test suite) - HeadlessTestApp/TestAppBuilder set up the
+         AppBuilder manually instead of relying on [AvaloniaFact]'s own automatic per-test setup. -->
+    <PackageReference Include="Avalonia.Headless" Version="12.1.0" />
   </ItemGroup>
 
   <ItemGroup>

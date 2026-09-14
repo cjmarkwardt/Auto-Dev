@@ -76,6 +76,7 @@ public partial class ScriptTabView : UserControl
         if (DataContext is ScriptTabViewModel vm)
         {
             vm.PropertyChanged += OnVmPropertyChanged;
+            vm.DisplayedEntryChanged += OnDisplayedEntryChanged;
             subscribedVm = vm;
         }
     }
@@ -88,8 +89,20 @@ public partial class ScriptTabView : UserControl
         }
 
         subscribedVm.PropertyChanged -= OnVmPropertyChanged;
+        subscribedVm.DisplayedEntryChanged -= OnDisplayedEntryChanged;
         subscribedVm = null;
     }
+
+    /// <summary>
+    /// Whatever script/task's output is now being displayed just changed (a dropdown selection, or a task's own
+    /// sub-tab switch) - isScrolledToBottom is single, per-View state, not tracked per script/task, so without
+    /// this it would otherwise keep carrying over whatever the *previous* one was left at: once the user
+    /// scrolled up to review a finished script's output even once, every other script/task viewed afterwards
+    /// for the rest of this View's lifetime would silently stop auto-scrolling too, having inherited that same
+    /// stale "scrolled away" state despite the user never having scrolled away in any of them. Reset back to
+    /// true here, mirroring the same reasoning as isScrolledToBottom's own initial value.
+    /// </summary>
+    private void OnDisplayedEntryChanged() => isScrolledToBottom = true;
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
